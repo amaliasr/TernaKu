@@ -139,4 +139,3 @@ api/              CodeIgniter 3, schema MySQL, installer, dan integration test
 ```
 
 Keputusan antarmodul didokumentasikan dalam [CONTRACT.md](CONTRACT.md). Lisensi runtime CI3 tercantum di [api/CI-LICENSE.txt](api/CI-LICENSE.txt).
-

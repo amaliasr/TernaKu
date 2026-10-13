@@ -1,0 +1,7 @@
+.env
+.test-db/
+.test-*.log
+ci3.zip
+upstream/
+application/logs/*
+!application/logs/.gitkeep

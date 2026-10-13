@@ -1,0 +1,18 @@
+Options -Indexes
+DirectoryIndex index.php
+<IfModule mod_rewrite.c>
+RewriteEngine On
+RewriteRule ^(?:application|system|scripts|tests|upstream)(?:/|$) - [F,L]
+RewriteRule ^(?:\.|.*\.(?:sql|md|json|lock|zip|log|example)$) - [F,L,NC]
+RewriteCond %{HTTP:Authorization} .
+RewriteRule .* - [E=HTTP_AUTHORIZATION:%{HTTP:Authorization}]
+RewriteCond %{REQUEST_FILENAME} !-f
+RewriteCond %{REQUEST_FILENAME} !-d
+RewriteRule ^(.*)$ index.php/$1 [L,QSA]
+</IfModule>
+<FilesMatch "^(?:\.env.*|CI-LICENSE\.txt)$">
+Require all denied
+</FilesMatch>
+<FilesMatch "^(?!index\.php$).*\.php$">
+Require all denied
+</FilesMatch>
