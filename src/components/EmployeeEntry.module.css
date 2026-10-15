@@ -287,3 +287,46 @@
     font-size: 16px;
   }
 }
+
+:global(html[data-theme="dark"]) :is(.caption, .hint, .pickupLabel span) {
+  color: #b4c5a7;
+}
+:global(html[data-theme="dark"]) .category {
+  background: #1d2e22;
+  border-color: #536b48;
+  color: #dae9cd;
+}
+:global(html[data-theme="dark"]) .selected {
+  border-color: #a4ca87;
+  background: #304c32;
+  color: #e6f1db;
+}
+:global(html[data-theme="dark"]) .optional {
+  background: #203025;
+  border-color: #41563b;
+}
+:global(html[data-theme="dark"]) .summary {
+  background: #2b422d;
+  color: #d8eac8;
+}
+:global(html[data-theme="dark"]) :is(.summary strong, .lineTotal strong) {
+  color: #ceebb6;
+}
+:global(html[data-theme="dark"]) .footer {
+  background: #19271f;
+  border-color: #35483b;
+}
+:global(html[data-theme="dark"]) .warning {
+  background: #443620;
+  color: #f0d399;
+}
+:global(html[data-theme="dark"]) .saleItem {
+  border-color: #41563b;
+}
+:global(html[data-theme="dark"]) .empty > svg {
+  color: #afcf93;
+}
+:global(html[data-theme="dark"]) .form button:focus-visible,
+:global(html[data-theme="dark"]) .form summary:focus-visible {
+  outline-color: #b7d58c;
+}

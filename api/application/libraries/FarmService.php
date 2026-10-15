@@ -1,4 +1,5 @@
 <?php
+require_once __DIR__.'/PushService.php';
 /** TernaKu transactional domain service; used by CI3 and the CLI installer. */
 class ApiProblem extends RuntimeException {
     public int $status;
@@ -302,6 +303,7 @@ class FarmService {
             if($total<$r['paid']) throw new ApiProblem('Total koreksi lebih kecil dari pembayaran yang sudah diterima. Pengembalian uang/refund belum didukung.');
             $updated['items']=$newItems; $updated['total']=$total; $updated['balance']=$total-$r['paid']; $updated['payment_status']=$r['paid']==$total?'paid':($r['paid']>0?'partial':'unpaid');
         }
+        if($entity==='sale' && array_filter($updated['items'],fn($item)=>$item['category']==='cracked' && $item['unit_price']==0)) $this->text($updated,'customer',190,true);
         $this->save($entity,$updated); $this->audit('correction.apply',$reason,$r,$updated);
     }
     public function command(string $action,array $p,string $requestId = ''): array {
@@ -354,8 +356,9 @@ class FarmService {
                 $this->save('sale',$r); $this->audit($action,'Mencatat pembayaran penjualan',$before,$r); break;
             case 'price.create':
                 $this->admin(); $effective=$this->date($p,'effective_at');
-                $r=$this->insert('price',['good_price'=>$this->number($p,'good_price',1,true,10000000),'cracked_price'=>$this->number($p,'cracked_price',1,true,10000000),'effective_at'=>$effective,'created_at'=>$this->now(),'created_by'=>$this->actor['id']]);
-                foreach($this->query('SELECT id FROM users WHERE active=1')->fetchAll(PDO::FETCH_COLUMN) as $uid) $this->insert('notification',['user_id'=>$uid,'title'=>'Harga telur diperbarui','message'=>'Mulai '.date('d/m/Y H:i',strtotime($effective)).' WIB: telur bagus Rp'.number_format($r['good_price'],0,',','.').'/kg dan telur bentes Rp'.number_format($r['cracked_price'],0,',','.').'/kg.','created_at'=>$this->now(),'read'=>false]);
+                $r=$this->insert('price',['good_price'=>$this->number($p,'good_price',1,true,10000000),'cracked_price'=>$this->number($p,'cracked_price',0,true,10000000),'effective_at'=>$effective,'created_at'=>$this->now(),'created_by'=>$this->actor['id']]);
+                foreach($this->query('SELECT id FROM users WHERE active=1')->fetchAll(PDO::FETCH_COLUMN) as $uid) $this->insert('notification',['user_id'=>$uid,'title'=>'Harga telur diperbarui','message'=>'Mulai '.date('d/m/Y H:i',strtotime($effective)).' WIB: telur bagus Rp'.number_format($r['good_price'],0,',','.').'/kg dan telur bentes '.($r['cracked_price']==0?'Gratis':'Rp'.number_format($r['cracked_price'],0,',','.').'/kg').'.','created_at'=>$this->now(),'read'=>false]);
+                (new PushService($this->db))->enqueuePrice($r);
                 $this->audit($action,'Menetapkan harga telur',null,$r); break;
             case 'user.create': $this->createUser($p); break;
             case 'user.update': $this->updateUser($p); break;
@@ -408,12 +411,18 @@ class FarmService {
             $category=$this->enum($item,'category',['good','cracked']); if($category!==$pickup['category']) throw new ApiProblem('Kategori penjualan berbeda dengan telur yang diambil.');
             $q=$this->quantity($item); $bal=$this->pickupBalance($pickup); $id=$pickup['id'];
             $used=$reserved[$id]??['eggs'=>0,'kg'=>0]; $this->checkBalance(['eggs'=>$q['eggs']+$used['eggs'],'kg'=>round($q['kg']+$used['kg'],3)],$bal); $reserved[$id]=['eggs'=>$q['eggs']+$used['eggs'],'kg'=>round($q['kg']+$used['kg'],3)];
-            $unit=$price[$category==='good'?'good_price':'cracked_price']; $itemTotal=round($q['kg']*$unit);
-            $out[]=$q+['id'=>$this->id('item'),'pickup_id'=>$id,'category'=>$category,'unit_price'=>$unit,'total'=>$itemTotal]; $total+=$itemTotal;
+            if(array_key_exists('is_free',$item) && !is_bool($item['is_free'])) throw new ApiProblem('Pilihan gratis tidak valid.');
+            if(($item['is_free']??false) && $category!=='cracked') throw new ApiProblem('Hanya telur bentes yang boleh diberikan gratis.');
+            $free=$category==='cracked' && (($item['is_free']??false) || $price['cracked_price']==0);
+            $unit=$free?0:$price[$category==='good'?'good_price':'cracked_price']; $itemTotal=round($q['kg']*$unit);
+            $out[]=$q+['id'=>$this->id('item'),'pickup_id'=>$id,'category'=>$category,'unit_price'=>$unit,'is_free'=>$free,'total'=>$itemTotal]; $total+=$itemTotal;
             if(!is_finite($total) || $total>1000000000000) throw new ApiProblem('Total transaksi maksimal Rp1.000.000.000.000.');
         }
         $paid=$this->number($p,'paid',0,true); if($paid>$total) throw new ApiProblem('Nominal pembayaran melebihi total transaksi.');
-        $r=$this->insert('sale',['number'=>'TK-'.date('Ymd').'-'.strtoupper(bin2hex(random_bytes(4))),'date'=>$this->date($p),'user_id'=>$this->actor['id'],'customer'=>$this->text($p,'customer',190),'phone'=>$this->text($p,'phone',40),'items'=>$out,'total'=>$total,'paid'=>$paid,'balance'=>$total-$paid,'payment_method'=>$this->enum($p,'payment_method',['cash','transfer','qris','credit']),'payment_status'=>$paid==$total?'paid':($paid>0?'partial':'unpaid'),'notes'=>$this->text($p,'notes'),'photo'=>$this->photo($p),'created_at'=>$this->now(),'locked'=>true]);
+        $hasFree=(bool)array_filter($out,fn($item)=>$item['is_free']);
+        $customer=$this->text($p,'customer',190); if($hasFree && $customer==='') throw new ApiProblem('Nama penerima telur gratis wajib diisi.');
+        $method=$this->enum($p,'payment_method',['cash','transfer','qris','credit']);
+        $r=$this->insert('sale',['number'=>'TK-'.date('Ymd').'-'.strtoupper(bin2hex(random_bytes(4))),'date'=>$this->date($p),'user_id'=>$this->actor['id'],'customer'=>$customer,'phone'=>$this->text($p,'phone',40),'items'=>$out,'total'=>$total,'paid'=>$paid,'balance'=>$total-$paid,'payment_method'=>$total==0?'cash':$method,'payment_status'=>$paid==$total?'paid':($paid>0?'partial':'unpaid'),'notes'=>$this->text($p,'notes'),'photo'=>$this->photo($p),'created_at'=>$this->now(),'locked'=>true]);
         $this->audit('sale.create','Mencatat penjualan '.$r['number'],null,$r);
     }
     private function createUser(array $p): void {

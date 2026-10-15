@@ -225,8 +225,8 @@ export default function Dashboard({
                 Telur bentes
               </span>
               <strong>
-                {price ? money(price.cracked_price) : "—"}
-                <small>/kg</small>
+                {price ? price.cracked_price === 0 ? "Gratis" : money(price.cracked_price) : "—"}
+                {price && price.cracked_price > 0 && <small>/kg</small>}
               </strong>
             </div>
           </div>

@@ -1,0 +1,71 @@
+.panel {
+  padding: 18px;
+  border: 1px solid var(--border, #dfe7dc);
+  border-radius: 16px;
+  background: var(--card, #fff);
+  color: var(--text, #25372b);
+  margin: 16px 0;
+}
+.heading {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  flex-wrap: wrap;
+}
+.heading strong {
+  flex: 1;
+  font-size: 15px;
+}
+.heading span {
+  font-size: 11px;
+  border-radius: 99px;
+  padding: 3px 8px;
+  background: #edf4e6;
+  color: #296641;
+}
+.panel p {
+  font-size: 13px;
+  line-height: 1.75;
+  margin: 12px 0;
+}
+.panel small {
+  display: block;
+  font-size: 12px;
+  line-height: 1.7;
+  color: var(--muted, #62715f);
+}
+.buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 9px;
+  margin: 14px 0;
+}
+.buttons button {
+  min-height: 46px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  font-size: 13px;
+}
+.message {
+  padding: 10px 12px;
+  background: var(--bg, #f5f8f2);
+  border-radius: 10px;
+}
+:global(html[data-theme="dark"]) .panel {
+  background: #1c2923;
+  border-color: #3b4e42;
+  color: #e8f1e9;
+}
+:global(html[data-theme="dark"]) .panel small {
+  color: #b1c2b6;
+}
+:global(html[data-theme="dark"]) .heading span {
+  background: #294333;
+  color: #c6e9b8;
+}
+:global(html[data-theme="dark"]) .message {
+  background: #293e2e;
+  color: #deecd5;
+}

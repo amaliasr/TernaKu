@@ -3,6 +3,7 @@ defined('BASEPATH') OR exit('No direct script access allowed');
 require_once APPPATH.'libraries/FarmService.php';
 class Api extends CI_Controller {
     private ?FarmService $farm = null;
+    private array $actor = [];
     public function __construct() {
         parent::__construct();
         header('Content-Type: application/json; charset=utf-8'); header('Cache-Control: no-store'); header('X-Content-Type-Options: nosniff'); header('Referrer-Policy: no-referrer');
@@ -25,16 +26,22 @@ class Api extends CI_Controller {
     private function run(string $method,bool $auth,callable $fn): void {
         try {
             if(($_SERVER['REQUEST_METHOD']??'GET')!==$method) { header('Allow: '.$method); throw new ApiProblem('Metode tidak diizinkan.',405); }
-            $this->farm=new FarmService(); if($auth) $this->farm->authenticate($this->token()); $this->respond(['data'=>$fn()]);
+            $this->farm=new FarmService(); if($auth) $this->actor=$this->farm->authenticate($this->token()); $this->respond(['data'=>$fn()]);
         } catch(ApiProblem $e) { $this->respond(['error'=>$e->getMessage()],$e->status); }
         catch(Throwable $e) { log_message('error',get_class($e).': '.$e->getMessage()); $this->respond(['error'=>'Layanan belum siap atau terjadi kesalahan server. Hubungi admin.'],500); }
     }
-    public function health(): void { $this->run('GET',false,fn()=>['status'=>'ok','service'=>'TernaKu API','framework'=>'CodeIgniter 3.1.13','time'=>date('c')]); }
+    public function health(): void { $this->run('GET',false,fn()=>['status'=>'ok','service'=>'TernaKu API','framework'=>'CodeIgniter 3.1.13','time'=>date('c'),'push_ready'=>PushService::ready()]); }
     public function login(): void { $this->run('POST',false,fn()=>$this->farm->login($this->body(),$_SERVER['REMOTE_ADDR']??'unknown')); }
     public function registration_status(): void { $this->run('GET',false,fn()=>$this->farm->registrationStatus()); }
     public function register(): void { $this->run('POST',false,fn()=>$this->farm->register($this->body(),$_SERVER['REMOTE_ADDR']??'unknown')); }
-    public function logout(): void { $this->run('POST',true,function(){ $this->farm->logout($this->token()); return ['logged_out'=>true]; }); }
+    public function logout(): void { $this->run('POST',true,function(){ $push=$this->push(); $push->logout($this->actor['id'],$this->token()); $this->farm->logout($this->token()); return ['logged_out'=>true]; }); }
     public function bootstrap(): void { $this->run('GET',true,fn()=>$this->farm->bootstrap()); }
-    public function commands(): void { $this->run('POST',true,function(){ $p=$this->body(); if(!is_string($p['action']??null) || !is_array($p['payload']??null) || !is_string($p['request_id']??'')) throw new ApiProblem('Perintah dan payload wajib diisi.'); return $this->farm->command($p['action'],$p['payload'],$p['request_id']??''); }); }
+    public function commands(): void { $this->run('POST',true,function(){ $p=$this->body(); if(!is_string($p['action']??null) || !is_array($p['payload']??null) || !is_string($p['request_id']??'')) throw new ApiProblem('Perintah dan payload wajib diisi.'); $result=$this->farm->command($p['action'],$p['payload'],$p['request_id']??''); if($p['action']==='price.create') $this->drainPush(); return $result; }); }
+    private function push(): PushService { return new PushService($this->farm->database()); }
+    private function drainPush(): void { try { $this->push()->drain(3,5); } catch(Throwable $e) { log_message('error','Web Push outbox awaits cron retry.'); } }
+    public function push_status(): void { $this->run('GET',true,fn()=>$this->push()->status()); }
+    public function push_subscribe(): void { $this->run('POST',true,fn()=>$this->push()->subscribe($this->actor['id'],$this->token(),$this->body())); }
+    public function push_unsubscribe(): void { $this->run('POST',true,fn()=>$this->push()->unsubscribe($this->actor['id'],$this->body())); }
+    public function push_test(): void { $this->run('POST',true,function(){ $result=$this->push()->test($this->actor['id'],$this->body()); $this->drainPush(); return $result; }); }
     public function missing(): void { $this->respond(['error'=>'Endpoint tidak ditemukan.'],404); }
 }

@@ -41,7 +41,9 @@ import Modules from "./Modules";
 import EntryModal from "./EntryModal";
 import Reports from "./Reports";
 import EmployeeWorkspace from "./EmployeeWorkspace";
+import ThemeToggle from "./ThemeToggle";
 import InstallApp from "./InstallApp";
+import PushNotifications from "./PushNotifications";
 
 const navigation = [
   {
@@ -230,6 +232,9 @@ function Login() {
         <small>Peternakan dalam genggaman.</small>
       </section>
       <section className="login-form-wrap">
+        <div className="login-theme-control">
+          <ThemeToggle />
+        </div>
         {screen === "register" ? (
           <div className="login-form registration-form">
             <button
@@ -794,6 +799,7 @@ function Workspace() {
             </div>
           </div>
           <div className="topbar-right">
+            <ThemeToggle compact />
             <div className="global-search">
               <Search size={17} />
               <input
@@ -903,7 +909,7 @@ function Workspace() {
             </div>
           )}
           {current.id === "dashboard" ? (
-            <Dashboard go={go} open={setModal} />
+            <><Dashboard go={go} open={setModal} /><PushNotifications /></>
           ) : current.id === "reports" ? (
             <Reports />
           ) : ["cattle", "incentives"].includes(current.id) ? (
@@ -1021,7 +1027,7 @@ function Workspace() {
               <div className="notice-box">
                 Harga aktif: bagus{" "}
                 {price ? money(price.good_price) : "belum diatur"}/kg · bentes{" "}
-                {price ? money(price.cracked_price) : "belum diatur"}/kg.
+                {price ? price.cracked_price === 0 ? "Gratis" : `${money(price.cracked_price)}/kg` : "belum diatur"}.
               </div>
               {mode === "demo" && (
                 <p className="small text-muted mt-3">

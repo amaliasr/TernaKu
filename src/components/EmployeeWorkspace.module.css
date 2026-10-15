@@ -882,6 +882,9 @@
   }
 }
 @media (max-width: 359px) {
+  .demo {
+    display: none;
+  }
   .header,
   .priceDock,
   .main {
@@ -906,4 +909,158 @@
   .stockCards article {
     padding-inline: 11px;
   }
+}
+
+:global(html[data-theme="dark"]) .workspace {
+  color: #e5eddf;
+  background: #101a15;
+}
+:global(html[data-theme="dark"]) .brand {
+  color: #e5eddf;
+}
+:global(html[data-theme="dark"]) .brand strong {
+  color: #a8d195;
+}
+:global(html[data-theme="dark"]) .bell {
+  background: #25392b;
+  color: #bddcb3;
+  border-color: #486045;
+}
+:global(html[data-theme="dark"]) .demo {
+  background: #34432b;
+  color: #d7e6b4;
+}
+:global(html[data-theme="dark"]) .priceDock {
+  background: #14231cf7;
+  box-shadow: 0 5px 12px #00000018;
+}
+:global(html[data-theme="dark"]) :is(.goodPrice, .goodStock) {
+  background: #263f2e;
+  border-color: #426747 !important;
+  color: #d7efcd;
+}
+:global(html[data-theme="dark"]) :is(.crackedPrice, .crackedStock) {
+  background: #403322;
+  border-color: #6c5434 !important;
+  color: #f0d9ac;
+}
+:global(html[data-theme="dark"])
+  :is(
+    .priceTitle > span,
+    .priceStatus,
+    .welcome > div > span,
+    .welcome p,
+    .pageHeading p,
+    .warehouseAction small,
+    .todayGrid button > span,
+    .todayGrid small,
+    .account > span,
+    .account > small,
+    .recordTop small,
+    .recordQuantity strong small,
+    .recordQuantity > span,
+    .record p,
+    .record p.notes,
+    .saleItems,
+    .sectionHeading > span,
+    .historyRow small,
+    .historyRow > span:last-child
+  ) {
+  color: #abbba2;
+}
+:global(html[data-theme="dark"]) .priceWarning {
+  color: #edca89;
+}
+:global(html[data-theme="dark"]) .liveDot {
+  background: #99c587;
+}
+:global(html[data-theme="dark"]) .offlineDot {
+  background: #d6a654;
+}
+:global(html[data-theme="dark"]) .saleAction {
+  background: #394b2a;
+  color: #e4edc9;
+}
+:global(html[data-theme="dark"]) .saleAction .actionIcon {
+  background: #ffffff15;
+}
+:global(html[data-theme="dark"]) .harvestAction {
+  background: #2b6d47;
+}
+:global(html[data-theme="dark"])
+  :is(.warehouseAction, .todayGrid button, .record, .secondaryButton) {
+  background: #1b2b21;
+  border-color: #3a503b;
+  color: #dcebd2;
+}
+:global(html[data-theme="dark"]) .warehouseIcon {
+  background: #443a26;
+  color: #ddc484;
+}
+:global(html[data-theme="dark"]) .carryReminder {
+  background: #2c3b29;
+  border-color: #46573b;
+  color: #d2e3bf;
+}
+:global(html[data-theme="dark"])
+  :is(.moreToggle, .moreMenu > button, .textButton, .backButton, .moreRecords) {
+  color: #b4d9a5;
+}
+:global(html[data-theme="dark"])
+  :is(.moreSection, .account, .history, .historyRow) {
+  border-color: #35483b;
+}
+:global(html[data-theme="dark"]) .goodBadge {
+  background: #2b4732;
+  color: #bce3b6;
+}
+:global(html[data-theme="dark"]) .crackedBadge {
+  background: #463820;
+  color: #edce98;
+}
+:global(html[data-theme="dark"]) .balance {
+  color: #e6c48d !important;
+}
+:global(html[data-theme="dark"]) .empty {
+  background: #19271f;
+  border-color: #42553b;
+  color: #a1b391;
+}
+:global(html[data-theme="dark"]) .empty > strong {
+  color: #c4d8b4;
+}
+:global(html[data-theme="dark"]) .bottomNav {
+  background: #19271ff7;
+  border-color: #3e513a;
+  box-shadow: 0 -4px 25px #00000020;
+}
+:global(html[data-theme="dark"]) .bottomNav button {
+  color: #a3b395;
+}
+:global(html[data-theme="dark"]) .bottomNav button.activeTab {
+  background: #2c4430;
+  color: #c2e3b2;
+}
+:global(html[data-theme="dark"]) .warning {
+  background: #443620;
+  border-color: #6f5932;
+  color: #f0d399;
+}
+:global(html[data-theme="dark"]) .warning button {
+  color: #f0d399;
+}
+:global(html[data-theme="dark"]) .notifications article {
+  border-color: #3f5639;
+}
+:global(html[data-theme="dark"]) .unreadNotification {
+  background: #263d2c;
+}
+:global(html[data-theme="dark"]) .readNotification {
+  background: #19271f;
+}
+:global(html[data-theme="dark"]) :is(.notifications p, .notifications small) {
+  color: #b0c29f;
+}
+:global(html[data-theme="dark"]) .notifications button {
+  color: #c0e1b2;
 }

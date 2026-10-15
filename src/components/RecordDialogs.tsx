@@ -5,6 +5,7 @@ import { ArrowDownToLine, Info } from "lucide-react";
 import { useFarm } from "@/lib/store";
 import {
   dateLabel,
+  isFreeSaleItem,
   money,
   number as formatNumber,
   pickupBalance,
@@ -192,6 +193,7 @@ export function CorrectionDialog({
                   className="form-control"
                   defaultValue={(record as Sale).customer}
                   maxLength={150}
+                  required={(record as Sale).items.some(isFreeSaleItem)}
                 />
               </Field>
               <div className="form-section">
@@ -202,7 +204,11 @@ export function CorrectionDialog({
                       <strong>
                         {index + 1}. {categoryLabel(item.category)}
                       </strong>
-                      <small>Harga tetap {money(item.unit_price)}/kg</small>
+                      <small>
+                        {isFreeSaleItem(item)
+                          ? "Gratis (tetap)"
+                          : `Harga tetap ${money(item.unit_price)}/kg`}
+                      </small>
                     </div>
                     <div className="row g-3">
                       <Field className="col-4" label="Butir">
@@ -246,7 +252,9 @@ export function CorrectionDialog({
                       </Field>
                     </div>
                     <div className="text-end fw-semibold mt-2">
-                      {money(Math.round(Number(item.kg) * item.unit_price))}
+                      {isFreeSaleItem(item)
+                        ? "Gratis"
+                        : money(Math.round(Number(item.kg) * item.unit_price))}
                     </div>
                   </div>
                 ))}
@@ -589,16 +597,22 @@ export function SaleDetail({
         )}
         <div className="d-flex justify-content-between align-items-start mb-4">
           <div>
-            <small className="text-muted">Pelanggan</small>
+            <small className="text-muted">
+              {sale.items.some(isFreeSaleItem)
+                ? "Pelanggan / penerima"
+                : "Pelanggan"}
+            </small>
             <h3 className="mt-1">{sale.customer || "Pelanggan umum"}</h3>
             {sale.phone && <small>{sale.phone}</small>}
           </div>
           <Pill tone={sale.balance === 0 ? "success" : "warning"}>
-            {sale.balance === 0
-              ? "Lunas"
-              : sale.paid > 0
-                ? "Sebagian"
-                : "Belum lunas"}
+            {sale.total === 0
+              ? "Gratis"
+              : sale.balance === 0
+                ? "Lunas"
+                : sale.paid > 0
+                  ? "Sebagian"
+                  : "Belum lunas"}
           </Pill>
         </div>
         <div className="table-responsive">
@@ -615,12 +629,19 @@ export function SaleDetail({
             <tbody>
               {sale.items.map((item, i) => (
                 <tr key={item.id || i}>
-                  <td>{categoryLabel(item.category)}</td>
+                  <td>
+                    {categoryLabel(item.category)}
+                    {isFreeSaleItem(item) && (
+                      <small className="cell-sub">Pemberian gratis</small>
+                    )}
+                  </td>
                   <td>
                     {number(item.eggs)} / {number(item.trays)}
                   </td>
                   <td>{number(item.kg)} kg</td>
-                  <td>{money(item.unit_price)}</td>
+                  <td>
+                    {isFreeSaleItem(item) ? "Gratis" : money(item.unit_price)}
+                  </td>
                   <td className="text-end">{money(item.total)}</td>
                 </tr>
               ))}
@@ -633,7 +654,11 @@ export function SaleDetail({
             <strong>{money(sale.total)}</strong>
           </div>
           <div>
-            <span>Dibayar · {methodLabel(sale.payment_method)}</span>
+            <span>
+              {sale.total === 0
+                ? "Gratis · tidak ada pembayaran"
+                : `Dibayar · ${methodLabel(sale.payment_method)}`}
+            </span>
             <span>{money(sale.paid)}</span>
           </div>
           <div>

@@ -2,7 +2,7 @@ Options -Indexes
 DirectoryIndex index.php
 <IfModule mod_rewrite.c>
 RewriteEngine On
-RewriteRule ^(?:application|system|scripts|tests|upstream)(?:/|$) - [F,L]
+RewriteRule ^(?:application|system|scripts|tests|upstream|vendor)(?:/|$) - [F,L,NC]
 RewriteRule ^(?:\.|.*\.(?:sql|md|json|lock|zip|log|example)$) - [F,L,NC]
 RewriteCond %{HTTP:Authorization} .
 RewriteRule .* - [E=HTTP_AUTHORIZATION:%{HTTP:Authorization}]

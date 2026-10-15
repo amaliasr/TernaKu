@@ -21,6 +21,7 @@ import { createDemoState, DEMO_PASSWORD } from "./seed";
 import { refreshInterval, SessionSync } from "./session-sync";
 import { ApiError } from "./request-errors";
 import { readPendingRequestIds } from "./request-retries";
+import { detachBrowserPush } from "./push-client";
 export {
   isUncertainWriteError,
   shouldPreserveUnconfirmedWrite,
@@ -62,6 +63,11 @@ interface FarmContextValue {
     requestId?: string,
   ) => Promise<void>;
   refresh: () => Promise<void>;
+  pushRequest: <T>(
+    action: "status" | "subscribe" | "unsubscribe" | "test",
+    body?: unknown,
+    expectedUserId?: string,
+  ) => Promise<T>;
 }
 const Context = createContext<FarmContextValue | undefined>(undefined);
 const STORAGE_KEY = "ternaku.demo.v1";
@@ -447,7 +453,10 @@ export function FarmProvider({ children }: { children: ReactNode }) {
   );
   const logout = useCallback(async () => {
     const token = tokenRef.current;
+    // Stop pending push operations from attaching while browser revocation is awaited.
     tokenRef.current = null;
+    const pushEndpoint =
+      mode === "live" ? await detachBrowserPush() : undefined;
     setSessionUser(null);
     setError(null);
     setPriceSync(emptyPriceSync);
@@ -459,13 +468,38 @@ export function FarmProvider({ children }: { children: ReactNode }) {
       setPriceSync(emptyPriceSync);
       if (token) {
         try {
-          await request("/auth/logout", token, {});
+          await request("/auth/logout", token, { push_endpoint: pushEndpoint });
         } catch {
           /* Local credentials are removed even if the network is unavailable. */
         }
       }
     }
   }, [commit, setSessionUser]);
+  const pushRequest = useCallback(
+    async <T,>(
+      action: "status" | "subscribe" | "unsubscribe" | "test",
+      body?: unknown,
+      expectedUserId?: string,
+    ): Promise<T> => {
+      if (mode !== "live" || !tokenRef.current || !userRef.current)
+        throw new Error(
+          "Masuk ke akun TernaKu untuk mengaktifkan notifikasi HP.",
+        );
+      const token = tokenRef.current;
+      const userId = userRef.current.id;
+      if (expectedUserId && userId !== expectedUserId)
+        throw new Error(
+          "Akun berubah. Buka kembali pengaturan notifikasi pada akun Anda.",
+        );
+      const result = await request<T>(`/push/${action}`, token, body);
+      if (tokenRef.current !== token || userRef.current?.id !== userId)
+        throw new Error(
+          "Akun berubah. Buka kembali pengaturan notifikasi pada akun Anda.",
+        );
+      return result;
+    },
+    [],
+  );
   const command = useCallback(
     async (action: string, payload: CommandPayload, requestId?: string) => {
       const currentUser = userRef.current;
@@ -502,9 +536,10 @@ export function FarmProvider({ children }: { children: ReactNode }) {
           // A persisted sale owns its UUID alongside its exact payload, so a
           // reload between confirmation and local cleanup cannot create a new sale.
           // Other commands keep the existing fingerprint-based retry map.
-          const fingerprint = requestId === undefined
-            ? `${currentUser.id}:${await digest(JSON.stringify({ action, payload }))}`
-            : null;
+          const fingerprint =
+            requestId === undefined
+              ? `${currentUser.id}:${await digest(JSON.stringify({ action, payload }))}`
+              : null;
           let request_id = requestId;
           if (fingerprint) {
             const retries = readPendingRequestIds(
@@ -577,6 +612,7 @@ export function FarmProvider({ children }: { children: ReactNode }) {
         loading,
         error,
         priceSync,
+        pushRequest,
         login,
         registrationStatus,
         register,

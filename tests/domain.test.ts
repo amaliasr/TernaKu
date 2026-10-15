@@ -8,6 +8,7 @@ import {
   emptyState,
   executeCommand,
   feedStock,
+  isFreeSaleItem,
   pickupBalance,
   registerDemoEmployee,
   today,
@@ -99,12 +100,260 @@ const sale = (
     ...extra,
   });
 
+function crackedPickup(user: string, source = fixture()): State {
+  const produced = cmd(source, user, "production.create", {
+    date: DATE,
+    category: "cracked",
+    eggs: 100,
+    kg: 6,
+    trays: 0,
+  });
+  return cmd(produced, user, "pickup.create", {
+    date: DATE,
+    category: "cracked",
+    eggs: 100,
+    kg: 6,
+    trays: 0,
+    area: "Pembagian warga",
+  });
+}
+function gift(s: State, user: string, extra: CommandPayload = {}): State {
+  const pickup = s.pickups.find(
+    (p) => p.category === "cracked" && p.user_id === user,
+  )!;
+  return cmd(s, user, "sale.create", {
+    date: DATE,
+    customer: "Pak Budi",
+    items: [
+      {
+        pickup_id: pickup.id,
+        category: "cracked",
+        eggs: 20,
+        kg: 1.2,
+        trays: 0,
+        is_free: true,
+      },
+    ],
+    payment_method: "credit",
+    paid: 0,
+    ...extra,
+  });
+}
+
+for (const user of ["admin", "a"]) {
+  test(`${user} can record own harvest, pickup and named free cracked eggs without debt`, () => {
+    const before = crackedPickup(user);
+    const result = gift(before, user);
+    const transaction = result.sales.at(-1)!;
+    assert.equal(transaction.user_id, user);
+    assert.equal(transaction.customer, "Pak Budi");
+    assert.equal(transaction.items[0].is_free, true);
+    assert.equal(transaction.items[0].unit_price, 0);
+    assert.equal(transaction.total, 0);
+    assert.equal(transaction.paid, 0);
+    assert.equal(transaction.balance, 0);
+    assert.equal(transaction.payment_status, "paid");
+    assert.equal(transaction.payment_method, "cash");
+    assert.equal(
+      pickupBalance(result, transaction.items[0].pickup_id).eggs,
+      80,
+    );
+    assert.equal(pickupBalance(result, transaction.items[0].pickup_id).kg, 4.8);
+    assert.equal(eggStock(result, "cracked").kg, 0);
+    assert.equal(isFreeSaleItem(transaction.items[0]), true);
+  });
+  test(`${user} cannot mark good eggs free or supply an invalid free flag`, () => {
+    const source = take(fixture(), user);
+    const input = {
+      date: DATE,
+      customer: "Penerima",
+      items: [
+        {
+          pickup_id: source.pickups[0].id,
+          category: "good",
+          eggs: 20,
+          kg: 1.2,
+          trays: 0,
+          is_free: true,
+        },
+      ],
+      payment_method: "cash",
+      paid: 0,
+    };
+    assert.throws(
+      () => cmd(source, user, "sale.create", input),
+      /Hanya telur bentes/,
+    );
+    assert.throws(
+      () =>
+        cmd(source, user, "sale.create", {
+          ...input,
+          items: [{ ...input.items[0], is_free: "true" }],
+        }),
+      /Pilihan gratis/,
+    );
+    assert.equal(source.sales.length, 0);
+  });
+}
+
+test("free cracked eggs require a named recipient and reject any overpayment atomically", () => {
+  const source = crackedPickup("a");
+  const original = JSON.stringify(source);
+  assert.throws(() => gift(source, "a", { customer: "  " }), /Nama penerima/);
+  assert.throws(() => gift(source, "a", { paid: 1 }), /melebihi total/);
+  assert.equal(JSON.stringify(source), original);
+});
+
+test("zero daily cracked price automatically records a free snapshot while good price must remain positive", () => {
+  let source = crackedPickup("a");
+  const price = {
+    good_price: 28000,
+    cracked_price: 0,
+    effective_at: NOW.toISOString(),
+  };
+  assert.throws(
+    () => cmd(source, "a", "price.create", price),
+    /hanya untuk admin/,
+  );
+  assert.throws(
+    () => cmd(source, "admin", "price.create", { ...price, good_price: 0 }),
+    /lebih dari nol/,
+  );
+  assert.throws(
+    () => cmd(source, "admin", "price.create", { ...price, cracked_price: -1 }),
+    /nol atau lebih/,
+  );
+  source = cmd(source, "admin", "price.create", price);
+  assert.equal(activePrice(source, NOW)?.cracked_price, 0);
+  const pickup = source.pickups.find((p) => p.category === "cracked")!;
+  const result = gift(source, "a", {
+    items: [
+      {
+        pickup_id: pickup.id,
+        category: "cracked",
+        eggs: 20,
+        kg: 1.2,
+        trays: 0,
+        is_free: false,
+      },
+    ],
+  });
+  assert.equal(result.sales[0].items[0].is_free, true);
+  assert.equal(result.sales[0].total, 0);
+  assert.match(result.notifications.at(-1)!.message, /Gratis/);
+});
+
+test("one sale can mix paid good eggs and free cracked eggs with only paid items included in the bill", () => {
+  const source = crackedPickup("a", take(fixture()));
+  const good = source.pickups.find((p) => p.category === "good")!;
+  const cracked = source.pickups.find((p) => p.category === "cracked")!;
+  const result = gift(source, "a", {
+    items: [
+      { pickup_id: good.id, category: "good", eggs: 50, kg: 3, trays: 0 },
+      {
+        pickup_id: cracked.id,
+        category: "cracked",
+        eggs: 20,
+        kg: 1.2,
+        trays: 0,
+        is_free: true,
+      },
+    ],
+    paid: 84000,
+  });
+  const transaction = result.sales[0];
+  assert.equal(transaction.items[0].unit_price, 28000);
+  assert.equal(transaction.items[0].is_free, false);
+  assert.equal(transaction.items[1].unit_price, 0);
+  assert.equal(transaction.total, 84000);
+  assert.equal(transaction.balance, 0);
+  assert.equal(pickupBalance(result, good).kg, 27);
+  assert.equal(pickupBalance(result, cracked).kg, 4.8);
+});
+
+test("free price and recipient snapshots survive later prices and quantity corrections", () => {
+  let source = gift(crackedPickup("a"), "a");
+  const transaction = source.sales[0];
+  const item = transaction.items[0];
+  source = cmd(source, "admin", "price.create", {
+    good_price: 32000,
+    cracked_price: 22000,
+    effective_at: NOW.toISOString(),
+  });
+  source = cmd(source, "admin", "correction.apply", {
+    entity: "sale",
+    id: transaction.id,
+    reason: "Jumlah pembagian ditimbang ulang",
+    changes: { items: [{ id: item.id, eggs: 30, kg: 1.8, trays: 0 }] },
+  });
+  assert.equal(source.sales[0].total, 0);
+  assert.equal(source.sales[0].items[0].is_free, true);
+  assert.equal(source.sales[0].items[0].unit_price, 0);
+  assert.throws(
+    () =>
+      cmd(source, "admin", "correction.apply", {
+        entity: "sale",
+        id: transaction.id,
+        reason: "Tidak boleh menghapus penerima",
+        changes: { customer: "" },
+      }),
+    /Nama penerima/,
+  );
+  assert.throws(
+    () =>
+      cmd(source, "admin", "correction.apply", {
+        entity: "sale",
+        id: transaction.id,
+        reason: "Tidak boleh mengubah gratis",
+        changes: {
+          items: [{ id: item.id, eggs: 30, kg: 1.8, trays: 0, is_free: false }],
+        },
+      }),
+    /tidak dapat diubah/,
+  );
+});
+
 test("Jakarta business date is independent of host timezone", () => {
   assert.equal(today(new Date("2026-10-12T18:00:00Z")), "2026-10-13");
   assert.equal(businessDate("2026-10-12T18:00:00Z"), "2026-10-13");
   assert.equal(businessDate("2026-10-13T01:00:00+07:00"), "2026-10-13");
   assert.equal(businessDate("2026-10-13"), "2026-10-13");
   assert.equal(businessDate("2026-10-13T00:01"), "2026-10-13");
+});
+
+test("one pickup can be split between paid and free cracked items without escaping cumulative stock limits", () => {
+  const source = crackedPickup("a");
+  const pickup = source.pickups[0];
+  const items = [
+    {
+      pickup_id: pickup.id,
+      category: "cracked",
+      eggs: 20,
+      kg: 1.2,
+      trays: 0,
+      is_free: false,
+    },
+    {
+      pickup_id: pickup.id,
+      category: "cracked",
+      eggs: 30,
+      kg: 1.8,
+      trays: 0,
+      is_free: true,
+    },
+  ];
+  const result = gift(source, "a", { items, paid: 21600 });
+  assert.equal(result.sales[0].total, 21600);
+  assert.equal(result.sales[0].items[0].unit_price, 18000);
+  assert.equal(result.sales[0].items[1].unit_price, 0);
+  assert.equal(pickupBalance(result, pickup).kg, 3);
+  assert.throws(
+    () =>
+      gift(source, "a", {
+        items: [items[0], { ...items[1], eggs: 81, kg: 4.86 }],
+      }),
+    /melebihi sisa/,
+  );
 });
 test("production stores actual weight independently of ten kg tray estimate", () => {
   const s = fixture();

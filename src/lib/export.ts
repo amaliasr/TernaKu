@@ -1,5 +1,5 @@
 import type { FeedPurchase, Sale, State } from "./types";
-import { dateLabel, money, number } from "./domain";
+import { dateLabel, isFreeSaleItem, money, number } from "./domain";
 
 export type ReportTable = {
   name: string;
@@ -274,23 +274,32 @@ export async function printReceipt(sale: Sale, state: State) {
     "NOTA PENJUALAN",
     sale.number,
     sale.date,
-    `Pelanggan: ${sale.customer || "Pelanggan umum"}${sale.phone ? " | " + sale.phone : ""}`,
+    `${sale.items.some(isFreeSaleItem) ? "Pelanggan / penerima" : "Pelanggan"}: ${sale.customer || "Pelanggan umum"}${sale.phone ? " | " + sale.phone : ""}`,
     state.users.find((u) => u.id === sale.user_id)?.name || "Karyawan",
     sale.items.map((i) => [
-      i.category === "good" ? "Telur bagus" : "Telur bentes",
+      i.category === "good"
+        ? "Telur bagus"
+        : isFreeSaleItem(i)
+          ? "Telur bentes - Gratis"
+          : "Telur bentes",
       number(i.eggs, 0),
       number(i.kg, 3),
       number(i.trays),
-      money(i.unit_price),
+      isFreeSaleItem(i) ? "Gratis" : money(i.unit_price),
       money(i.total),
     ]),
     sale.total,
     sale.paid,
     sale.balance,
     sale.notes,
-    { cash: "Tunai", transfer: "Transfer", qris: "QRIS", credit: "Piutang" }[
-      sale.payment_method
-    ],
+    sale.total === 0
+      ? "Gratis - tidak ada tagihan"
+      : {
+          cash: "Tunai",
+          transfer: "Transfer",
+          qris: "QRIS",
+          credit: "Piutang",
+        }[sale.payment_method],
   );
 }
 export async function printPurchase(purchase: FeedPurchase, state: State) {

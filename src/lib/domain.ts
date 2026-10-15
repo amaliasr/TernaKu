@@ -10,6 +10,7 @@ import type {
   RegistrationInput,
   RegistrationResult,
   Sale,
+  SaleItem,
   State,
   User,
 } from "./types";
@@ -406,6 +407,11 @@ function totalAmount(value: number): number {
   );
   return value;
 }
+export function isFreeSaleItem(
+  item: Pick<SaleItem, "category" | "unit_price">,
+): boolean {
+  return item.category === "cracked" && item.unit_price === 0;
+}
 function list(value: unknown): CommandPayload[] {
   assert(
     Array.isArray(value) && value.length > 0 && value.length <= 100,
@@ -539,6 +545,8 @@ function correct(
   if (payload.entity === "pickup") checkPickup(state, row as Pickup);
   if (payload.entity === "sale") {
     const sale = row as Sale;
+    if (sale.items.some(isFreeSaleItem))
+      requiredText(sale.customer, "Nama penerima telur gratis");
     for (const pickupId of new Set(sale.items.map((item) => item.pickup_id))) {
       const pickup = find(state.pickups, pickupId, "Pengambilan");
       assert(
@@ -678,14 +686,29 @@ export function executeCommand(
           kg: round(used.kg + q.kg),
           trays: used.trays + q.trays,
         };
-        const unit_price =
-          c === "good" ? price.good_price : price.cracked_price;
+        assert(
+          item.is_free === undefined || typeof item.is_free === "boolean",
+          "Pilihan gratis tidak valid.",
+        );
+        assert(
+          !item.is_free || c === "cracked",
+          "Hanya telur bentes yang boleh diberikan gratis.",
+        );
+        const is_free =
+          c === "cracked" &&
+          (item.is_free === true || price.cracked_price === 0);
+        const unit_price = is_free
+          ? 0
+          : c === "good"
+            ? price.good_price
+            : price.cracked_price;
         return {
           id: id("item"),
           pickup_id: p.id,
           category: c,
           ...q,
           unit_price,
+          is_free,
           total: Math.round(q.kg * unit_price),
         };
       });
@@ -704,18 +727,21 @@ export function executeCommand(
           method === "credit",
         "Metode pembayaran tidak valid.",
       );
+      const customer = items.some(isFreeSaleItem)
+        ? requiredText(payload.customer, "Nama penerima telur gratis")
+        : text(payload.customer);
       state.sales.push({
         id: id("sale"),
         number: invoice("TRX", state.sales.length),
         date: dateValue(payload.date, now),
         user_id: user.id,
-        customer: text(payload.customer),
+        customer,
         phone: text(payload.phone),
         items,
         total,
         paid,
         balance: total - paid,
-        payment_method: method,
+        payment_method: total === 0 ? "cash" : method,
         payment_status:
           paid === total ? "paid" : paid > 0 ? "partial" : "unpaid",
         notes: text(payload.notes),
@@ -748,7 +774,7 @@ export function executeCommand(
       const cracked_price = numeric(
         payload.cracked_price,
         "Harga telur bentes",
-        true,
+        false,
         true,
       );
       const effective_at = normalizeDateTime(
@@ -780,7 +806,7 @@ export function executeCommand(
             new Date(effective_at) > now
               ? "Harga telur dijadwalkan"
               : "Harga telur diperbarui",
-          message: `Mulai ${dateLabel(effective_at, true)}, telur bagus ${money(good_price)}/kg dan telur bentes ${money(cracked_price)}/kg.`,
+          message: `Mulai ${dateLabel(effective_at, true)}, telur bagus ${money(good_price)}/kg dan telur bentes ${cracked_price === 0 ? "Gratis" : money(cracked_price) + "/kg"}.`,
           read: false,
           created_at: stamp,
         });

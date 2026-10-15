@@ -73,6 +73,8 @@ export interface SaleItem {
   kg: number;
   trays: number;
   unit_price: number;
+  /** Immutable free-gift snapshot. Older transactions may omit this field. */
+  is_free?: boolean;
   total: number;
 }
 export interface Sale {

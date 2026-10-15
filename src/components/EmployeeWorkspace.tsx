@@ -35,6 +35,8 @@ import {
 import type { Pickup, Sale } from "@/lib/types";
 import EntryModal from "./EntryModal";
 import InstallApp from "./InstallApp";
+import PushNotifications from "./PushNotifications";
+import ThemeToggle from "./ThemeToggle";
 import Modules from "./Modules";
 import Reports from "./Reports";
 import { categoryLabel, Dialog } from "./ModuleUI";
@@ -180,6 +182,7 @@ export default function EmployeeWorkspace() {
           Terna<strong>Ku</strong>
         </button>
         <div className={styles.headerActions}>
+          <ThemeToggle compact />
           {mode === "demo" && <span className={styles.demo}>Demo</span>}
           <button
             className={styles.bell}
@@ -220,8 +223,8 @@ export default function EmployeeWorkspace() {
               <Egg size={17} /> Telur bentes
             </span>
             <strong>
-              {price ? money(price.cracked_price) : "Belum ada"}
-              {price && <small>/kg</small>}
+              {price ? price.cracked_price === 0 ? "Gratis" : money(price.cracked_price) : "Belum ada"}
+              {price && price.cracked_price > 0 && <small>/kg</small>}
             </strong>
           </div>
         </div>
@@ -304,6 +307,7 @@ export default function EmployeeWorkspace() {
               <ArrowRight size={22} />
             </button>
             <InstallApp />
+            <PushNotifications />
             <section
               className={styles.section}
               aria-label="Catatan saya hari ini"
@@ -501,12 +505,15 @@ export default function EmployeeWorkspace() {
                     </span>
                     <small>{dateLabel(row.date)}</small>
                   </div>
-                  <h2 className={styles.saleTotal}>{money(row.total)}</h2>
+                  <h2 className={styles.saleTotal}>
+                    {row.total === 0 ? "Gratis" : money(row.total)}
+                  </h2>
                   <p>{row.customer || "Pelanggan umum"}</p>
                   <div className={styles.saleItems}>
                     {row.items.map((item) => (
                       <span key={item.id}>
                         {categoryLabel(item.category)} · {quantity(item.kg)} kg
+                        {item.category === "cracked" && item.unit_price === 0 && " · Gratis"}
                       </span>
                     ))}
                   </div>

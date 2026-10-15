@@ -7,15 +7,7 @@ import {
   type FormEvent,
   type ReactNode,
 } from "react";
-import {
-  Plus,
-  Trash2,
-  AlertTriangle,
-  MapPin,
-  ImagePlus,
-  Egg,
-  Info,
-} from "lucide-react";
+import { Plus, Trash2, AlertTriangle, MapPin, Egg, Info } from "lucide-react";
 import {
   isUncertainWriteError,
   shouldPreserveUnconfirmedWrite,
@@ -32,6 +24,7 @@ import {
 } from "@/lib/domain";
 import type { Category, CommandPayload } from "@/lib/types";
 import EmployeeEntry from "./EmployeeEntry";
+import Photo from "./PhotoUpload";
 import {
   categoryLabel,
   dataFrom,
@@ -96,73 +89,6 @@ function FormShell({
       <div className="modal-body-custom">{children}</div>
       <Footer busy={busy} disabled={disabled} onClose={onClose} label={label} />
     </form>
-  );
-}
-function Photo({
-  onChange,
-  label = "Foto dokumentasi",
-}: {
-  onChange: (data: string) => void;
-  label?: string;
-}) {
-  const [photo, setPhoto] = useState("");
-  const [error, setError] = useState("");
-  return (
-    <div className="photo-upload">
-      <label>
-        <ImagePlus size={18} />
-        <span>
-          {label} <small>(opsional, JPG/PNG/WebP, maks. 1 MB)</small>
-        </span>
-        <input
-          aria-label={label}
-          className="form-control mt-2"
-          type="file"
-          accept="image/jpeg,image/png,image/webp"
-          onChange={(e) => {
-            const file = e.target.files?.[0];
-            setError("");
-            if (!file) {
-              setPhoto("");
-              onChange("");
-              return;
-            }
-            if (
-              file.size > 1048576 ||
-              !["image/jpeg", "image/png", "image/webp"].includes(file.type)
-            ) {
-              setError(
-                "Gunakan gambar JPG, PNG, atau WebP berukuran maksimal 1 MB.",
-              );
-              e.target.value = "";
-              setPhoto("");
-              onChange("");
-              return;
-            }
-            const reader = new FileReader();
-            reader.onload = () => {
-              const data = String(reader.result);
-              setPhoto(data);
-              onChange(data);
-            };
-            reader.onerror = () => setError("Foto tidak dapat dibaca.");
-            reader.readAsDataURL(file);
-          }}
-        />
-      </label>
-      {error && (
-        <small role="alert" className="text-danger">
-          {error}
-        </small>
-      )}
-      {photo && (
-        <img
-          className="photo-preview"
-          src={photo}
-          alt="Pratinjau dokumentasi"
-        />
-      )}
-    </div>
   );
 }
 function ProductionForm({ onSave, busy, onClose }: FormProps) {
@@ -453,7 +379,13 @@ function PickupForm({ onSave, busy, onClose }: FormProps) {
     </FormShell>
   );
 }
-type SaleLine = { pickup_id: string; kg: string; eggs: string; trays: string };
+type SaleLine = {
+  pickup_id: string;
+  kg: string;
+  eggs: string;
+  trays: string;
+  is_free: boolean;
+};
 function SaleForm({ onSave, busy, onClose }: FormProps) {
   const { state, user } = useFarm();
   const price = activePrice(state);
@@ -464,7 +396,7 @@ function SaleForm({ onSave, busy, onClose }: FormProps) {
       pickupBalance(state, p).eggs > 0,
   );
   const [items, setItems] = useState<SaleLine[]>([
-    { pickup_id: "", kg: "", eggs: "", trays: "0" },
+    { pickup_id: "", kg: "", eggs: "", trays: "0", is_free: false },
   ]);
   const [method, setMethod] = useState("cash");
   const [isFull, setIsFull] = useState(true);
@@ -472,6 +404,11 @@ function SaleForm({ onSave, busy, onClose }: FormProps) {
   const [photo, setPhoto] = useState("");
   const linePrice = (line: SaleLine) => {
     const pickup = state.pickups.find((p) => p.id === line.pickup_id);
+    if (
+      pickup?.category === "cracked" &&
+      (line.is_free || price?.cracked_price === 0)
+    )
+      return 0;
     return pickup?.category === "good"
       ? price?.good_price || 0
       : price?.cracked_price || 0;
@@ -480,8 +417,18 @@ function SaleForm({ onSave, busy, onClose }: FormProps) {
       (sum, item) => sum + Math.round(Number(item.kg) * linePrice(item)),
       0,
     ),
-    payment = isFull ? total : Number(paid);
-  const update = (index: number, key: keyof SaleLine, value: string) =>
+    payment = total === 0 ? 0 : isFull ? total : Number(paid);
+  const hasFree = items.some(
+    (line) =>
+      state.pickups.find((p) => p.id === line.pickup_id)?.category ===
+        "cracked" &&
+      (line.is_free || price?.cracked_price === 0),
+  );
+  const update = (
+    index: number,
+    key: keyof SaleLine,
+    value: string | boolean,
+  ) =>
     setItems((old) =>
       old.map((line, i) => (i === index ? { ...line, [key]: value } : line)),
     );
@@ -521,8 +468,12 @@ function SaleForm({ onSave, busy, onClose }: FormProps) {
             kg: Number(item.kg),
             eggs: Number(item.eggs),
             trays: Number(item.trays),
+            is_free:
+              state.pickups.find((p) => p.id === item.pickup_id)?.category ===
+                "cracked" &&
+              (item.is_free || price?.cracked_price === 0),
           })),
-          payment_method: method,
+          payment_method: total === 0 ? "cash" : method,
           paid: payment,
           photo: photo || undefined,
         });
@@ -539,12 +490,18 @@ function SaleForm({ onSave, busy, onClose }: FormProps) {
             required
           />
         </Field>
-        <Field className="col-sm-6" label="Pelanggan (opsional)">
+        <Field
+          className="col-sm-6"
+          label={
+            hasFree ? "Nama penerima telur gratis" : "Pelanggan (opsional)"
+          }
+        >
           <input
             name="customer"
             className="form-control"
             placeholder="Nama pelanggan"
             maxLength={150}
+            required={hasFree}
           />
         </Field>
         <Field className="col-sm-6" label="Telepon pelanggan (opsional)">
@@ -569,10 +526,10 @@ function SaleForm({ onSave, busy, onClose }: FormProps) {
             onClick={() =>
               setItems((old) => [
                 ...old,
-                { pickup_id: "", kg: "", eggs: "", trays: "0" },
+                { pickup_id: "", kg: "", eggs: "", trays: "0", is_free: false },
               ])
             }
-            disabled={items.length >= available.length}
+            disabled={items.length >= 100}
           >
             <Plus size={14} />
             Tambah item
@@ -595,18 +552,12 @@ function SaleForm({ onSave, busy, onClose }: FormProps) {
                     required
                   >
                     <option value="">Pilih persediaan Anda</option>
-                    {available
-                      .filter(
-                        (p) =>
-                          p.id === item.pickup_id ||
-                          !items.some((line) => line.pickup_id === p.id),
-                      )
-                      .map((p) => (
-                        <option key={p.id} value={p.id}>
-                          {categoryLabel(p.category)} · {p.area} ·{" "}
-                          {number(pickupBalance(state, p).kg)} kg
-                        </option>
-                      ))}
+                    {available.map((p) => (
+                      <option key={p.id} value={p.id}>
+                        {categoryLabel(p.category)} · {p.area} ·{" "}
+                        {number(pickupBalance(state, p).kg)} kg
+                      </option>
+                    ))}
                   </select>
                 </Field>
                 {items.length > 1 && (
@@ -627,6 +578,28 @@ function SaleForm({ onSave, busy, onClose }: FormProps) {
                   Tersedia {number(balance.eggs)} butir / {number(balance.kg)}{" "}
                   kg · Harga {money(linePrice(item))}/kg
                 </small>
+              )}
+              {pickup?.category === "cracked" && (
+                <label
+                  className="form-check d-flex align-items-center gap-2 my-2"
+                  style={{ minHeight: 48 }}
+                >
+                  <input
+                    className="form-check-input m-0"
+                    type="checkbox"
+                    checked={item.is_free || price?.cracked_price === 0}
+                    disabled={price?.cracked_price === 0}
+                    onChange={(e) => update(index, "is_free", e.target.checked)}
+                  />
+                  <span>
+                    Gratis (pemberian telur bentes)
+                    {price?.cracked_price === 0 && (
+                      <small className="d-block text-muted">
+                        Harga bentes hari ini ditetapkan gratis.
+                      </small>
+                    )}
+                  </span>
+                </label>
               )}
               <div className="row g-2 mt-1">
                 <Field className="col-4" label="Butir">
@@ -666,7 +639,10 @@ function SaleForm({ onSave, busy, onClose }: FormProps) {
                 </Field>
               </div>
               <div className="text-end mt-2 fw-semibold">
-                {money(Math.round(Number(item.kg) * linePrice(item)))}
+                {pickup?.category === "cracked" &&
+                (item.is_free || price?.cracked_price === 0)
+                  ? "Gratis"
+                  : money(Math.round(Number(item.kg) * linePrice(item)))}
               </div>
             </div>
           );
@@ -685,7 +661,13 @@ function SaleForm({ onSave, busy, onClose }: FormProps) {
           </div>
         )}
       </div>
-      <div className="row g-3">
+      {hasFree && (
+        <div className="alert alert-info">
+          Telur gratis tetap mengurangi persediaan. Nama penerima wajib diisi.
+          {total === 0 && " Tidak ada pembayaran atau piutang."}
+        </div>
+      )}
+      <div className="row g-3" hidden={hasFree && total === 0}>
         <Field className="col-sm-6" label="Metode pembayaran">
           <select
             className="form-select"
@@ -714,7 +696,7 @@ function SaleForm({ onSave, busy, onClose }: FormProps) {
             <option value="other">Belum / sebagian dibayar</option>
           </select>
         </Field>
-        {!isFull && (
+        {!isFull && total > 0 && (
           <Field className="col-12" label="Nominal dibayar (Rp)">
             <input
               type="number"
@@ -785,12 +767,16 @@ function PriceForm({ onSave, busy, onClose }: FormProps) {
             required
           />
         </Field>
-        <Field className="col-sm-6" label="Telur bentes (Rp/kg)">
+        <Field
+          className="col-sm-6"
+          label="Telur bentes (Rp/kg)"
+          hint="Isi 0 jika telur bentes diberikan gratis."
+        >
           <input
             name="cracked_price"
             className="form-control"
             type="number"
-            min="1"
+            min="0"
             step="1"
             defaultValue={price?.cracked_price}
             required
@@ -1433,7 +1419,11 @@ export function EntryModal({
           (price) => price.id === payload.expected_price_id,
         );
         const lines = Array.isArray(payload.items)
-          ? (payload.items as { kg: number; category: Category }[])
+          ? (payload.items as {
+              kg: number;
+              category: Category;
+              is_free?: boolean;
+            }[])
           : [];
         attempt = {
           user_id: user.id,
@@ -1446,9 +1436,11 @@ export function EntryModal({
                   sum +
                   Math.round(
                     item.kg *
-                      (item.category === "good"
-                        ? snapshot.good_price
-                        : snapshot.cracked_price),
+                      (item.category === "cracked" && item.is_free
+                        ? 0
+                        : item.category === "good"
+                          ? snapshot.good_price
+                          : snapshot.cracked_price),
                   ),
                 0,
               )

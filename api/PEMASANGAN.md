@@ -6,7 +6,7 @@ Panduan ini mengikuti paket dan installer TernaKu yang tersedia di repository. P
 
 ## 1. Siapkan hosting dan paket API
 
-Siapkan PHP **8.2**, ekstensi `pdo_mysql`, `mbstring`, `json`, dan `openssl`, serta MySQL 5.7+/8.0 atau MariaDB 10.4+ dengan InnoDB. Web server harus mendukung aturan `.htaccess` dan rewrite Apache. Gunakan HTTPS pada kedua domain. Runtime CodeIgniter 3 sudah ada dalam paket; Composer dan Node.js tidak diperlukan untuk menjalankan API.
+Siapkan PHP **8.2**, ekstensi `pdo_mysql`, `mbstring`, `json`, dan `openssl`, serta MySQL 5.7+/8.0 atau MariaDB 10.4+ dengan InnoDB. Aktifkan juga `curl` untuk notifikasi HP. Web server harus mendukung aturan `.htaccess` dan rewrite Apache. Gunakan HTTPS pada kedua domain. Runtime CodeIgniter 3 dan dependensi Web Push sudah ada dalam paket GitHub Actions terbaru; Composer hanya diperlukan bila menyiapkan dependensi langsung dari source. Node.js tidak diperlukan untuk menjalankan API.
 
 Ambil paket dengan salah satu cara:
 
@@ -32,6 +32,10 @@ document-root-api.buildmanagement.id/
     ├── CI-LICENSE.txt
     ├── README.md
     ├── PEMASANGAN.md
+    ├── PUSH.md
+    ├── composer.json
+    ├── composer.lock
+    ├── vendor/
     ├── application/
     │   ├── config/
     │   ├── controllers/
@@ -39,7 +43,9 @@ document-root-api.buildmanagement.id/
     │   └── logs/
     ├── scripts/
     │   ├── env.php
-    │   └── install.php
+    │   ├── install.php
+    │   ├── push-keys.php
+    │   └── push-worker.php
     └── system/
 ```
 
@@ -212,6 +218,14 @@ Setelah website terbuka:
 
 Untuk mencoba transaksi fiktif, gunakan mode demo atau instalasi uji terpisah. Jangan menjalankan suite tes integrasi pada database operasional karena suite tersebut menghapus dan membuat ulang tabel database tes.
 
+Halaman karyawan menyediakan Panen, Jual, dan Gudang dengan harga yang diperiksa setiap 5 detik ketika aplikasi terlihat. Admin juga dapat mencatat kegiatan operasional. Tema terang/gelap tersimpan pada perangkat, dan foto dapat diambil melalui kamera atau galeri. Untuk pembagian telur bentes gratis, masukkan harga bentes 0 atau pilih pemberian gratis pada penjualan, lalu isi nama penerima; stok tetap dihitung.
+
+## 8. Aktifkan notifikasi harga ke HP
+
+Ikuti **[panduan Web Push](PUSH.md)** untuk menyiapkan dependensi `vendor/`, kunci VAPID privat, dan cron pengiriman setiap menit. Pakai kunci yang sama pada deployment berikutnya dan simpan cadangannya secara privat. Tidak perlu mengganti database atau menambahkan rahasia ke frontend.
+
+Setelah server siap, login pada HP dan tekan **Aktifkan notifikasi**, lalu beri izin. Tombol **Coba notifikasi** mengirim percobaan hanya ke perangkat tersebut. Pada iPhone/iPad, pasang TernaKu ke layar utama terlebih dahulu. Pembaruan harga tetap menghasilkan pemberitahuan meskipun nominalnya sama. Status `push_ready: true` pada health memeriksa kesiapan server; keberhasilan pengiriman perlu diperiksa pada perangkat sendiri.
+
 ## Jika muncul kendala
 
 | Gejala | Yang perlu diperiksa |
@@ -225,12 +239,13 @@ Untuk mencoba transaksi fiktif, gunakan mode demo atau instalasi uji terpisah. J
 | Form Daftar tidak bisa memuat status | Pasang pembaruan API yang menyediakan `/auth/registration-status` dan `/auth/register`, lalu periksa koneksi serta origin website. |
 | Setup admin belum diaktifkan | Konfigurasikan kode setup minimal 32 karakter hanya pada server API. Pembuatan admin melalui browser sengaja dinonaktifkan jika kode belum disiapkan. |
 | Akun baru belum bisa masuk | Admin harus menyetujui permohonan di menu Karyawan; tombol Daftar tidak memberi akses otomatis ke data peternakan. |
+| Notifikasi HP belum siap atau tidak masuk | Periksa [panduan Web Push](PUSH.md), `push_ready`, cron, izin perangkat, dan koneksi. Pada iPhone/iPad, buka aplikasi dari layar utama. |
 | Installer gagal atau tidak berjalan lewat Cron Jobs | Periksa path absolut, versi PHP CLI, ekstensi `pdo_mysql`, koneksi DB, dan izin folder log privat. |
 | `.env` atau file internal dapat diunduh | Hentikan setup sampai aturan penolakan server berfungsi. Jika rahasia sudah terpapar, ganti password terkait. |
 
 ## Pembaruan API berikutnya
 
-Sebelum memperbarui, cadangkan database MySQL dan `.env` di lokasi privat. Ekstrak paket terbaru sambil mempertahankan `.env` milik hosting. Ikuti petunjuk migrasi pada rilis jika ada; jangan mengosongkan database atau mengimpor data contoh. Installer awal tidak menggantikan migrasi schema untuk perubahan versi mendatang. Setelah pembaruan, periksa `/health` dan login kembali.
+Sebelum memperbarui, cadangkan database MySQL, `.env`, dan `application/config/push-keys.php` bila tersedia di lokasi privat. Ekstrak paket terbaru sambil mempertahankan `.env` dan kunci push milik hosting. Ikuti petunjuk migrasi pada rilis jika ada; jangan mengosongkan database atau mengimpor data contoh. Installer awal tidak menggantikan migrasi schema untuk perubahan versi mendatang. Setelah pembaruan, periksa `/health`, login kembali, dan coba notifikasi pada perangkat sendiri.
 
 ## Perbedaan dengan pemasangan RumahFlow
 

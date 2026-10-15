@@ -32,6 +32,7 @@ import {
   dateLabel,
   eggStock,
   feedStock,
+  isFreeSaleItem,
   money,
   number as formatNumber,
   pickupBalance,
@@ -624,7 +625,12 @@ function SalesPage({ open }: { open: OpenForm }) {
                       kg
                     </td>
                     <td className="text-end fw-semibold text-nowrap">
-                      {money(s.total)}
+                      {s.total === 0 ? "Gratis" : money(s.total)}
+                      {s.total > 0 && s.items.some(isFreeSaleItem) && (
+                        <small className="cell-sub">
+                          Termasuk telur bentes gratis
+                        </small>
+                      )}
                       {s.balance > 0 && (
                         <small className="cell-sub text-warning-emphasis">
                           Sisa {money(s.balance)}
@@ -641,11 +647,13 @@ function SalesPage({ open }: { open: OpenForm }) {
                               : "warning"
                         }
                       >
-                        {s.balance === 0
-                          ? "Lunas"
-                          : s.paid > 0
-                            ? "Sebagian"
-                            : "Belum lunas"}
+                        {s.total === 0
+                          ? "Gratis"
+                          : s.balance === 0
+                            ? "Lunas"
+                            : s.paid > 0
+                              ? "Sebagian"
+                              : "Belum lunas"}
                       </Pill>
                     </td>
                     <td>
@@ -1431,7 +1439,11 @@ function PricesPage({ open }: { open: OpenForm }) {
           </div>
           <span>Telur bentes</span>
           <h2>
-            {price ? money(price.cracked_price) : "Belum diatur"}
+            {price
+              ? price.cracked_price === 0
+                ? "Gratis"
+                : money(price.cracked_price)
+              : "Belum diatur"}
             <small>/ kg</small>
           </h2>
           <p>
@@ -1471,7 +1483,9 @@ function PricesPage({ open }: { open: OpenForm }) {
                       {money(p.good_price)}
                     </td>
                     <td className="text-end fw-semibold">
-                      {money(p.cracked_price)}
+                      {p.cracked_price === 0
+                        ? "Gratis"
+                        : money(p.cracked_price)}
                     </td>
                     <td>
                       {state.users.find((u) => u.id === p.created_by)?.name ||

@@ -5,7 +5,6 @@ import {
   AlertTriangle,
   Check,
   Egg,
-  ImagePlus,
   Plus,
   Trash2,
   Warehouse,
@@ -35,6 +34,7 @@ import {
   methodLabel,
 } from "./ModuleUI";
 import styles from "./EmployeeEntry.module.css";
+import Photo from "./PhotoUpload";
 
 type Props = {
   kind: "production" | "pickup" | "sale";
@@ -180,49 +180,6 @@ function Numbers({
         />
       </Field>
     </div>
-  );
-}
-
-function Photo({ onChange }: { onChange: (value: string) => void }) {
-  const [error, setError] = useState("");
-  return (
-    <Field
-      label="Foto (boleh dikosongkan)"
-      hint="JPG, PNG, atau WebP. Maksimal 1 MB."
-    >
-      <span className={styles.photo}>
-        <ImagePlus size={20} /> Tambahkan foto bila perlu
-      </span>
-      <input
-        className="form-control"
-        type="file"
-        accept="image/jpeg,image/png,image/webp"
-        onChange={(event) => {
-          const file = event.target.files?.[0];
-          setError("");
-          onChange("");
-          if (!file) return;
-          if (
-            file.size > 1048576 ||
-            !["image/jpeg", "image/png", "image/webp"].includes(file.type)
-          ) {
-            setError("Pilih foto JPG, PNG, atau WebP maksimal 1 MB.");
-            event.target.value = "";
-            return;
-          }
-          const reader = new FileReader();
-          reader.onload = () => onChange(String(reader.result));
-          reader.onerror = () =>
-            setError("Foto belum bisa dibaca. Silakan pilih kembali.");
-          reader.readAsDataURL(file);
-        }}
-      />
-      {error && (
-        <small className="text-danger" role="alert">
-          {error}
-        </small>
-      )}
-    </Field>
   );
 }
 
@@ -403,6 +360,7 @@ type SaleLine = {
   kg: string;
   eggs: string;
   trays: string;
+  is_free: boolean;
 };
 
 function SaleEntry({ onSave, busy, onClose, onSwitchKind }: Props) {
@@ -422,11 +380,13 @@ function SaleEntry({ onSave, busy, onClose, onSwitchKind }: Props) {
       kg: "",
       eggs: "",
       trays: "",
+      is_free: false,
     },
   ]);
   const [method, setMethod] = useState<PaymentMethod>("cash");
   const [full, setFull] = useState(true);
   const [paid, setPaid] = useState("0");
+  const [customer, setCustomer] = useState("");
   const [photo, setPhoto] = useState("");
   const [date, setDate] = useState("");
   const [initialDate] = useState(localNow);
@@ -437,6 +397,11 @@ function SaleEntry({ onSave, busy, onClose, onSwitchKind }: Props) {
   const priceChanged = !!price && hasQuantity && reviewedPriceId !== price.id;
   const unitPrice = (item: SaleLine) => {
     const pickup = available.find((entry) => entry.id === item.pickup_id);
+    if (
+      pickup?.category === "cracked" &&
+      (item.is_free || price?.cracked_price === 0)
+    )
+      return 0;
     return pickup
       ? (pickup.category === "good"
           ? price?.good_price
@@ -447,11 +412,17 @@ function SaleEntry({ onSave, busy, onClose, onSwitchKind }: Props) {
     (sum, item) => sum + Math.round(Number(item.kg) * unitPrice(item)),
     0,
   );
-  const payment = full ? total : Number(paid);
+  const hasFree = items.some(
+    (item) =>
+      available.find((entry) => entry.id === item.pickup_id)?.category ===
+        "cracked" &&
+      (item.is_free || price?.cracked_price === 0),
+  );
+  const payment = total === 0 ? 0 : full ? total : Number(paid);
   const update = (
     key: number,
     field: keyof Omit<SaleLine, "key">,
-    value: string,
+    value: string | boolean,
   ) => {
     if (!hasQuantity) setReviewedPriceId(price?.id);
     setItems((old) =>
@@ -508,8 +479,13 @@ function SaleEntry({ onSave, busy, onClose, onSwitchKind }: Props) {
             eggs: Number(item.eggs),
             kg: Number(item.kg),
             trays: Number(item.trays || 0),
+            is_free:
+              available.find((pickup) => pickup.id === item.pickup_id)
+                ?.category === "cracked" &&
+              (item.is_free || price?.cracked_price === 0),
           })),
-          payment_method: method,
+          payment_method: total === 0 ? "cash" : method,
+          customer,
           paid: payment,
           photo: photo || undefined,
         });
@@ -522,7 +498,13 @@ function SaleEntry({ onSave, busy, onClose, onSwitchKind }: Props) {
         </div>
         <div>
           <span>Bentes / kg</span>
-          <strong>{price ? money(price.cracked_price) : "Belum diatur"}</strong>
+          <strong>
+            {price
+              ? price.cracked_price === 0
+                ? "Gratis"
+                : money(price.cracked_price)
+              : "Belum diatur"}
+          </strong>
         </div>
       </div>
       <p className={styles.hint}>
@@ -557,11 +539,7 @@ function SaleEntry({ onSave, busy, onClose, onSwitchKind }: Props) {
       {items.map((item, index) => {
         const pickup = available.find((entry) => entry.id === item.pickup_id);
         const balance = pickup ? pickupBalance(state, pickup) : undefined;
-        const choices = available.filter(
-          (entry) =>
-            entry.id === item.pickup_id ||
-            !items.some((line) => line.pickup_id === entry.id),
-        );
+        const choices = available;
         return (
           <section
             key={item.key}
@@ -620,6 +598,31 @@ function SaleEntry({ onSave, busy, onClose, onSwitchKind }: Props) {
                 {quantity(balance.kg)} kg. Harga {money(unitPrice(item))}/kg.
               </p>
             )}
+            {pickup?.category === "cracked" && (
+              <label
+                className="d-flex align-items-center gap-2"
+                style={{ minHeight: 48 }}
+              >
+                <input
+                  type="checkbox"
+                  className="form-check-input m-0"
+                  style={{ minHeight: 24, width: 24 }}
+                  checked={item.is_free || price?.cracked_price === 0}
+                  disabled={price?.cracked_price === 0}
+                  onChange={(event) =>
+                    update(item.key, "is_free", event.target.checked)
+                  }
+                />
+                <span>
+                  Berikan gratis
+                  {price?.cracked_price === 0 && (
+                    <small className="d-block">
+                      Harga bentes hari ini gratis.
+                    </small>
+                  )}
+                </span>
+              </label>
+            )}
             <Numbers
               eggs={item.eggs}
               kg={item.kg}
@@ -645,20 +648,21 @@ function SaleEntry({ onSave, busy, onClose, onSwitchKind }: Props) {
             <div className={styles.lineTotal}>
               <span>Jumlah</span>
               <strong>
-                {money(Math.round(Number(item.kg) * unitPrice(item)))}
+                {pickup?.category === "cracked" &&
+                (item.is_free || price?.cracked_price === 0)
+                  ? "Gratis"
+                  : money(Math.round(Number(item.kg) * unitPrice(item)))}
               </strong>
             </div>
           </section>
         );
       })}
-      {items.length < available.length && (
+      {items.length < 100 && (
         <button
           type="button"
           className={`btn btn-outline-primary ${styles.add}`}
           onClick={() => {
-            const remaining = available.filter(
-              (pickup) => !items.some((item) => item.pickup_id === pickup.id),
-            );
+            const remaining = available;
             const key = nextKey.current++;
             setItems((old) => [
               ...old,
@@ -668,73 +672,99 @@ function SaleEntry({ onSave, busy, onClose, onSwitchKind }: Props) {
                 eggs: "",
                 kg: "",
                 trays: "",
+                is_free: false,
               },
             ]);
           }}
         >
-          <Plus size={20} /> Tambah jenis / pengambilan
+          <Plus size={20} /> Tambah baris telur
         </button>
       )}
-      <Optional
-        label={`Pembayaran: ${methodLabel(method)} · ${full ? "Lunas" : "Belum lunas"}`}
-      >
-        <Field label="Dibayar lewat apa?">
-          <select
-            className="form-select"
-            value={method}
-            onChange={(e) => {
-              const value = e.target.value as PaymentMethod;
-              setMethod(value);
-              if (value === "credit") {
-                setFull(false);
-                setPaid("0");
-              }
-            }}
-          >
-            <option value="cash">Tunai</option>
-            <option value="transfer">Transfer</option>
-            <option value="qris">QRIS</option>
-            <option value="credit">Piutang (bayar nanti)</option>
-          </select>
+      {hasFree && (
+        <Field
+          label="Nama penerima telur gratis"
+          hint="Tetap dicatat agar pembagian telur jelas."
+        >
+          <input
+            className="form-control"
+            value={customer}
+            onChange={(event) => setCustomer(event.target.value)}
+            maxLength={150}
+            placeholder="Contoh: Pak Budi"
+            required
+          />
         </Field>
-        <Field label="Sudah dibayar semuanya?">
-          <select
-            className="form-select"
-            value={full ? "yes" : "no"}
-            onChange={(e) => setFull(e.target.value === "yes")}
-          >
-            <option value="yes">Ya, sudah lunas</option>
-            <option value="no">Belum / baru sebagian</option>
-          </select>
-        </Field>
-        {!full && (
-          <Field
-            label="Uang yang sudah diterima (Rp)"
-            hint="Isi 0 jika belum dibayar."
-          >
+      )}
+      {hasFree && total === 0 ? (
+        <p className={styles.hint}>
+          Pemberian gratis. Stok tetap berkurang, tanpa pembayaran atau piutang.
+        </p>
+      ) : (
+        <Optional
+          label={`Pembayaran: ${methodLabel(method)} · ${full ? "Lunas" : "Belum lunas"}`}
+        >
+          <Field label="Dibayar lewat apa?">
+            <select
+              className="form-select"
+              value={method}
+              onChange={(e) => {
+                const value = e.target.value as PaymentMethod;
+                setMethod(value);
+                if (value === "credit") {
+                  setFull(false);
+                  setPaid("0");
+                }
+              }}
+            >
+              <option value="cash">Tunai</option>
+              <option value="transfer">Transfer</option>
+              <option value="qris">QRIS</option>
+              <option value="credit">Piutang (bayar nanti)</option>
+            </select>
+          </Field>
+          <Field label="Sudah dibayar semuanya?">
+            <select
+              className="form-select"
+              value={full ? "yes" : "no"}
+              onChange={(e) => setFull(e.target.value === "yes")}
+            >
+              <option value="yes">Ya, sudah lunas</option>
+              <option value="no">Belum / baru sebagian</option>
+            </select>
+          </Field>
+          {!full && (
+            <Field
+              label="Uang yang sudah diterima (Rp)"
+              hint="Isi 0 jika belum dibayar."
+            >
+              <input
+                className="form-control"
+                type="number"
+                inputMode="numeric"
+                min="0"
+                step="1"
+                max={total}
+                value={paid}
+                onChange={(e) => setPaid(e.target.value)}
+                required
+              />
+            </Field>
+          )}
+        </Optional>
+      )}
+      <Optional label="Pelanggan, foto, dan catatan (boleh kosong)">
+        {!hasFree && (
+          <Field label="Nama pelanggan">
             <input
+              name="customer"
               className="form-control"
-              type="number"
-              inputMode="numeric"
-              min="0"
-              step="1"
-              max={total}
-              value={paid}
-              onChange={(e) => setPaid(e.target.value)}
-              required
+              maxLength={150}
+              autoComplete="off"
+              value={customer}
+              onChange={(event) => setCustomer(event.target.value)}
             />
           </Field>
         )}
-      </Optional>
-      <Optional label="Pelanggan, foto, dan catatan (boleh kosong)">
-        <Field label="Nama pelanggan">
-          <input
-            name="customer"
-            className="form-control"
-            maxLength={150}
-            autoComplete="off"
-          />
-        </Field>
         <Field label="Nomor HP pelanggan">
           <input
             name="phone"
@@ -770,10 +800,16 @@ function SaleEntry({ onSave, busy, onClose, onSwitchKind }: Props) {
         <span>Total penjualan</span>
         <strong>{money(total)}</strong>
         <small>
-          {methodLabel(method)} ·{" "}
-          {full
-            ? "Lunas"
-            : `Diterima ${money(payment)} · Sisa ${money(Math.max(0, total - payment))}`}
+          {hasFree && total === 0 ? (
+            "Gratis · tidak ada tagihan"
+          ) : (
+            <>
+              {methodLabel(method)} ·{" "}
+              {full
+                ? "Lunas"
+                : `Diterima ${money(payment)} · Sisa ${money(Math.max(0, total - payment))}`}
+            </>
+          )}
         </small>
       </div>
       {priceChanged && (

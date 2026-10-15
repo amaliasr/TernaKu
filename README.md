@@ -21,6 +21,7 @@ Source dan workflow build siap digunakan. Publikasi ke domain memerlukan akses h
 - Produksi harian telur bagus/bentes: butir, kilogram aktual, jumlah krat, sumber kandang opsional, catatan, foto dan lokasi opsional. Krat dan kilogram diisi terpisah; estimasi 10 kg/krat hanya membantu input.
 - Pengambilan telur per karyawan, sisa telur yang dibawa, pengembalian, dan riwayat pergerakan stok bertanggal. Validasi mencegah saldo butir/kilogram negatif dan sisa yang hanya mempunyai salah satu satuan.
 - Penjualan beberapa item dalam satu transaksi, pelanggan, harga otomatis, Tunai/Transfer/QRIS/Piutang, pembayaran sebagian/pelunasan, dan nota penjualan PDF.
+- Telur bentes dapat dibagikan gratis dengan nama penerima wajib diisi. Harga bentes Rp0 ditampilkan sebagai **Gratis**; jumlah telur tetap mengurangi stok, tanpa menambah omzet. Telur bagus tetap mengikuti harga jual.
 - Harga bagus/bentes per kilogram, jadwal mulai berlaku, riwayat harga, notifikasi perubahan, serta snapshot harga transaksi yang tidak berubah ketika harga baru ditetapkan.
 - Pembelian pakan beberapa item, nota pembelian PDF, stok/minimum pakan, dan pemakaian pakan per kandang ayam.
 - Admin mengelola akun/target, menonaktifkan karyawan, mengunci catatan, meninjau koreksi, dan membaca log aktivitas. Karyawan hanya menerima transaksi miliknya sendiri; harga serta saldo peternakan dapat dilihat sesuai kebutuhan kerja.
@@ -28,6 +29,8 @@ Source dan workflow build siap digunakan. Publikasi ke domain memerlukan akses h
 - Halaman karyawan khusus HP: tombol besar Panen/Jual/Gudang, stok bagus dan bentes terpisah, formulir singkat, serta rincian tambahan yang dapat dibuka bila diperlukan.
 - Harga karyawan diperiksa setiap 5 detik saat aplikasi terlihat. Input tetap tersimpan di formulir selama pembaruan; harga baru pada penjualan harus ditinjau sebelum menyimpan. Status koneksi dan waktu pemeriksaan terakhir ditampilkan.
 - Pemasangan ke layar utama HP sebagai aplikasi web (PWA), dengan ikon TernaKu, tampilan standalone, dan petunjuk Android/iPhone.
+- Mode terang/gelap tersedia di halaman masuk, admin, dan karyawan; pilihan tersimpan pada perangkat. Foto dapat diambil langsung dari kamera atau galeri dan diperkecil otomatis sebelum dikirim.
+- Notifikasi harga ke HP melalui Web Push setelah perangkat memberi izin, termasuk ketika admin menyimpan nominal harga yang sama. Penyiapan server dan cron dijelaskan dalam [panduan notifikasi HP](api/PUSH.md).
 - Laporan PDF dan Excel (`.xlsx`) serta peringkat penjualan. Export dibuat di browser menggunakan jsPDF dan ExcelJS.
 - **Insentif karyawan dan manajemen kandang sapi ditampilkan sebagai Coming Soon**, sesuai perubahan cakupan.
 
@@ -42,6 +45,8 @@ Buka [TernaKu](https://ternaku.rstudiohub.com) lalu tekan **Pasang TernaKu di HP
 Pemasangan tersedia melalui HTTPS dan bergantung pada dukungan browser. Aplikasi memerlukan internet untuk login, memeriksa harga, dan menyimpan catatan. Ketika aplikasi terbuka tetapi koneksi gagal, isian formulir tidak dikosongkan dan harga terakhir diberi peringatan. Menutup/memuat ulang aplikasi dapat menghilangkan isian yang belum disimpan. Service worker hanya menyimpan halaman pemberitahuan offline; data API, harga, token, dan transaksi tidak disimpan dalam cache service worker. Tidak ada antrean transaksi offline. Pemeriksaan 5 detik berhenti ketika aplikasi berada di latar belakang dan langsung dilanjutkan saat dibuka kembali.
 
 Jika penjualan sudah dikirim tetapi hasilnya belum diketahui, aplikasi mempertahankan data percobaan pada sesi tab yang sama. Buka kembali **Jual** lalu gunakan **Coba lagi dengan data yang sama** agar permintaan memakai nomor yang sama dan tidak membuat transaksi ganda. Data ini bukan antrean otomatis; jangan menutup seluruh tab atau menghapus data browser sebelum hasil penjualan dipastikan.
+
+Untuk pemberitahuan saat aplikasi ditutup, masuk lalu tekan **Aktifkan notifikasi** pada bagian **Notifikasi di HP** dan berikan izin browser. Gunakan **Coba notifikasi** untuk memeriksa perangkat sendiri. Pada iPhone/iPad, buka TernaKu dari ikon layar utama dengan iOS/iPadOS 16.4 atau lebih baru. Pengiriman mengikuti koneksi, izin, dan pengaturan HP; pengelola hosting perlu menyelesaikan [penyiapan Web Push](api/PUSH.md).
 
 Manifest dan ikon berada di `public/`, registrasi service worker aktif pada build production. Uji pemasangan dengan hasil `npm run build`/`npm run preview`; pengembangan `npm run dev` tidak mendaftarkan service worker. Acuan: [panduan PWA Next.js](https://nextjs.org/docs/app/guides/progressive-web-apps) dan [pemasangan melalui browser](https://developer.mozilla.org/en-US/docs/Web/Progressive_web_apps/How_to/Trigger_install_prompt).
 
@@ -71,7 +76,7 @@ Akun tersebut hanya berlaku dalam mode demo, tidak dibuat oleh installer API. Da
 
 ## Menjalankan dengan API dan database nyata
 
-1. Siapkan PHP 8.2 dengan `pdo_mysql`, `mbstring`, `json`, dan `openssl`, serta MySQL 5.7+/8.0 atau MariaDB 10.4+ dengan InnoDB. `curl` PHP diperlukan hanya untuk suite integration test.
+1. Siapkan PHP 8.2 dengan `pdo_mysql`, `mbstring`, `json`, dan `openssl`, serta MySQL 5.7+/8.0 atau MariaDB 10.4+ dengan InnoDB. Ekstensi PHP `curl` diperlukan untuk notifikasi Web Push dan suite integration test.
 2. Buat database kosong `utf8mb4` dan user khusus database tersebut. Salin `api/.env.example` ke `api/.env`, lalu isi koneksi database. Untuk lokal, gunakan `APP_URL=http://127.0.0.1:8081` dan `ALLOWED_ORIGINS=http://localhost:3000,http://127.0.0.1:3000`.
 3. Jalankan installer sekali menggunakan kredensial admin yang Anda tentukan melalui environment shell:
 
@@ -143,7 +148,7 @@ Koreksi wajib menyertakan alasan. Karyawan bisa langsung mengoreksi produksi sen
 
 Berat memakai maksimal 3 desimal, rupiah dibulatkan per item, dan zona waktu bisnis Asia/Jakarta. Penguncian database mencegah dua permintaan mengambil saldo yang sama. Permintaan tulis memakai ID idempotensi untuk mencegah duplikasi saat respons hilang. Backend memeriksa token aktif, role, kepemilikan, kategori, harga, dan saldo; pembatasan UI bukan satu-satunya pengaman.
 
-Notifikasi harga tampil dalam aplikasi saat state disegarkan, termasuk polling; tidak ada push ketika aplikasi ditutup atau integrasi WhatsApp/SMS. Foto opsional disimpan sebagai data gambar terbatas/URL HTTPS, belum memakai penyimpanan objek terpisah. Bootstrap memuat riwayat pengguna sekaligus; untuk volume transaksi besar perlu pagination, agregasi laporan di server, dan penyesuaian penguncian dari mutex global ke kunci per entitas. Backup database perlu disiapkan di hosting.
+Notifikasi harga dalam aplikasi mengikuti penyegaran data; Web Push dapat dikirim saat aplikasi ditutup setelah server dan perangkat disiapkan. Tidak ada integrasi WhatsApp/SMS. Foto kamera/galeri diperkecil menjadi JPEG maksimal 1 MB, lalu disimpan sebagai data gambar; belum memakai penyimpanan objek terpisah. Bootstrap memuat riwayat pengguna sekaligus; untuk volume transaksi besar perlu pagination, agregasi laporan di server, dan penyesuaian penguncian dari mutex global ke kunci per entitas. Backup database perlu disiapkan di hosting.
 
 ## Pemeriksaan lokal
 

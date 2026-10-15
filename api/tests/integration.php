@@ -184,6 +184,42 @@ try {
     $payload=['token'=>$e,'action'=>'pickup.create','payload'=>array_replace($pick,['category'=>'cracked','eggs'=>150,'kg'=>8,'trays'=>1])]; $workers=[];
     for($i=0;$i<2;$i++){ $pipes=[]; $process=proc_open([PHP_BINARY,__DIR__.'/command-worker.php'],[0=>['pipe','r'],1=>['pipe','w'],2=>['pipe','w']],$pipes); fwrite($pipes[0],json_encode($payload)); fclose($pipes[0]); $workers[]=[$process,$pipes]; }
     $results=[]; foreach($workers as [$process,$pipes]){ $results[]=trim(stream_get_contents($pipes[1])); $err=stream_get_contents($pipes[2]); fclose($pipes[1]);fclose($pipes[2]); $code=proc_close($process); if($code!==0) throw new RuntimeException($err); } sort($results); check($results===['200','422'],'concurrent stock race allows exactly one pickup');
+    // Free cracked eggs use the same ownership, stock, immutable snapshot and accounting rules for both roles.
+    $freePickups=[]; $goodPickups=[]; $freeSales=[];
+    foreach(['admin'=>[$a,'admin_test'],'employee'=>[$e,$sari['id']]] as $role=>[$actorToken,$actorId]) {
+        $marker='Free fixture '.$role;
+        cmd('production.create',array_replace($baseProd,['category'=>'cracked','eggs'=>100,'kg'=>6,'trays'=>0,'notes'=>$marker]),$actorToken);
+        $s=cmd('pickup.create',array_replace($pick,['category'=>'cracked','eggs'=>100,'kg'=>6,'trays'=>0,'notes'=>$marker]),$actorToken);
+        $own=first($s,'pickups',fn($p)=>$p['notes']===$marker && $p['user_id']===$actorId); $freePickups[$role]=$own['id'];
+        cmd('production.create',array_replace($baseProd,['eggs'=>100,'kg'=>6,'trays'=>0,'notes'=>$marker]),$actorToken);
+        $s=cmd('pickup.create',array_replace($pick,['eggs'=>100,'kg'=>6,'trays'=>0,'notes'=>$marker]),$actorToken);
+        $ownGood=first($s,'pickups',fn($p)=>$p['notes']===$marker && $p['category']==='good' && $p['user_id']===$actorId); $goodPickups[$role]=$ownGood['id'];
+        $gift=['date'=>date('Y-m-d'),'customer'=>'Pak Budi '.$role,'items'=>[['pickup_id'=>$own['id'],'category'=>'cracked','eggs'=>20,'kg'=>1.2,'trays'=>0,'is_free'=>true]],'payment_method'=>'credit','paid'=>0];
+        cmd('sale.create',array_replace($gift,['customer'=>'  ']),$actorToken,422);
+        cmd('sale.create',array_replace($gift,['paid'=>1]),$actorToken,422);
+        cmd('sale.create',array_replace($gift,['items'=>[array_replace($gift['items'][0],['is_free'=>'true'])]]),$actorToken,422);
+        cmd('sale.create',array_replace($gift,['items'=>[array_replace($gift['items'][0],['pickup_id'=>$ownGood['id'],'category'=>'good'])]]),$actorToken,422);
+        $s=cmd('sale.create',$gift,$actorToken); $free=first($s,'sales',fn($sale)=>$sale['items'][0]['pickup_id']===$own['id']); $freeSales[$role]=$free;
+        check($free['user_id']===$actorId && $free['customer']==='Pak Budi '.$role && $free['items'][0]['is_free']===true && $free['items'][0]['unit_price']===0 && $free['total']===0 && $free['paid']===0 && $free['balance']===0 && $free['payment_status']==='paid' && $free['payment_method']==='cash',$role.' records own harvest/pickup/free cracked eggs with named recipient and zero debt');
+        check(count(array_filter($s['sales'],fn($sale)=>$sale['items'][0]['pickup_id']===$own['id']))===1,$role.' rejects missing recipient, overpayment, invalid free flag and free good eggs atomically');
+    }
+    $mixed=['date'=>date('Y-m-d'),'customer'=>'Penerima campuran','items'=>[['pickup_id'=>$goodPickups['employee'],'category'=>'good','eggs'=>10,'kg'=>0.6,'trays'=>0],['pickup_id'=>$freePickups['employee'],'category'=>'cracked','eggs'=>10,'kg'=>0.6,'trays'=>0,'is_free'=>true]],'payment_method'=>'cash','paid'=>18600];
+    $s=cmd('sale.create',$mixed,$e); $mixedSale=first($s,'sales',fn($sale)=>$sale['customer']==='Penerima campuran');
+    check($mixedSale['total']===18600 && $mixedSale['balance']===0 && $mixedSale['items'][0]['unit_price']===31000 && !$mixedSale['items'][0]['is_free'] && $mixedSale['items'][1]['is_free'] && $mixedSale['items'][1]['total']===0,'mixed paid/free transaction charges only paid eggs and preserves both snapshots');
+    cmd('sale.create',array_replace($mixed,['items'=>[['pickup_id'=>$freePickups['employee'],'category'=>'cracked','eggs'=>71,'kg'=>4.26,'trays'=>0,'is_free'=>true]],'paid'=>0]),$e,422); check(true,'free transactions consume the same pickup balance and cannot oversell');
+    cmd('price.create',['good_price'=>0,'cracked_price'=>0,'effective_at'=>'2026-02-01T00:00:00+07:00'],$a,422);
+    cmd('price.create',['good_price'=>31000,'cracked_price'=>-1,'effective_at'=>'2026-02-01T00:00:00+07:00'],$a,422);
+    cmd('price.create',['good_price'=>31000,'cracked_price'=>0,'effective_at'=>'2026-02-01T00:00:00+07:00'],$e,403);
+    $s=cmd('price.create',['good_price'=>31000,'cracked_price'=>0,'effective_at'=>'2026-02-01T00:00:00+07:00'],$a); check(count(array_filter($s['prices'],fn($p)=>$p['cracked_price']===0))===1,'admin can set cracked daily price to zero while good price and employee restrictions remain enforced');
+    $dailyFree=['date'=>date('Y-m-d'),'customer'=>'Penerima harga gratis','items'=>[['pickup_id'=>$freePickups['employee'],'category'=>'cracked','eggs'=>10,'kg'=>0.6,'trays'=>0,'is_free'=>false]],'payment_method'=>'credit','paid'=>0];
+    cmd('sale.create',array_replace($dailyFree,['customer'=>'']),$e,422);
+    $s=cmd('sale.create',$dailyFree,$e); $dailySale=first($s,'sales',fn($sale)=>$sale['customer']==='Penerima harga gratis'); check($dailySale['items'][0]['is_free'] && $dailySale['total']===0 && $dailySale['balance']===0 && $dailySale['payment_status']==='paid','zero daily cracked price automatically creates free recipient-linked transaction');
+    $free=$freeSales['employee'];
+    cmd('correction.apply',['entity'=>'sale','id'=>$free['id'],'reason'=>'Penerima tidak boleh dihapus','changes'=>['customer'=>'']],$a,422);
+    cmd('correction.apply',['entity'=>'sale','id'=>$free['id'],'reason'=>'Gratis tidak boleh diubah','changes'=>['items'=>[['id'=>$free['items'][0]['id'],'eggs'=>20,'kg'=>1.2,'trays'=>0,'is_free'=>false]]]],$a,422);
+    $s=cmd('correction.apply',['entity'=>'sale','id'=>$free['id'],'reason'=>'Jumlah pemberian diperiksa','changes'=>['items'=>[['id'=>$free['items'][0]['id'],'eggs'=>25,'kg'=>1.5,'trays'=>0]]]],$a);
+    $s=cmd('price.create',['good_price'=>32000,'cracked_price'=>22000,'effective_at'=>'2026-03-01T00:00:00+07:00'],$a); $unchanged=first($s,'sales',fn($sale)=>$sale['id']===$free['id']);
+    check($unchanged['customer']!=='' && $unchanged['items'][0]['is_free'] && $unchanged['items'][0]['unit_price']===0 && $unchanged['total']===0 && $unchanged['balance']===0,'free snapshot and recipient are immutable through price and permitted quantity corrections');
     cmd('user.update',['id'=>$sari['id'],'active'=>false],$a); req('/bootstrap',[],$e,'GET',401); check(true,'deactivation revokes existing tokens');
     req('/auth/logout',[],$other); req('/bootstrap',[],$other,'GET',401); check(true,'logout invalidates token');
     req('/application/config/config.php',[],'','GET',404); check(true,'internal files not exposed by dev router');

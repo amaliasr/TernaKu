@@ -13,6 +13,7 @@ test-results/
 release/
 api/.env
 api/application/config/setup-token.php
+api/application/config/push-keys.php
 api/vendor/
 api/application/cache/*
 api/application/logs/*

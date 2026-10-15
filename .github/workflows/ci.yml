@@ -55,9 +55,11 @@ jobs:
       - uses: shivammathur/setup-php@v2
         with:
           php-version: "8.2"
-          extensions: pdo_mysql, mbstring, curl
+          extensions: pdo_mysql, mbstring, curl, openssl, gmp
           coverage: none
-          tools: none
+          tools: composer:v2
+      - name: Install push notification dependencies
+        run: composer install --working-dir=api --no-dev --prefer-dist --no-interaction --optimize-autoloader
       - name: Install frontend dependencies
         run: npm ci
       - name: Check TypeScript
@@ -80,20 +82,23 @@ jobs:
           exit 1
       - name: Test HTTP API and concurrent MySQL stock writes
         run: php api/tests/integration.php
+      - name: Test push notifications and delivery recovery
+        run: php api/tests/push.php
       - name: Build production frontend
         run: npm run build
       - name: Package API with an explicit deployment allowlist
         run: |
           mkdir -p "$RUNNER_TEMP/ternaku-deploy/api/application/logs"
-          cp api/index.php api/.htaccess api/.env.example api/schema.sql api/CI-LICENSE.txt api/README.md api/PEMASANGAN.md "$RUNNER_TEMP/ternaku-deploy/api/"
+          cp api/index.php api/.htaccess api/.env.example api/schema.sql api/CI-LICENSE.txt api/README.md api/PEMASANGAN.md api/PUSH.md api/composer.json api/composer.lock "$RUNNER_TEMP/ternaku-deploy/api/"
+          cp -R api/vendor "$RUNNER_TEMP/ternaku-deploy/api/vendor"
           cp -R api/system "$RUNNER_TEMP/ternaku-deploy/api/system"
           cp -R api/application/config api/application/controllers api/application/libraries "$RUNNER_TEMP/ternaku-deploy/api/application/"
           if [ -d api/application/views ]; then cp -R api/application/views "$RUNNER_TEMP/ternaku-deploy/api/application/views"; fi
           mkdir -p "$RUNNER_TEMP/ternaku-deploy/api/scripts"
-          cp api/scripts/env.php api/scripts/install.php "$RUNNER_TEMP/ternaku-deploy/api/scripts/"
+          cp api/scripts/env.php api/scripts/install.php api/scripts/push-keys.php api/scripts/push-worker.php "$RUNNER_TEMP/ternaku-deploy/api/scripts/"
           touch "$RUNNER_TEMP/ternaku-deploy/api/application/logs/.gitkeep"
           tar -czf "$RUNNER_TEMP/ternaku-api.tar.gz" -C "$RUNNER_TEMP/ternaku-deploy/api" .
-          if tar -tzf "$RUNNER_TEMP/ternaku-api.tar.gz" | grep -E '(^|/)(\.env$|setup-token\.php$|\.test-|tests/|upstream/|\.runtime/)|\.zip$|\.log$'; then
+          if tar -tzf "$RUNNER_TEMP/ternaku-api.tar.gz" | grep -E '(^|/)(\.env$|setup-token\.php$|push-keys\.php$|\.test-|tests/|upstream/|\.runtime/)|\.zip$|\.log$' | grep -v '^\./scripts/push-keys.php$'; then
             echo 'Unexpected secret or test file in deployment package.' >&2
             exit 1
           fi
