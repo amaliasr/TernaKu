@@ -25,8 +25,25 @@ Source dan workflow build siap digunakan. Publikasi ke domain memerlukan akses h
 - Pembelian pakan beberapa item, nota pembelian PDF, stok/minimum pakan, dan pemakaian pakan per kandang ayam.
 - Admin mengelola akun/target, menonaktifkan karyawan, mengunci catatan, meninjau koreksi, dan membaca log aktivitas. Karyawan hanya menerima transaksi miliknya sendiri; harga serta saldo peternakan dapat dilihat sesuai kebutuhan kerja.
 - Tombol Daftar selalu tersedia: admin pertama dibuat dengan kode setup pemilik, sedangkan pendaftaran berikutnya menjadi karyawan yang menunggu persetujuan admin. Admin menyetujui atau menolak permohonan melalui menu Karyawan.
+- Halaman karyawan khusus HP: tombol besar Panen/Jual/Gudang, stok bagus dan bentes terpisah, formulir singkat, serta rincian tambahan yang dapat dibuka bila diperlukan.
+- Harga karyawan diperiksa setiap 5 detik saat aplikasi terlihat. Input tetap tersimpan di formulir selama pembaruan; harga baru pada penjualan harus ditinjau sebelum menyimpan. Status koneksi dan waktu pemeriksaan terakhir ditampilkan.
+- Pemasangan ke layar utama HP sebagai aplikasi web (PWA), dengan ikon TernaKu, tampilan standalone, dan petunjuk Android/iPhone.
 - Laporan PDF dan Excel (`.xlsx`) serta peringkat penjualan. Export dibuat di browser menggunakan jsPDF dan ExcelJS.
 - **Insentif karyawan dan manajemen kandang sapi ditampilkan sebagai Coming Soon**, sesuai perubahan cakupan.
+
+## Pasang di HP
+
+Buka [TernaKu](https://ternaku.rstudiohub.com) lalu tekan **Pasang TernaKu di HP** pada halaman masuk atau beranda karyawan.
+
+- **Android:** gunakan Chrome. Bila dialog pemasangan belum muncul, buka menu **⋮ → Instal aplikasi** atau **Tambahkan ke layar utama**.
+- **iPhone/iPad:** buka di Safari, tekan **Bagikan → Tambahkan ke Layar Utama → Tambah**.
+- Sesudah terpasang, buka ikon **TernaKu** di layar utama dan masuk dengan akun Anda.
+
+Pemasangan tersedia melalui HTTPS dan bergantung pada dukungan browser. Aplikasi memerlukan internet untuk login, memeriksa harga, dan menyimpan catatan. Ketika aplikasi terbuka tetapi koneksi gagal, isian formulir tidak dikosongkan dan harga terakhir diberi peringatan. Menutup/memuat ulang aplikasi dapat menghilangkan isian yang belum disimpan. Service worker hanya menyimpan halaman pemberitahuan offline; data API, harga, token, dan transaksi tidak disimpan dalam cache service worker. Tidak ada antrean transaksi offline. Pemeriksaan 5 detik berhenti ketika aplikasi berada di latar belakang dan langsung dilanjutkan saat dibuka kembali.
+
+Jika penjualan sudah dikirim tetapi hasilnya belum diketahui, aplikasi mempertahankan data percobaan pada sesi tab yang sama. Buka kembali **Jual** lalu gunakan **Coba lagi dengan data yang sama** agar permintaan memakai nomor yang sama dan tidak membuat transaksi ganda. Data ini bukan antrean otomatis; jangan menutup seluruh tab atau menghapus data browser sebelum hasil penjualan dipastikan.
+
+Manifest dan ikon berada di `public/`, registrasi service worker aktif pada build production. Uji pemasangan dengan hasil `npm run build`/`npm run preview`; pengembangan `npm run dev` tidak mendaftarkan service worker. Acuan: [panduan PWA Next.js](https://nextjs.org/docs/app/guides/progressive-web-apps) dan [pemasangan melalui browser](https://developer.mozilla.org/en-US/docs/Web/Progressive_web_apps/How_to/Trigger_install_prompt).
 
 ## Menjalankan demo lokal
 

@@ -18,6 +18,13 @@ import {
   visibleState,
 } from "./domain";
 import { createDemoState, DEMO_PASSWORD } from "./seed";
+import { refreshInterval, SessionSync } from "./session-sync";
+import { ApiError } from "./request-errors";
+import { readPendingRequestIds } from "./request-retries";
+export {
+  isUncertainWriteError,
+  shouldPreserveUnconfirmedWrite,
+} from "./request-errors";
 import type {
   CommandPayload,
   RegistrationAvailability,
@@ -28,17 +35,32 @@ import type {
 } from "./types";
 
 export type FarmMode = "demo" | "live";
+export interface PriceSync {
+  lastSuccessAt: number | null;
+  refreshing: boolean;
+  error: string | null;
+}
+const emptyPriceSync: PriceSync = {
+  lastSuccessAt: null,
+  refreshing: false,
+  error: null,
+};
 interface FarmContextValue {
   state: State;
   user: User | null;
   mode: FarmMode;
   loading: boolean;
   error: string | null;
+  priceSync: PriceSync;
   login: (email: string, password: string) => Promise<void>;
   registrationStatus: () => Promise<RegistrationAvailability>;
   register: (input: RegistrationInput) => Promise<RegistrationResult>;
   logout: () => Promise<void>;
-  command: (action: string, payload: CommandPayload) => Promise<void>;
+  command: (
+    action: string,
+    payload: CommandPayload,
+    requestId?: string,
+  ) => Promise<void>;
   refresh: () => Promise<void>;
 }
 const Context = createContext<FarmContextValue | undefined>(undefined);
@@ -52,16 +74,6 @@ const API_URL = (
 ).replace(/\/$/, "");
 const mode: FarmMode =
   process.env.NEXT_PUBLIC_DEMO_MODE === "true" ? "demo" : "live";
-class ApiError extends Error {
-  constructor(
-    message: string,
-    public status: number,
-  ) {
-    super(message);
-    this.name = "ApiError";
-  }
-}
-
 function isState(value: unknown): value is State {
   if (!value || typeof value !== "object") return false;
   return [
@@ -144,12 +156,19 @@ export function FarmProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [priceSync, setPriceSync] = useState<PriceSync>(emptyPriceSync);
+  const sync = useRef(new SessionSync());
   const stateRef = useRef(allState);
   const userRef = useRef(user);
   const tokenRef = useRef<string | null>(null);
   const commit = useCallback((next: State) => {
     stateRef.current = next;
     setAllState(next);
+    setPriceSync((previous) => ({
+      ...previous,
+      lastSuccessAt: Date.now(),
+      error: null,
+    }));
     if (userRef.current) {
       const updated = next.users.find(
         (u) => u.id === userRef.current?.id && !accountAccessError(u),
@@ -164,6 +183,7 @@ export function FarmProvider({ children }: { children: ReactNode }) {
     }
   }, []);
   const setSessionUser = useCallback((next: User | null) => {
+    if (userRef.current?.id !== next?.id) sync.current.invalidate();
     userRef.current = next;
     setUser(next);
   }, []);
@@ -173,34 +193,53 @@ export function FarmProvider({ children }: { children: ReactNode }) {
     sessionStorage.removeItem(`${TOKEN_KEY}.user`);
     setSessionUser(null);
     commit(emptyState());
+    setPriceSync(emptyPriceSync);
   }, [commit, setSessionUser]);
-  const refresh = useCallback(async () => {
-    const refreshToken = tokenRef.current;
-    try {
-      if (mode === "demo") {
-        const stored = localStorage.getItem(STORAGE_KEY);
-        if (stored) {
-          const parsed: unknown = JSON.parse(stored);
-          if (isState(parsed)) commit(parsed);
+  const refreshData = useCallback(
+    (background = false) => {
+      const refreshToken = tokenRef.current;
+      if (mode === "live" && !refreshToken) return Promise.resolve();
+      return sync.current.refresh(async ({ canApply, sessionActive }) => {
+        if (!canApply()) return;
+        setPriceSync((previous) => ({ ...previous, refreshing: true }));
+        try {
+          let next: State;
+          if (mode === "demo") {
+            const stored = localStorage.getItem(STORAGE_KEY);
+            const parsed: unknown = stored
+              ? JSON.parse(stored)
+              : stateRef.current;
+            if (!isState(parsed)) throw new Error("Data demo tidak valid.");
+            next = parsed;
+          } else {
+            next = await request<State>("/bootstrap", refreshToken);
+            if (!isState(next))
+              throw new Error("Struktur data API tidak sesuai.");
+          }
+          if (!canApply() || tokenRef.current !== refreshToken) return;
+          commit(next);
+          if (!background) setError(null);
+        } catch (cause) {
+          if (!canApply() || tokenRef.current !== refreshToken) return;
+          const message =
+            cause instanceof Error ? cause.message : "Gagal memperbarui harga.";
+          if (cause instanceof ApiError && cause.status === 401) {
+            invalidateSession();
+            setError(message);
+          } else {
+            setPriceSync((previous) => ({ ...previous, error: message }));
+            if (!background) setError(message);
+          }
+          throw cause;
+        } finally {
+          if (sessionActive())
+            setPriceSync((previous) => ({ ...previous, refreshing: false }));
         }
-      } else if (tokenRef.current) {
-        const token = tokenRef.current;
-        const next = await request<State>("/bootstrap", token);
-        if (!isState(next)) throw new Error("Struktur data API tidak sesuai.");
-        if (tokenRef.current !== token) return; // Ignore a response belonging to a session that has signed out.
-        commit(next);
-      }
-      setError(null);
-    } catch (cause) {
-      if (mode === "live" && tokenRef.current !== refreshToken) return;
-      if (cause instanceof ApiError && cause.status === 401)
-        invalidateSession();
-      const message =
-        cause instanceof Error ? cause.message : "Gagal memperbarui data.";
-      setError(message);
-      throw cause;
-    }
-  }, [commit, invalidateSession]);
+      });
+    },
+    [commit, invalidateSession],
+  );
+  const refresh = useCallback(() => refreshData(), [refreshData]);
   useEffect(() => {
     let mounted = true;
     async function init() {
@@ -278,17 +317,35 @@ export function FarmProvider({ children }: { children: ReactNode }) {
     window.addEventListener("storage", onStorage);
     return () => {
       mounted = false;
+      sync.current.invalidate();
       window.removeEventListener("storage", onStorage);
     };
   }, [commit, refresh, setSessionUser]);
   useEffect(() => {
     if (!user) return;
-    const interval = setInterval(() => {
+    const update = () => {
       if (document.visibilityState === "visible")
-        void refresh().catch(() => {});
-    }, 60000);
-    return () => clearInterval(interval);
-  }, [refresh, user?.id]); // Refresh prices and notifications in an active session.
+        void refreshData(true).catch(() => {});
+    };
+    const offline = () => {
+      if (mode === "live")
+        setPriceSync((previous) => ({
+          ...previous,
+          error:
+            "Koneksi terputus. Harga akan diperbarui setelah tersambung kembali.",
+        }));
+    };
+    const interval = setInterval(update, refreshInterval(user.role));
+    document.addEventListener("visibilitychange", update);
+    window.addEventListener("online", update);
+    window.addEventListener("offline", offline);
+    return () => {
+      clearInterval(interval);
+      document.removeEventListener("visibilitychange", update);
+      window.removeEventListener("online", update);
+      window.removeEventListener("offline", offline);
+    };
+  }, [refreshData, user?.id, user?.role]);
 
   const registrationStatus =
     useCallback(async (): Promise<RegistrationAvailability> => {
@@ -393,11 +450,13 @@ export function FarmProvider({ children }: { children: ReactNode }) {
     tokenRef.current = null;
     setSessionUser(null);
     setError(null);
+    setPriceSync(emptyPriceSync);
     if (mode === "demo") sessionStorage.setItem(DEMO_USER_KEY, "logged-out");
     else {
       sessionStorage.removeItem(TOKEN_KEY);
       sessionStorage.removeItem(`${TOKEN_KEY}.user`);
       commit(emptyState());
+      setPriceSync(emptyPriceSync);
       if (token) {
         try {
           await request("/auth/logout", token, {});
@@ -408,10 +467,11 @@ export function FarmProvider({ children }: { children: ReactNode }) {
     }
   }, [commit, setSessionUser]);
   const command = useCallback(
-    async (action: string, payload: CommandPayload) => {
+    async (action: string, payload: CommandPayload, requestId?: string) => {
       const currentUser = userRef.current;
       if (!currentUser) throw new Error("Silakan masuk terlebih dahulu.");
       const sessionToken = tokenRef.current;
+      const finishMutation = sync.current.beginMutation();
       try {
         let next: State;
         if (mode === "demo") {
@@ -434,15 +494,26 @@ export function FarmProvider({ children }: { children: ReactNode }) {
           }
           localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
         } else {
-          // Keep a failed request's UUID across reloads. Retrying identical input after an uncertain
-          // network outcome cannot create a second transaction on the server.
-          const fingerprint = `${currentUser.id}:${await digest(JSON.stringify({ action, payload }))}`;
-          const retries = JSON.parse(
-            sessionStorage.getItem(RETRY_KEY) || "{}",
-          ) as Record<string, string>;
-          const request_id = retries[fingerprint] || crypto.randomUUID();
-          retries[fingerprint] = request_id;
-          sessionStorage.setItem(RETRY_KEY, JSON.stringify(retries));
+          if (
+            requestId !== undefined &&
+            !/^[A-Za-z0-9_-]{8,80}$/.test(requestId)
+          )
+            throw new ApiError("ID percobaan penyimpanan tidak valid.", 400);
+          // A persisted sale owns its UUID alongside its exact payload, so a
+          // reload between confirmation and local cleanup cannot create a new sale.
+          // Other commands keep the existing fingerprint-based retry map.
+          const fingerprint = requestId === undefined
+            ? `${currentUser.id}:${await digest(JSON.stringify({ action, payload }))}`
+            : null;
+          let request_id = requestId;
+          if (fingerprint) {
+            const retries = readPendingRequestIds(
+              sessionStorage.getItem(RETRY_KEY),
+            );
+            request_id = retries[fingerprint] || crypto.randomUUID();
+            retries[fingerprint] = request_id;
+            sessionStorage.setItem(RETRY_KEY, JSON.stringify(retries));
+          }
           if (
             tokenRef.current !== sessionToken ||
             userRef.current?.id !== currentUser.id
@@ -455,11 +526,18 @@ export function FarmProvider({ children }: { children: ReactNode }) {
           });
           if (!isState(next))
             throw new Error("Struktur data API tidak sesuai.");
-          const remaining = JSON.parse(
-            sessionStorage.getItem(RETRY_KEY) || "{}",
-          ) as Record<string, string>;
-          delete remaining[fingerprint];
-          sessionStorage.setItem(RETRY_KEY, JSON.stringify(remaining));
+          if (fingerprint) {
+            try {
+              const remaining = readPendingRequestIds(
+                sessionStorage.getItem(RETRY_KEY),
+              );
+              delete remaining[fingerprint];
+              sessionStorage.setItem(RETRY_KEY, JSON.stringify(remaining));
+            } catch {
+              // The server confirmed this write. A local cleanup problem must not
+              // turn that confirmation into another uncertain save; keep the old ID.
+            }
+          }
           if (
             tokenRef.current !== sessionToken ||
             userRef.current?.id !== currentUser.id
@@ -480,6 +558,8 @@ export function FarmProvider({ children }: { children: ReactNode }) {
           );
         }
         throw cause;
+      } finally {
+        finishMutation();
       }
     },
     [commit, invalidateSession],
@@ -496,6 +576,7 @@ export function FarmProvider({ children }: { children: ReactNode }) {
         mode,
         loading,
         error,
+        priceSync,
         login,
         registrationStatus,
         register,

@@ -1,4 +1,5 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
+import { PwaProvider } from "@/components/PwaProvider";
 import "@fontsource/poppins/400.css";
 import "@fontsource/poppins/500.css";
 import "@fontsource/poppins/600.css";
@@ -11,14 +12,18 @@ export const metadata: Metadata = {
   title: "TernaKu — Peternakan dalam genggaman",
   description:
     "Kelola produksi telur, penjualan, stok dan pakan ternak dalam satu aplikasi.",
-  icons: { icon: "/icon.svg" },
+  manifest: "/manifest.webmanifest",
+  icons: { icon: "/icon.svg", apple: "/icons/apple-touch-icon.png" },
+  appleWebApp: { capable: true, title: "TernaKu", statusBarStyle: "default" },
+  formatDetection: { telephone: false },
 };
+export const viewport: Viewport = { themeColor: "#196348", width: "device-width", initialScale: 1, viewportFit: "cover" };
 export default function RootLayout({
   children,
 }: Readonly<{ children: React.ReactNode }>) {
   return (
     <html lang="id">
-      <body>{children}</body>
+      <body><PwaProvider>{children}</PwaProvider></body>
     </html>
   );
 }

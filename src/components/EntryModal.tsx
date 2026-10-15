@@ -1,6 +1,12 @@
 "use client";
 
-import { useState, type FormEvent, type ReactNode } from "react";
+import {
+  useEffect,
+  useRef,
+  useState,
+  type FormEvent,
+  type ReactNode,
+} from "react";
 import {
   Plus,
   Trash2,
@@ -10,7 +16,11 @@ import {
   Egg,
   Info,
 } from "lucide-react";
-import { useFarm } from "@/lib/store";
+import {
+  isUncertainWriteError,
+  shouldPreserveUnconfirmedWrite,
+  useFarm,
+} from "@/lib/store";
 import {
   activePrice,
   eggStock,
@@ -21,6 +31,7 @@ import {
   today,
 } from "@/lib/domain";
 import type { Category, CommandPayload } from "@/lib/types";
+import EmployeeEntry from "./EmployeeEntry";
 import {
   categoryLabel,
   dataFrom,
@@ -1312,18 +1323,69 @@ const config: Record<
     form: FeedUseForm,
   },
 };
+type UnconfirmedSale = {
+  user_id: string;
+  request_id: string;
+  action: "sale.create";
+  payload: CommandPayload;
+  total: number | null;
+};
+const unconfirmedSaleKey = (userId: string) =>
+  `ternaku.sale.unconfirmed.v1.${userId}`;
+function readUnconfirmedSale(userId: string): UnconfirmedSale | null {
+  try {
+    const value = JSON.parse(
+      sessionStorage.getItem(unconfirmedSaleKey(userId)) || "null",
+    ) as UnconfirmedSale | null;
+    return value?.user_id === userId &&
+      typeof value.request_id === "string" &&
+      /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+        value.request_id,
+      ) &&
+      value.action === "sale.create" &&
+      value.payload &&
+      typeof value.payload === "object" &&
+      !Array.isArray(value.payload)
+      ? value
+      : null;
+  } catch {
+    return null;
+  }
+}
 export function EntryModal({
   kind,
   onClose,
+  onSaved,
 }: {
   kind: string | null;
   onClose: () => void;
+  onSaved?: (action: string) => void;
 }) {
-  const { command, user, refresh } = useFarm();
+  const { command, user, refresh, mode, state } = useFarm();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [employeeKind, setEmployeeKind] = useState<"pickup" | null>(null);
+  const [unconfirmed, setUnconfirmed] = useState<UnconfirmedSale | null>(() =>
+    mode === "live" && user && kind === "sale"
+      ? readUnconfirmedSale(user.id)
+      : null,
+  );
+  const errorRef = useRef<HTMLDivElement>(null);
+  const retryRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    setEmployeeKind(null);
+    setError("");
+  }, [kind]);
+  useEffect(() => {
+    if (unconfirmed) retryRef.current?.focus();
+    else if (error) errorRef.current?.focus();
+  }, [error, unconfirmed]);
   if (!kind || !config[kind]) return null;
-  const { title, subtitle, form: Form } = config[kind];
+  const simple =
+    user?.role === "employee" &&
+    ["production", "pickup", "sale"].includes(kind);
+  const shownKind = simple ? employeeKind || kind : kind;
+  const { title, subtitle, form: Form } = config[shownKind];
   const adminOnly = [
     "price",
     "user",
@@ -1331,14 +1393,96 @@ export function EntryModal({
     "feed.create",
     "feed.purchase",
   ].includes(kind);
-  const save = async (action: string, payload: CommandPayload) => {
+  const clearUnconfirmed = () => {
+    if (user) {
+      try {
+        sessionStorage.removeItem(unconfirmedSaleKey(user.id));
+      } catch {
+        /* Browsers with unavailable storage already reject the API command's retry key. */
+      }
+    }
+    setUnconfirmed(null);
+  };
+  const close = () => {
+    if (busy) return;
+    if (
+      unconfirmed &&
+      !window.confirm(
+        "Penjualan belum dipastikan tersimpan. Data percobaan tetap disimpan di perangkat ini. Periksa riwayat, lalu buka Jual untuk mencoba data yang sama. Tutup sekarang?",
+      )
+    )
+      return;
+    setError("");
+    onClose();
+  };
+  const save = async (
+    requestedAction: string,
+    requestedPayload: CommandPayload,
+  ) => {
+    if (busy) return;
+    const action = unconfirmed?.action || requestedAction;
+    const payload = unconfirmed?.payload || requestedPayload;
+    let attempt = unconfirmed;
+    let succeeded = false;
+    let sending = false;
     setBusy(true);
     setError("");
     try {
-      await command(action, payload);
-      onClose();
+      if (mode === "live" && user && action === "sale.create" && !attempt) {
+        const snapshot = state.prices.find(
+          (price) => price.id === payload.expected_price_id,
+        );
+        const lines = Array.isArray(payload.items)
+          ? (payload.items as { kg: number; category: Category }[])
+          : [];
+        attempt = {
+          user_id: user.id,
+          request_id: crypto.randomUUID(),
+          action: "sale.create",
+          payload: JSON.parse(JSON.stringify(payload)) as CommandPayload,
+          total: snapshot
+            ? lines.reduce(
+                (sum, item) =>
+                  sum +
+                  Math.round(
+                    item.kg *
+                      (item.category === "good"
+                        ? snapshot.good_price
+                        : snapshot.cracked_price),
+                  ),
+                0,
+              )
+            : null,
+        };
+      }
+      if (attempt && user) {
+        // Save the exact payload before sending so reopening or refreshing can only retry
+        // the original fingerprint, even when the current price has since changed.
+        sessionStorage.setItem(
+          unconfirmedSaleKey(user.id),
+          JSON.stringify(attempt),
+        );
+      }
+      sending = true;
+      await command(action, payload, attempt?.request_id);
+      if (action === "sale.create") clearUnconfirmed();
+      succeeded = true;
     } catch (e) {
-      setError(errorMessage(e));
+      setError(
+        !sending && !unconfirmed
+          ? "Data belum dikirim. Penyimpanan perangkat tidak tersedia atau penuh. Kosongkan ruang, lalu coba lagi."
+          : errorMessage(e),
+      );
+      if (
+        attempt &&
+        (unconfirmed
+          ? shouldPreserveUnconfirmedWrite(e)
+          : sending && isUncertainWriteError(e))
+      ) {
+        setUnconfirmed(attempt);
+        return;
+      }
+      if (action === "sale.create") clearUnconfirmed();
       if (
         action === "sale.create" &&
         errorMessage(e).toLowerCase().includes("harga")
@@ -1352,33 +1496,109 @@ export function EntryModal({
     } finally {
       setBusy(false);
     }
+    if (succeeded) {
+      onSaved?.(action);
+      onClose();
+    }
   };
   return (
     <Dialog
-      title={title}
-      subtitle={subtitle}
-      onClose={() => {
-        if (!busy) {
-          setError("");
-          onClose();
-        }
-      }}
-      wide={kind === "sale" || kind === "feed.purchase"}
+      title={
+        simple
+          ? {
+              production: "Catat panen",
+              pickup: "Ambil telur dari gudang",
+              sale: "Catat penjualan",
+            }[shownKind] || title
+          : title
+      }
+      subtitle={
+        simple ? "Isi jumlah butir dan berat hasil timbangan." : subtitle
+      }
+      onClose={close}
+      wide={!simple && (kind === "sale" || kind === "feed.purchase")}
     >
-      {error && (
-        <div className="alert alert-danger mx-4 mt-3 mb-0" role="alert">
+      {unconfirmed && (
+        <div
+          ref={retryRef}
+          tabIndex={-1}
+          className="alert alert-warning m-3"
+          role="alert"
+        >
+          <strong>Belum ada kepastian penjualan tersimpan</strong>
+          <p className="mt-2 mb-2">
+            Coba lagi dengan data yang sama. Jumlah dan harga yang sudah dikirim
+            tetap dipertahankan agar tidak tercatat dua kali.
+          </p>
+          {unconfirmed.total !== null && Number.isFinite(unconfirmed.total) && (
+            <p className="mb-2">
+              Total yang dikirim: <strong>{money(unconfirmed.total)}</strong>
+            </p>
+          )}
+          {error && <p className="small mb-3">{error}</p>}
+          <div className="d-grid gap-2">
+            <button
+              type="button"
+              className="btn btn-primary"
+              style={{ minHeight: 48 }}
+              disabled={busy}
+              onClick={() => {
+                void save(unconfirmed.action, unconfirmed.payload);
+              }}
+            >
+              {busy
+                ? "Memeriksa dan menyimpan…"
+                : "Coba lagi dengan data yang sama"}
+            </button>
+            <button
+              type="button"
+              className="btn btn-light"
+              style={{ minHeight: 48 }}
+              disabled={busy}
+              onClick={close}
+            >
+              Tutup dan periksa riwayat
+            </button>
+          </div>
+        </div>
+      )}
+      {error && !unconfirmed && (
+        <div
+          ref={errorRef}
+          tabIndex={-1}
+          className="alert alert-danger mx-4 mt-3 mb-0"
+          role="alert"
+        >
           {error}
         </div>
       )}
-      {adminOnly && user?.role !== "admin" ? (
-        <div className="modal-body-custom">
-          <div className="alert alert-warning">
-            Fitur ini hanya tersedia untuk atasan.
+      <fieldset
+        disabled={!!unconfirmed}
+        hidden={!!unconfirmed}
+        style={{ border: 0, padding: 0, margin: 0, minWidth: 0 }}
+      >
+        {adminOnly && user?.role !== "admin" ? (
+          <div className="modal-body-custom">
+            <div className="alert alert-warning">
+              Fitur ini hanya tersedia untuk atasan.
+            </div>
           </div>
-        </div>
-      ) : (
-        <Form key={kind} onSave={save} busy={busy} onClose={onClose} />
-      )}
+        ) : simple ? (
+          <EmployeeEntry
+            key={shownKind}
+            kind={shownKind as "production" | "pickup" | "sale"}
+            onSave={save}
+            busy={busy}
+            onClose={close}
+            onSwitchKind={(nextKind) => {
+              setError("");
+              setEmployeeKind(nextKind);
+            }}
+          />
+        ) : (
+          <Form key={kind} onSave={save} busy={busy} onClose={close} />
+        )}
+      </fieldset>
     </Dialog>
   );
 }

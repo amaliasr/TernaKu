@@ -40,6 +40,8 @@ import Dashboard from "./Dashboard";
 import Modules from "./Modules";
 import EntryModal from "./EntryModal";
 import Reports from "./Reports";
+import EmployeeWorkspace from "./EmployeeWorkspace";
+import InstallApp from "./InstallApp";
 
 const navigation = [
   {
@@ -528,6 +530,7 @@ function Login() {
                 Daftar akun
               </button>
             </div>
+            <InstallApp />
             {mode === "demo" && (
               <div className="demo-login">
                 <span>COBA DENGAN DATA CONTOH</span>
@@ -688,6 +691,7 @@ function Workspace() {
       </div>
     );
   if (!user || !state) return <Login />;
+  if (user.role === "employee") return <EmployeeWorkspace />;
   const menu = navigation.filter((n) => !n.admin || user.role === "admin");
   const current = menu.find((n) => n.id === page) || menu[0];
   const unread = state.notifications.filter(

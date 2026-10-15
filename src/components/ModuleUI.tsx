@@ -153,6 +153,9 @@ export function Dialog({
         ref.current?.querySelectorAll<HTMLElement>(
           'button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex="0"]',
         ) || [],
+      ).filter(
+        (element) =>
+          element.getClientRects().length > 0 && !element.matches(":disabled"),
       );
     focusable()[0]?.focus();
     const handler = (event: KeyboardEvent) => {

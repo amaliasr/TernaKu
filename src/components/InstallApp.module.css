@@ -1,0 +1,15 @@
+.wrap{margin:16px 0;width:100%}
+.install{width:100%;min-height:52px;display:flex;align-items:center;justify-content:center;gap:10px;padding:12px 16px;border:1px solid #cbdccf;background:#f3f7ee;border-radius:14px;color:#196348;font-family:inherit;line-height:1.5;cursor:pointer}
+.install span{flex:1;text-align:left;font-size:14px;font-weight:600}
+.install:hover{background:#e7efdf}
+.install:disabled{opacity:.65;cursor:wait}
+.install:focus-visible{outline:3px solid #c09d42;outline-offset:3px}
+.help{padding:20px 24px 24px;font-size:16px;line-height:1.8;color:#3a4f41}
+.help h3{font-size:18px;font-weight:600}
+.help ol{padding-left:24px}
+.help li{padding:5px 0}
+.help strong{overflow-wrap:anywhere}
+.help summary{cursor:pointer;min-height:44px;font-weight:600}
+.help button{min-height:48px;font-size:16px}
+.note,.message{font-size:13px;line-height:1.7;color:#62715f}
+.message{padding-top:10px;margin:0}
