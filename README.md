@@ -24,6 +24,7 @@ Source dan workflow build siap digunakan. Publikasi ke domain memerlukan akses h
 - Harga bagus/bentes per kilogram, jadwal mulai berlaku, riwayat harga, notifikasi perubahan, serta snapshot harga transaksi yang tidak berubah ketika harga baru ditetapkan.
 - Pembelian pakan beberapa item, nota pembelian PDF, stok/minimum pakan, dan pemakaian pakan per kandang ayam.
 - Admin mengelola akun/target, menonaktifkan karyawan, mengunci catatan, meninjau koreksi, dan membaca log aktivitas. Karyawan hanya menerima transaksi miliknya sendiri; harga serta saldo peternakan dapat dilihat sesuai kebutuhan kerja.
+- Tombol Daftar selalu tersedia: admin pertama dibuat dengan kode setup pemilik, sedangkan pendaftaran berikutnya menjadi karyawan yang menunggu persetujuan admin. Admin menyetujui atau menolak permohonan melalui menu Karyawan.
 - Laporan PDF dan Excel (`.xlsx`) serta peringkat penjualan. Export dibuat di browser menggunakan jsPDF dan ExcelJS.
 - **Insentif karyawan dan manajemen kandang sapi ditampilkan sebagai Coming Soon**, sesuai perubahan cakupan.
 
@@ -83,6 +84,8 @@ Akun tersebut hanya berlaku dalam mode demo, tidak dibuat oleh installer API. Da
 6. Mulai ulang `npm run dev`, login dengan admin dari installer, tetapkan harga aktif, buat karyawan/jenis pakan, lalu mulai mencatat produksi. `GET http://127.0.0.1:8081/health` memeriksa runtime dan koneksi database.
 
 Detail schema, payload command, CORS, installer, autentikasi, dan deployment ada di [panduan API](api/README.md).
+
+Alternatif installer CLI: siapkan kode acak `SETUP_TOKEN` minimal 32 karakter pada `.env` API, lalu buka **Daftar** untuk membuat admin pertama dari browser. Kode hanya untuk pemilik hosting dan tidak dikirim ke frontend sebelum diketik pada form. Setelah ada akun, pendaftaran admin pertama terkunci; tombol Daftar tetap tampil untuk permohonan akun karyawan. Ikuti [langkah pendaftaran dan setup](api/PEMASANGAN.md#5-buat-admin-pertama).
 
 ## Deployment melalui GitHub
 

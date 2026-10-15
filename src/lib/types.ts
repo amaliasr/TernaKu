@@ -1,5 +1,21 @@
 export type Category = "good" | "cracked";
 export type Role = "admin" | "employee";
+export type RegistrationStatus = "pending" | "approved" | "rejected";
+export interface RegistrationAvailability {
+  first_admin_required: boolean;
+  setup_enabled: boolean;
+}
+export interface RegistrationInput {
+  name: string;
+  email: string;
+  password: string;
+  password_confirmation: string;
+  setup_token?: string;
+}
+export interface RegistrationResult {
+  status: "active" | "pending";
+  message: string;
+}
 export type PaymentMethod = "cash" | "transfer" | "qris" | "credit";
 export interface User {
   id: string;
@@ -7,6 +23,7 @@ export interface User {
   email: string;
   role: Role;
   active: boolean;
+  registration_status?: RegistrationStatus;
   target: number;
   avatar?: string;
 }

@@ -2,17 +2,23 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   activePrice,
+  accountAccessError,
   businessDate,
   eggStock,
   emptyState,
   executeCommand,
   feedStock,
   pickupBalance,
+  registerDemoEmployee,
   today,
   visibleState,
 } from "../src/lib/domain";
 import { createDemoState } from "../src/lib/seed";
-import type { CommandPayload, State } from "../src/lib/types";
+import type {
+  CommandPayload,
+  RegistrationInput,
+  State,
+} from "../src/lib/types";
 
 const NOW = new Date("2026-10-13T09:00:00Z");
 const DATE = "2026-10-13";
@@ -751,4 +757,229 @@ test("demo seed is internally consistent, recent, and has no incentive or cattle
   }
   assert.equal(s.productions.at(-1)?.date, DATE);
   assert.equal(activePrice(s, NOW)?.good_price, 28000);
+});
+
+const signupInput: RegistrationInput = {
+  name: "Karyawan Baru",
+  email: "new@example.test",
+  password: "PasswordBaru123!",
+  password_confirmation: "PasswordBaru123!",
+};
+
+test("public demo signup creates an inactive pending employee, notifies admins, and stores no password in farm data", () => {
+  const original = fixture();
+  const { state, user, result } = registerDemoEmployee(
+    original,
+    signupInput,
+    NOW,
+  );
+  assert.equal(original.users.length, 3);
+  assert.equal(user.role, "employee");
+  assert.equal(user.active, false);
+  assert.equal(user.registration_status, "pending");
+  assert.equal(result.status, "pending");
+  assert.equal(
+    state.notifications.filter((n) => n.user_id === "admin").length,
+    1,
+  );
+  assert.equal(state.activity[0].action, "user.register");
+  assert.ok(!JSON.stringify(state).includes(signupInput.password));
+  assert.match(accountAccessError(user)!, /menunggu persetujuan/);
+  assert.equal(visibleState(state, user).users.length, 0);
+  assert.throws(
+    () => cmd(state, user.id, "notification.read", { id: "all" }),
+    /menunggu persetujuan/,
+  );
+  // A malformed active bit alone must not bypass pending approval.
+  user.active = true;
+  assert.throws(
+    () => cmd(state, user.id, "notification.read", { id: "all" }),
+    /menunggu persetujuan/,
+  );
+});
+
+test("registration validates normalized duplicate email, confirmation, character and UTF-8 password limits, and role injection", () => {
+  const source = fixture();
+  assert.throws(
+    () =>
+      registerDemoEmployee(
+        source,
+        { ...signupInput, email: " SARI@EXAMPLE.TEST " },
+        NOW,
+      ),
+    /Email sudah digunakan/,
+  );
+  assert.throws(
+    () =>
+      registerDemoEmployee(
+        source,
+        { ...signupInput, password_confirmation: "different" },
+        NOW,
+      ),
+    /Konfirmasi/,
+  );
+  assert.throws(
+    () =>
+      registerDemoEmployee(
+        source,
+        { ...signupInput, password: "short", password_confirmation: "short" },
+        NOW,
+      ),
+    /12 karakter/,
+  );
+  const shortUnicodePassword = "🐣".repeat(3);
+  assert.throws(
+    () =>
+      registerDemoEmployee(
+        source,
+        {
+          ...signupInput,
+          password: shortUnicodePassword,
+          password_confirmation: shortUnicodePassword,
+        },
+        NOW,
+      ),
+    /12 karakter/,
+  );
+  const unicodePassword = "é".repeat(37);
+  assert.throws(
+    () =>
+      registerDemoEmployee(
+        source,
+        {
+          ...signupInput,
+          password: unicodePassword,
+          password_confirmation: unicodePassword,
+        },
+        NOW,
+      ),
+    /72 byte/,
+  );
+  const preservedPassword = " 1234567890 ";
+  assert.equal(
+    registerDemoEmployee(
+      source,
+      {
+        ...signupInput,
+        password: preservedPassword,
+        password_confirmation: preservedPassword,
+      },
+      NOW,
+    ).result.status,
+    "pending",
+  );
+  for (const injected of [
+    { role: "admin" },
+    { active: true },
+    { registration_status: "approved" },
+    { target: 1000000 },
+  ]) {
+    assert.throws(
+      () => registerDemoEmployee(source, { ...signupInput, ...injected }, NOW),
+      /ditentukan oleh sistem/,
+    );
+  }
+  assert.throws(
+    () =>
+      registerDemoEmployee(
+        source,
+        { ...signupInput, name: "x".repeat(121) },
+        NOW,
+      ),
+    /Nama maksimal/,
+  );
+});
+
+test("admin approval is explicit, audited and cannot be impersonated or promoted to admin", () => {
+  const { state, user } = registerDemoEmployee(fixture(), signupInput, NOW);
+  assert.throws(
+    () => cmd(state, "a", "user.approve", { id: user.id }),
+    /hanya untuk admin/,
+  );
+  assert.throws(
+    () => cmd(state, "admin", "user.update", { id: user.id, active: true }),
+    /persetujuan pendaftaran/,
+  );
+  assert.throws(
+    () =>
+      cmd(state, "admin", "user.update", {
+        id: user.id,
+        registration_status: "approved",
+      }),
+    /tidak dapat diubah/,
+  );
+  assert.throws(
+    () => cmd(state, "admin", "user.approve", { id: user.id, role: "admin" }),
+    /hanya menerima ID/,
+  );
+  const approved = cmd(state, "admin", "user.approve", { id: user.id });
+  const account = approved.users.find((u) => u.id === user.id)!;
+  assert.equal(account.role, "employee");
+  assert.equal(account.active, true);
+  assert.equal(account.registration_status, "approved");
+  assert.equal(accountAccessError(account), null);
+  assert.equal(visibleState(approved, account).users.length, 1);
+  assert.equal(approved.activity[0].action, "user.approve");
+  assert.equal(
+    (approved.activity[0].before as typeof user).registration_status,
+    "pending",
+  );
+  assert.equal(
+    (approved.activity[0].after as typeof user).registration_status,
+    "approved",
+  );
+  assert.ok(
+    approved.notifications.some(
+      (n) => n.user_id === user.id && n.title === "Pendaftaran disetujui",
+    ),
+  );
+  assert.throws(
+    () => cmd(approved, "admin", "user.reject", { id: user.id }),
+    /sudah ditinjau/,
+  );
+});
+
+test("rejected registrations stay inactive and can only become usable through explicit admin approval", () => {
+  const { state, user } = registerDemoEmployee(fixture(), signupInput, NOW);
+  const rejected = cmd(state, "admin", "user.reject", { id: user.id });
+  const account = rejected.users.find((u) => u.id === user.id)!;
+  assert.equal(account.active, false);
+  assert.equal(account.registration_status, "rejected");
+  assert.match(accountAccessError(account)!, /ditolak/);
+  assert.throws(
+    () => registerDemoEmployee(rejected, signupInput, NOW),
+    /Email sudah digunakan/,
+  );
+  assert.throws(
+    () => cmd(rejected, "admin", "user.update", { id: user.id, active: true }),
+    /persetujuan pendaftaran/,
+  );
+  assert.throws(
+    () => cmd(rejected, "admin", "user.reject", { id: user.id }),
+    /sudah ditinjau/,
+  );
+  const approved = cmd(rejected, "admin", "user.approve", { id: user.id });
+  assert.equal(
+    accountAccessError(approved.users.find((u) => u.id === user.id)!),
+    null,
+  );
+});
+
+test("legacy and manually created accounts remain approved with ordinary deactivate and reactivate behavior", () => {
+  assert.equal(accountAccessError(fixture().users[1]), null);
+  let state = cmd(fixture(), "admin", "user.create", {
+    ...signupInput,
+    role: "employee",
+  });
+  const created = state.users.at(-1)!;
+  assert.equal(created.registration_status, "approved");
+  assert.equal(created.active, true);
+  state = cmd(state, "admin", "user.update", { id: created.id, active: false });
+  assert.match(accountAccessError(state.users.at(-1)!)!, /dinonaktifkan/);
+  state = cmd(state, "admin", "user.update", { id: created.id, active: true });
+  assert.equal(accountAccessError(state.users.at(-1)!), null);
+  assert.throws(
+    () => cmd(state, "admin", "user.approve", { id: created.id }),
+    /sudah ditinjau/,
+  );
 });

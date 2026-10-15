@@ -3,6 +3,8 @@ defined('BASEPATH') OR exit('No direct script access allowed');
 $route['default_controller'] = 'api/health';
 $route['health'] = 'api/health';
 $route['auth/login'] = 'api/login';
+$route['auth/registration-status'] = 'api/registration_status';
+$route['auth/register'] = 'api/register';
 $route['auth/logout'] = 'api/logout';
 $route['bootstrap'] = 'api/bootstrap';
 $route['commands'] = 'api/commands';

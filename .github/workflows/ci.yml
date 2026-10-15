@@ -43,6 +43,7 @@ jobs:
       DB_PASSWORD: ci-test-password
       ALLOW_TEST_RESET: "1"
       TEST_API_URL: http://127.0.0.1:8081
+      SETUP_TOKEN: test-only-owner-key-64b13b98d70b4eb7e07a73680eae273f
     steps:
       - uses: actions/checkout@v7
         with:
@@ -92,7 +93,7 @@ jobs:
           cp api/scripts/env.php api/scripts/install.php "$RUNNER_TEMP/ternaku-deploy/api/scripts/"
           touch "$RUNNER_TEMP/ternaku-deploy/api/application/logs/.gitkeep"
           tar -czf "$RUNNER_TEMP/ternaku-api.tar.gz" -C "$RUNNER_TEMP/ternaku-deploy/api" .
-          if tar -tzf "$RUNNER_TEMP/ternaku-api.tar.gz" | grep -E '(^|/)(\.env$|\.test-|tests/|upstream/|\.runtime/)|\.zip$|\.log$'; then
+          if tar -tzf "$RUNNER_TEMP/ternaku-api.tar.gz" | grep -E '(^|/)(\.env$|setup-token\.php$|\.test-|tests/|upstream/|\.runtime/)|\.zip$|\.log$'; then
             echo 'Unexpected secret or test file in deployment package.' >&2
             exit 1
           fi

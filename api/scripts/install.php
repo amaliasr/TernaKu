@@ -11,6 +11,8 @@ try {
     $email=getenv('ADMIN_EMAIL') ?: ''; $password=getenv('ADMIN_PASSWORD') ?: ''; $name=getenv('ADMIN_NAME') ?: 'Admin TernaKu';
     if(!filter_var($email,FILTER_VALIDATE_EMAIL) || strlen($password)<12) throw new RuntimeException('Set ADMIN_EMAIL dan ADMIN_PASSWORD (minimal 12 karakter) di environment shell, lalu jalankan ulang. Tidak ada password bawaan.');
     $db->beginTransaction();
+    $db->query('SELECT version FROM command_mutex WHERE id=1 FOR UPDATE')->fetchColumn();
+    if((int)$db->query('SELECT COUNT(*) FROM users')->fetchColumn()>0) { $db->commit(); echo "Schema siap. Akun yang sudah ada tidak diubah.\n"; exit(0); }
     $id='user_'.bin2hex(random_bytes(12));
     $stmt=$db->prepare("INSERT INTO users(id,name,email,password_hash,role) VALUES(?,?,?,?,'admin')");
     $stmt->execute([$id,$name,strtolower($email),password_hash($password,PASSWORD_DEFAULT)]);

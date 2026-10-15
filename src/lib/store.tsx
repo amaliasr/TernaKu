@@ -10,9 +10,22 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import { emptyState, executeCommand, visibleState } from "./domain";
+import {
+  accountAccessError,
+  emptyState,
+  executeCommand,
+  registerDemoEmployee,
+  visibleState,
+} from "./domain";
 import { createDemoState, DEMO_PASSWORD } from "./seed";
-import type { CommandPayload, State, User } from "./types";
+import type {
+  CommandPayload,
+  RegistrationAvailability,
+  RegistrationInput,
+  RegistrationResult,
+  State,
+  User,
+} from "./types";
 
 export type FarmMode = "demo" | "live";
 interface FarmContextValue {
@@ -22,6 +35,8 @@ interface FarmContextValue {
   loading: boolean;
   error: string | null;
   login: (email: string, password: string) => Promise<void>;
+  registrationStatus: () => Promise<RegistrationAvailability>;
+  register: (input: RegistrationInput) => Promise<RegistrationResult>;
   logout: () => Promise<void>;
   command: (action: string, payload: CommandPayload) => Promise<void>;
   refresh: () => Promise<void>;
@@ -137,7 +152,7 @@ export function FarmProvider({ children }: { children: ReactNode }) {
     setAllState(next);
     if (userRef.current) {
       const updated = next.users.find(
-        (u) => u.id === userRef.current?.id && u.active,
+        (u) => u.id === userRef.current?.id && !accountAccessError(u),
       );
       if (updated) {
         userRef.current = updated;
@@ -210,7 +225,8 @@ export function FarmProvider({ children }: { children: ReactNode }) {
             storedUser === "logged-out"
               ? null
               : next.users.find(
-                  (u) => u.id === (storedUser || "admin") && u.active,
+                  (u) =>
+                    u.id === (storedUser || "admin") && !accountAccessError(u),
                 ) || null;
           if (mounted) {
             commit(next);
@@ -228,8 +244,9 @@ export function FarmProvider({ children }: { children: ReactNode }) {
               ? (JSON.parse(sessionUserRaw) as User)
               : null;
             const sessionUser =
-              next.users.find((u) => u.id === savedUser?.id && u.active) ||
-              null;
+              next.users.find(
+                (u) => u.id === savedUser?.id && !accountAccessError(u),
+              ) || null;
             if (!sessionUser)
               throw new Error("Sesi tidak valid. Silakan masuk kembali.");
             if (mounted) {
@@ -273,14 +290,60 @@ export function FarmProvider({ children }: { children: ReactNode }) {
     return () => clearInterval(interval);
   }, [refresh, user?.id]); // Refresh prices and notifications in an active session.
 
+  const registrationStatus =
+    useCallback(async (): Promise<RegistrationAvailability> => {
+      // Registration has its own form state; a status fetch must never replace the form with the global loading screen.
+      if (mode === "demo")
+        return { first_admin_required: false, setup_enabled: false };
+      return request<RegistrationAvailability>(
+        "/auth/registration-status",
+        null,
+      );
+    }, []);
+  const register = useCallback(
+    async (input: RegistrationInput): Promise<RegistrationResult> => {
+      if (mode === "live")
+        return request<RegistrationResult>("/auth/register", null, input);
+
+      const email = input.email.trim().toLowerCase();
+      const hashedPassword = await passwordHash(email, input.password);
+      // Read after hashing so simultaneous submissions in this tab see the latest registered email.
+      const stored = localStorage.getItem(STORAGE_KEY);
+      const source = stored ? (JSON.parse(stored) as State) : stateRef.current;
+      const registration = registerDemoEmployee(source, input);
+      const previousCredentials = localStorage.getItem(DEMO_AUTH_KEY);
+      const credentials = JSON.parse(previousCredentials || "{}") as Record<
+        string,
+        string
+      >;
+      credentials[email] = hashedPassword;
+      localStorage.setItem(DEMO_AUTH_KEY, JSON.stringify(credentials));
+      try {
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(registration.state));
+      } catch (cause) {
+        if (previousCredentials === null)
+          localStorage.removeItem(DEMO_AUTH_KEY);
+        else localStorage.setItem(DEMO_AUTH_KEY, previousCredentials);
+        throw cause;
+      }
+      commit(registration.state);
+      return registration.result;
+    },
+    [commit],
+  );
+
   const login = useCallback(
     async (email: string, password: string) => {
       setError(null);
       setLoading(true);
       try {
         if (mode === "demo") {
+          const stored = localStorage.getItem(STORAGE_KEY);
+          const source = stored
+            ? (JSON.parse(stored) as State)
+            : stateRef.current;
           const normalizedEmail = email.trim().toLowerCase();
-          const found = stateRef.current.users.find(
+          const found = source.users.find(
             (u) => u.email.toLowerCase() === normalizedEmail,
           );
           const credentials = JSON.parse(
@@ -293,9 +356,10 @@ export function FarmProvider({ children }: { children: ReactNode }) {
               password === DEMO_PASSWORD;
           if (!found || !validPassword)
             throw new Error("Email atau kata sandi tidak sesuai.");
-          if (!found.active)
-            throw new Error("Akun Anda dinonaktifkan. Hubungi admin.");
+          const accessError = accountAccessError(found);
+          if (accessError) throw new Error(accessError);
           sessionStorage.setItem(DEMO_USER_KEY, found.id);
+          commit(source);
           setSessionUser(found);
         } else {
           const result = await request<{ token: string; user: User }>(
@@ -433,6 +497,8 @@ export function FarmProvider({ children }: { children: ReactNode }) {
         loading,
         error,
         login,
+        registrationStatus,
+        register,
         logout,
         command,
         refresh,

@@ -6,7 +6,7 @@ Fitur aktif: autentikasi admin/karyawan, produksi, stok/pengambilan/pengembalian
 
 ## Instalasi pertama
 
-Untuk langkah pemasangan melalui File Manager hosting seperti RumahFlow, baca **[Petunjuk pemasangan API TernaKu](PEMASANGAN.md)**. Tersedia pilihan installer melalui terminal/SSH dan Cron Jobs sementara jika terminal tidak tersedia.
+Untuk langkah pemasangan melalui File Manager hosting seperti RumahFlow, baca **[Petunjuk pemasangan API TernaKu](PEMASANGAN.md)**. Admin pertama dapat dibuat melalui halaman Daftar dengan kode setup pemilik, atau installer terminal/SSH dan Cron Jobs sementara.
 
 1. Buat database MySQL kosong ber-charset `utf8mb4` dan user khusus dengan akses ke database itu. Jangan memakai akun root di production.
 2. Salin `.env.example` menjadi `.env`, lalu isi koneksi database, `APP_URL`, dan `ALLOWED_ORIGINS`. Jangan commit `.env`.
@@ -59,12 +59,16 @@ Frontend production memakai `NEXT_PUBLIC_API_URL=https://api.buildmanagement.id/
 | Metode | Path | Fungsi |
 | --- | --- | --- |
 | GET | `/health` | Pemeriksaan runtime dan koneksi database |
+| GET | `/auth/registration-status` | `{first_admin_required,setup_enabled}` tanpa autentikasi |
+| POST | `/auth/register` | `{name,email,password,password_confirmation,setup_token?}` → `{status,message}` |
 | POST | `/auth/login` | `{email,password}` → `{token,user}` |
 | POST | `/auth/logout` | Mencabut bearer token |
 | GET | `/bootstrap` | State sesuai hak pengguna |
 | POST | `/commands` | `{action,payload,request_id?}` → State terbaru |
 
 Semua respons berhasil dibungkus `{"data":...}` dan kesalahan `{"error":"pesan"}`. Permintaan tulis memakai `Content-Type: application/json`; setelah login gunakan `Authorization: Bearer <token>`. Token acak disimpan sebagai hash SHA-256, kadaluarsa 12 jam secara default, dan dicabut ketika akun dinonaktifkan atau logout. Percobaan login dibatasi 10 per pasangan IP/email per 15 menit. CORS hanya mengizinkan origin yang tercantum, tidak memakai `*` dan tidak bergantung pada cookie.
+
+Tombol **Daftar** tetap tersedia setelah admin dibuat. Pendaftaran pertama memerlukan tabel pengguna kosong dan kode pemilik acak `SETUP_TOKEN` (minimal 32 karakter), atau file terlindungi `application/config/setup-token.php` yang mengembalikan kode tersebut. Pendaftaran berikutnya selalu menjadi karyawan peternakan yang sama dengan status menunggu; admin menyetujui atau menolak melalui menu Karyawan. Form pendaftaran tidak boleh menentukan role/aktivasi sendiri dan tidak menghasilkan token login. Password pendaftaran minimal 12 karakter Unicode dan maksimal 72 byte UTF-8; spasi dipertahankan. Pendaftaran dibatasi 10 percobaan per IP dan 5 per email dalam 15 menit. Status pendaftaran disimpan di tabel `records`, sehingga pemasangan lama tidak memerlukan migrasi skema. Akun lama tetap dianggap disetujui. Hapus kode setup setelah admin pertama berhasil dibuat, dan jangan masukkan kode/password ke Git atau paket deployment.
 
 `request_id` opsional disarankan untuk seluruh penulisan: gunakan UUID baru untuk suatu tindakan, pertahankan UUID tersebut ketika mengulangi permintaan yang hasilnya tidak diketahui karena jaringan putus. Permintaan identik dengan ID yang sama dari pengguna yang sama tidak menulis ulang data; payload berbeda dengan ID sama menghasilkan 409. Kunci disimpan atomik bersama perubahan. Gunakan UUID baru untuk tindakan baru yang memang ingin dicatat dua kali.
 
@@ -84,6 +88,8 @@ Nama kolom dan struktur respons mengikuti `../src/lib/types.ts` dan `../CONTRACT
 | `price.create` | good_price, cracked_price, effective_at | Admin |
 | `user.create` | name, email, password, role, target | Admin |
 | `user.update` | id, name?, active?, target? | Admin |
+| `user.approve` | id | Admin, menyetujui pendaftaran karyawan |
+| `user.reject` | id | Admin, menolak pendaftaran yang menunggu |
 | `barn.create` | name, type:`ayam`, capacity, notes | Admin |
 | `feed.create` | name, unit:`kg`, min_stock | Admin |
 | `feed.purchase` | date, supplier, items[{feed_id,quantity,unit_price}], paid, notes | Admin |
@@ -118,6 +124,6 @@ Notifikasi harga tersimpan di database dan muncul saat frontend menyegarkan stat
 
 1. Buat database kosong terpisah, misalnya `ternaku_test`, dan arahkan `.env` serta server PHP ke database itu.
 2. Jalankan `php -S 127.0.0.1:8081 router.php`.
-3. Jalankan `ALLOW_TEST_RESET=1 php tests/integration.php` (PowerShell: `$env:ALLOW_TEST_RESET='1'; php tests/integration.php`). `TEST_API_URL` dapat mengganti alamat uji.
+3. Atur `SETUP_TOKEN` acak khusus pengujian, sama pada server PHP dan proses tes; jangan memakai kode production. Jalankan `ALLOW_TEST_RESET=1 php tests/integration.php` (PowerShell: `$env:ALLOW_TEST_RESET='1'; php tests/integration.php`). `TEST_API_URL` dapat mengganti alamat uji.
 
-Suite memverifikasi login/hash token, pembatasan akses, CORS/metode, validasi angka/tanggal, produksi, pengambilan/penjualan/pengembalian berlebih, pembayaran, snapshot harga dan harga masa depan, koreksi/alasan/penguncian, pakan, isolasi karyawan, notifikasi, idempotensi, pencegahan menonaktifkan diri sendiri, race stok, pencabutan token, serta perlindungan direktori internal. Lingkungan verifikasi pengembangan menggunakan MariaDB terisolasi pada port 33317 dengan data dalam `.test-db/` yang diabaikan Git; tidak mengubah database XAMPP yang sudah ada.
+Suite memverifikasi login/hash token, pembatasan akses, CORS/metode, validasi angka/tanggal, produksi, pengambilan/penjualan/pengembalian berlebih, pembayaran, snapshot harga dan harga masa depan, koreksi/alasan/penguncian, pakan, isolasi karyawan, notifikasi, idempotensi, pencegahan menonaktifkan diri sendiri, race stok, pencabutan token, serta perlindungan direktori internal. Pengujian pendaftaran mencakup kode setup, persetujuan/penolakan, password Unicode, pembatasan percobaan, serta pendaftaran admin pertama dan email duplikat yang berjalan bersamaan. Lingkungan verifikasi pengembangan menggunakan MariaDB terisolasi pada port 33317 dengan data dalam `.test-db/` yang diabaikan Git; tidak mengubah database XAMPP yang sudah ada.

@@ -7,6 +7,8 @@ import type {
   Price,
   Quantity,
   RecordEntity,
+  RegistrationInput,
+  RegistrationResult,
   Sale,
   State,
   User,
@@ -166,7 +168,7 @@ export function emptyState(): State {
   };
 }
 export function visibleState(state: State, user: User | null): State {
-  if (!user) return emptyState();
+  if (!user || accountAccessError(user)) return emptyState();
   if (user.role === "admin")
     return {
       ...state,
@@ -193,6 +195,105 @@ export function visibleState(state: State, user: User | null): State {
     feed_inventory: Object.fromEntries(
       state.feeds.map((f) => [f.id, feedStock(state, f.id)]),
     ),
+  };
+}
+
+/** Legacy/manual users without registration_status are already approved. */
+export function accountAccessError(user: User): string | null {
+  if (user.registration_status === "pending")
+    return "Pendaftaran Anda menunggu persetujuan admin.";
+  if (user.registration_status === "rejected")
+    return "Pendaftaran Anda ditolak. Hubungi admin peternakan.";
+  if (!user.active) return "Akun Anda dinonaktifkan. Hubungi admin.";
+  return null;
+}
+
+/** Demo-only public registration. The seeded demo already has its farm admin. */
+export function registerDemoEmployee(
+  input: State,
+  payload: RegistrationInput,
+  now = new Date(),
+): { state: State; user: User; result: RegistrationResult } {
+  assert(
+    Object.keys(payload).every((key) =>
+      [
+        "name",
+        "email",
+        "password",
+        "password_confirmation",
+        "setup_token",
+      ].includes(key),
+    ),
+    "Peran dan status akun ditentukan oleh sistem.",
+  );
+  const name = requiredText(payload.name, "Nama");
+  assert(Array.from(name).length <= 120, "Nama maksimal 120 karakter.");
+  const email = requiredText(payload.email, "Email").toLowerCase();
+  assert(
+    email.length <= 190 && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email),
+    "Format email tidak valid.",
+  );
+  assert(
+    !input.users.some((u) => u.email.toLowerCase() === email),
+    "Email sudah digunakan.",
+  );
+  assert(typeof payload.password === "string", "Kata sandi wajib diisi.");
+  const passwordBytes = new TextEncoder().encode(payload.password).length;
+  assert(
+    Array.from(payload.password).length >= 12 &&
+      passwordBytes <= 72 &&
+      !payload.password.includes("\0"),
+    "Kata sandi minimal 12 karakter dan maksimal 72 byte, tanpa karakter null.",
+  );
+  assert(
+    payload.password === payload.password_confirmation,
+    "Konfirmasi kata sandi tidak sesuai.",
+  );
+  assert(
+    input.users.some((u) => u.role === "admin"),
+    "Admin demo belum tersedia. Muat ulang data demo.",
+  );
+
+  const state = structuredClone(input);
+  const stamp = now.toISOString();
+  const newUser: User = {
+    id: `signup-${now.getTime()}-${state.users.length + 1}`,
+    name,
+    email,
+    role: "employee",
+    active: false,
+    registration_status: "pending",
+    target: 0,
+  };
+  state.users.push(newUser);
+  for (const recipient of state.users.filter(
+    (u) => u.role === "admin" && !accountAccessError(u),
+  )) {
+    state.notifications.push({
+      id: `signup-notification-${newUser.id}-${recipient.id}`,
+      user_id: recipient.id,
+      title: "Pendaftaran karyawan baru",
+      message: `${name} (${email}) menunggu persetujuan Anda. Buka menu Karyawan untuk meninjau.`,
+      created_at: stamp,
+      read: false,
+    });
+  }
+  state.activity.unshift({
+    id: `signup-activity-${newUser.id}`,
+    user_id: newUser.id,
+    action: "user.register",
+    description: `${name} mendaftar sebagai karyawan dan menunggu persetujuan admin.`,
+    created_at: stamp,
+    after: structuredClone(newUser),
+  });
+  return {
+    state,
+    user: newUser,
+    result: {
+      status: "pending",
+      message:
+        "Pendaftaran berhasil. Akun Anda menunggu persetujuan admin sebelum dapat masuk.",
+    },
   };
 }
 
@@ -470,7 +571,8 @@ export function executeCommand(
   delete state.inventory;
   delete state.feed_inventory;
   const user = find(state.users, userId, "Pengguna");
-  assert(user.active, "Akun Anda dinonaktifkan.");
+  const accessError = accountAccessError(user);
+  assert(!accessError, accessError || "Akun tidak dapat digunakan.");
   const stamp = now.toISOString();
   let sequence =
     state.activity.length +
@@ -707,6 +809,7 @@ export function executeCommand(
         email,
         role,
         active: true,
+        registration_status: "approved",
         target: numeric(payload.target ?? 0, "Target penjualan"),
       });
       break;
@@ -714,8 +817,18 @@ export function executeCommand(
     case "user.update": {
       admin(user);
       const u = find(state.users, payload.id, "Karyawan");
+      assert(
+        payload.role === undefined && payload.registration_status === undefined,
+        "Peran dan status pendaftaran tidak dapat diubah lewat pengaturan akun.",
+      );
       if (payload.active !== undefined) {
         assert(typeof payload.active === "boolean", "Status akun tidak valid.");
+        assert(
+          !payload.active ||
+            (u.registration_status !== "pending" &&
+              u.registration_status !== "rejected"),
+          "Gunakan persetujuan pendaftaran untuk akun ini.",
+        );
         assert(
           payload.active || u.id !== user.id,
           "Anda tidak dapat menonaktifkan akun sendiri.",
@@ -733,6 +846,40 @@ export function executeCommand(
         u.name = requiredText(payload.name, "Nama");
       if (payload.target !== undefined)
         u.target = numeric(payload.target, "Target penjualan");
+      break;
+    }
+    case "user.approve":
+    case "user.reject": {
+      admin(user);
+      const u = find(state.users, payload.id, "Karyawan");
+      assert(
+        Object.keys(payload).every((key) => key === "id"),
+        "Persetujuan hanya menerima ID akun.",
+      );
+      assert(
+        u.role === "employee",
+        "Hanya pendaftaran karyawan yang dapat ditinjau.",
+      );
+      assert(
+        u.registration_status === "pending" ||
+          (action === "user.approve" && u.registration_status === "rejected"),
+        "Pendaftaran sudah ditinjau.",
+      );
+      detail.before = structuredClone(u);
+      u.registration_status =
+        action === "user.approve" ? "approved" : "rejected";
+      u.active = action === "user.approve";
+      detail.after = structuredClone(u);
+      if (u.active)
+        state.notifications.push({
+          id: id("notif"),
+          user_id: u.id,
+          title: "Pendaftaran disetujui",
+          message:
+            "Akun Anda telah disetujui admin. Selamat bergabung di TernaKu.",
+          created_at: stamp,
+          read: false,
+        });
       break;
     }
     case "barn.create": {

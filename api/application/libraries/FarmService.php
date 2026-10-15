@@ -17,7 +17,11 @@ class FarmService {
     private function now(): string { return (new DateTimeImmutable())->format('Y-m-d\TH:i:s.uP'); }
     private function id(string $prefix): string { return $prefix.'_'.bin2hex(random_bytes(12)); }
     private function json($value): string { return json_encode($value, JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES); }
-    private function publicUser(array $u): array { return ['id'=>$u['id'],'name'=>$u['name'],'email'=>$u['email'],'role'=>$u['role'],'active'=>(bool)$u['active'],'target'=>(float)$u['target']]; }
+    private function registrationRecord(string $userId): ?array {
+        $data=$this->query("SELECT data FROM records WHERE kind='registration' AND user_id=? LIMIT 1",[$userId])->fetchColumn();
+        return $data?json_decode($data,true,512,JSON_THROW_ON_ERROR):null;
+    }
+    private function publicUser(array $u): array { return ['id'=>$u['id'],'name'=>$u['name'],'email'=>$u['email'],'role'=>$u['role'],'active'=>(bool)$u['active'],'target'=>(float)$u['target'],'registration_status'=>$this->registrationRecord($u['id'])['status']??'approved']; }
     private function text(array $p, string $key, int $max = 2000, bool $required = false): string {
         $v = $p[$key] ?? '';
         if (!is_string($v)) throw new ApiProblem("Kolom $key harus berupa teks.");
@@ -80,11 +84,88 @@ class FarmService {
     public function authenticate(string $token): array {
         if (!preg_match('/^[a-f0-9]{64}$/D',$token)) throw new ApiProblem('Silakan masuk terlebih dahulu.',401);
         $u=$this->query('SELECT u.* FROM users u JOIN tokens t ON t.user_id=u.id WHERE t.token_hash=? AND t.expires_at>NOW() AND u.active=1',[hash('sha256',$token)])->fetch(PDO::FETCH_ASSOC);
-        if (!$u) throw new ApiProblem('Sesi berakhir atau akun dinonaktifkan. Silakan masuk kembali.',401);
+        if (!$u || ($this->registrationRecord($u['id'])['status']??'approved')!=='approved') throw new ApiProblem('Sesi berakhir atau akun belum disetujui/nonaktif. Silakan masuk kembali.',401);
         return $this->actor=$this->publicUser($u);
     }
+    private function setupToken(): string {
+        $token=getenv('SETUP_TOKEN') ?: '';
+        $file=__DIR__.'/../config/setup-token.php';
+        if($token==='' && is_file($file)) { $value=require $file; if(is_string($value)) $token=$value; }
+        // An empty/example/short key must never expose first-admin registration.
+        return strlen($token)>=32 && strlen($token)<=512 && !preg_match('/replace|change.?me|example|isi.?token/i',$token)?$token:'';
+    }
+    private function usersCount(): int {
+        try { return (int)$this->query('SELECT COUNT(*) FROM users')->fetchColumn(); }
+        catch(PDOException $e) { if($e->getCode()==='42S02') return 0; throw $e; }
+    }
+    public function registrationStatus(): array {
+        $first=$this->usersCount()===0;
+        return ['first_admin_required'=>$first,'setup_enabled'=>$first && $this->setupToken()!==''];
+    }
+    private function verifySetupToken(array $p): void {
+        $expected=$this->setupToken();
+        if($expected==='') throw new ApiProblem('Pendaftaran admin pertama belum diaktifkan. Pemilik hosting perlu mengatur SETUP_TOKEN.',503);
+        $given=$p['setup_token']??'';
+        if(!is_string($given) || strlen($given)>512 || !hash_equals($expected,$given)) throw new ApiProblem('Kunci pemasangan tidak valid.',403);
+    }
+    private function ensureSchema(): void {
+        // DDL is allowed only after owner-key verification. IF NOT EXISTS preserves all data.
+        $lock='ternaku-install-'.substr(hash('sha256',(string)$this->query('SELECT DATABASE()')->fetchColumn()),0,32);
+        if((int)$this->query('SELECT GET_LOCK(?,10)',[$lock])->fetchColumn()!==1) throw new ApiProblem('Pemasangan sedang berjalan. Coba kembali.',409);
+        try {
+            $sql=preg_replace('/^--.*$/m','',file_get_contents(dirname(__DIR__,2).'/schema.sql'));
+            foreach(explode(';',$sql) as $statement) if(trim($statement)!=='') $this->db->exec($statement);
+        } finally { $this->query('SELECT RELEASE_LOCK(?)',[$lock]); }
+    }
+    private function registrationAttempt(string $ip,string $email): void {
+        $keys=[hash('sha256','registration-ip|'.$ip)=>10,hash('sha256','registration-email|'.$email)=>5];
+        $this->db->beginTransaction();
+        try {
+            $this->query('DELETE FROM login_attempts WHERE started_at<DATE_SUB(NOW(),INTERVAL 15 MINUTE)');
+            foreach($keys as $key=>$limit) {
+                $this->query('INSERT IGNORE INTO login_attempts(attempt_key,attempts,started_at) VALUES(?,0,NOW())',[$key]);
+                $attempts=(int)$this->query('SELECT attempts FROM login_attempts WHERE attempt_key=? FOR UPDATE',[$key])->fetchColumn();
+                if($attempts>=$limit) { $this->db->commit(); throw new ApiProblem('Terlalu banyak pendaftaran. Coba kembali dalam 15 menit.',429); }
+                $this->query('UPDATE login_attempts SET attempts=attempts+1 WHERE attempt_key=?',[$key]);
+            }
+            $this->db->commit();
+        } catch(Throwable $e) { if($this->db->inTransaction()) $this->db->rollBack(); throw $e; }
+    }
+    public function register(array $p,string $ip): array {
+        if(array_diff(array_keys($p),['name','email','password','password_confirmation','setup_token'])) throw new ApiProblem('Kolom pendaftaran tidak didukung. Peran dan status ditentukan oleh sistem.');
+        $name=$this->text($p,'name',120,true); $email=strtolower($this->text($p,'email',190,true));
+        if(!filter_var($email,FILTER_VALIDATE_EMAIL)) throw new ApiProblem('Format email tidak valid.');
+        $password=$p['password']??null;
+        if(!is_string($password) || mb_strlen($password)<12 || strlen($password)>72 || str_contains($password,"\0")) throw new ApiProblem('Kata sandi minimal 12 karakter dan maksimal 72 byte, tanpa karakter null.');
+        if(!is_string($p['password_confirmation']??null) || !hash_equals($password,$p['password_confirmation'])) throw new ApiProblem('Konfirmasi kata sandi tidak sama.');
+        if($this->usersCount()===0) { $this->verifySetupToken($p); $this->ensureSchema(); }
+        $this->registrationAttempt($ip,$email);
+        // Hash before holding the farm-wide mutex so password work does not block stock updates.
+        $hash=password_hash($password,PASSWORD_DEFAULT);
+        $this->db->beginTransaction();
+        try {
+            $this->query('SELECT version FROM command_mutex WHERE id=1 FOR UPDATE')->fetchColumn();
+            $first=$this->usersCount()===0;
+            if($first) $this->verifySetupToken($p);
+            elseif(isset($p['setup_token']) && $p['setup_token']!=='') throw new ApiProblem('Admin pertama sudah dibuat. Muat ulang formulir untuk mendaftar sebagai karyawan.',409);
+            if($this->query('SELECT id FROM users WHERE email=?',[$email])->fetchColumn()) throw new ApiProblem('Email sudah terdaftar. Silakan masuk atau hubungi admin.',409);
+            $id=$this->id('user'); $role=$first?'admin':'employee'; $active=$first?1:0;
+            $this->query('INSERT INTO users(id,name,email,password_hash,role,active,target) VALUES(?,?,?,?,?,?,0)',[$id,$name,$email,$hash,$role,$active]);
+            $r=$this->insert('registration',['user_id'=>$id,'status'=>$first?'approved':'pending','created_at'=>$this->now(),'reviewed_at'=>$first?$this->now():null,'reviewed_by'=>$first?$id:null]);
+            $this->actor=['id'=>$id,'name'=>$name,'email'=>$email,'role'=>$role,'active'=>(bool)$active,'target'=>0,'registration_status'=>$r['status']];
+            $this->audit($first?'auth.setup':'auth.register',$first?'Membuat admin pertama':'Mendaftar sebagai karyawan; menunggu persetujuan admin',null,$this->actor);
+            if($first) {
+                if(!$this->query("SELECT id FROM records WHERE kind='barn' LIMIT 1")->fetchColumn()) $this->insert('barn',['name'=>'Kandang Ayam Utama','type'=>'ayam','capacity'=>0,'notes'=>'Sumber produksi awal; kelola sesuai kondisi peternakan.']);
+            } else {
+                foreach($this->query("SELECT id FROM users WHERE role='admin' AND active=1")->fetchAll(PDO::FETCH_COLUMN) as $uid) $this->insert('notification',['user_id'=>$uid,'title'=>'Pendaftaran karyawan baru','message'=>$name.' ('.$email.') menunggu persetujuan. Buka menu Karyawan untuk meninjau.','created_at'=>$this->now(),'read'=>false]);
+            }
+            $this->db->commit();
+            return ['status'=>$first?'active':'pending','message'=>$first?'Admin pertama berhasil dibuat. Silakan masuk.':'Pendaftaran berhasil. Akun Anda menunggu persetujuan admin.'];
+        } catch(Throwable $e) { if($this->db->inTransaction()) $this->db->rollBack(); throw $e; }
+    }
     public function login(array $p, string $ip): array {
-        $email=strtolower($this->text($p,'email',190,true)); $password=$this->text($p,'password',200,true);
+        $email=strtolower($this->text($p,'email',190,true)); $password=$p['password']??'';
+        if(!is_string($password) || strlen($password)>200 || $password==='') throw new ApiProblem('Kata sandi wajib diisi.');
         $key=hash('sha256',$ip.'|'.$email);
         $this->db->beginTransaction();
         try {
@@ -95,7 +176,14 @@ class FarmService {
             $this->query('UPDATE login_attempts SET attempts=attempts+1 WHERE attempt_key=?',[$key]);
             $u=$this->query('SELECT * FROM users WHERE email=?',[$email])->fetch(PDO::FETCH_ASSOC);
             $valid=password_verify($password,$u['password_hash'] ?? '$2y$10$92IXUNpkjO0rOQ5byMi.Ye4oKoEa3Ro9llC/.og/at2uheWG/igi.');
-            if (!$u || !$valid || !$u['active']) { $this->db->commit(); throw new ApiProblem('Email atau kata sandi salah, atau akun tidak aktif.',401); }
+            if (!$u || !$valid) { $this->db->commit(); throw new ApiProblem('Email atau kata sandi salah, atau akun tidak aktif.',401); }
+            $registration=$this->registrationRecord($u['id']);
+            if (!$u['active'] || ($registration['status']??'approved')!=='approved') {
+                $this->db->commit();
+                if(($registration['status']??'')==='pending') throw new ApiProblem('Akun Anda masih menunggu persetujuan admin.',403);
+                if(($registration['status']??'')==='rejected') throw new ApiProblem('Pendaftaran belum disetujui. Hubungi admin peternakan.',403);
+                throw new ApiProblem('Email atau kata sandi salah, atau akun tidak aktif.',401);
+            }
             $this->query('DELETE FROM login_attempts WHERE attempt_key=?',[$key]);
             $this->query('DELETE FROM tokens WHERE expires_at<=NOW()');
             $token=bin2hex(random_bytes(32)); $ttl=max(1,min(168,(int)(getenv('TOKEN_TTL_HOURS') ?: 12)));
@@ -208,7 +296,7 @@ class FarmService {
             // are additionally row-locked. Suitable for this farm-scale workload.
             $this->query('SELECT version FROM command_mutex WHERE id=1 FOR UPDATE')->fetchColumn();
             $active=$this->query('SELECT active,role FROM users WHERE id=?',[$this->actor['id']])->fetch(PDO::FETCH_ASSOC);
-            if(!$active || !$active['active']) throw new ApiProblem('Akun tidak aktif.',401);
+            if(!$active || !$active['active'] || ($this->registrationRecord($this->actor['id'])['status']??'approved')!=='approved') throw new ApiProblem('Akun belum disetujui atau tidak aktif.',401);
             $this->actor['role']=$active['role'];
             if($requestId!=='') {
                 $old=$this->query('SELECT fingerprint FROM command_requests WHERE user_id=? AND request_id=?',[$this->actor['id'],$requestId])->fetchColumn();
@@ -254,6 +342,8 @@ class FarmService {
                 $this->audit($action,'Menetapkan harga telur',null,$r); break;
             case 'user.create': $this->createUser($p); break;
             case 'user.update': $this->updateUser($p); break;
+            case 'user.approve': $this->reviewRegistration($p,true); break;
+            case 'user.reject': $this->reviewRegistration($p,false); break;
             case 'barn.create':
                 $this->admin(); $r=$this->insert('barn',['name'=>$this->text($p,'name',120,true),'type'=>$this->enum($p+['type'=>'ayam'],'type',['ayam']),'capacity'=>$this->number($p+['capacity'=>0],'capacity',0,true,1000000),'notes'=>$this->text($p,'notes')]);
                 $this->audit($action,'Menambahkan sumber/kandang ayam',null,$r); break;
@@ -318,14 +408,29 @@ class FarmService {
         $this->audit('user.create','Membuat akun karyawan',null,['id'=>$id,'name'=>$name,'email'=>$email,'role'=>$role,'target'=>$target]);
     }
     private function updateUser(array $p): void {
+        if(array_diff(array_keys($p),['id','name','target','active'])) throw new ApiProblem('Kolom perubahan akun tidak didukung.');
         $this->admin(); $id=$this->text($p,'id',40,true); $u=$this->query('SELECT * FROM users WHERE id=? FOR UPDATE',[$id])->fetch(PDO::FETCH_ASSOC); if(!$u) throw new ApiProblem('Pengguna tidak ditemukan.',404);
         $before=$this->publicUser($u); $name=isset($p['name'])?$this->text($p,'name',120,true):$u['name']; $target=isset($p['target'])?$this->number($p,'target',0,true):(float)$u['target']; $active=isset($p['active'])?$p['active']:(bool)$u['active'];
         if(!is_bool($active)) throw new ApiProblem('Status aktif tidak valid.');
+        if($active && in_array($before['registration_status'],['pending','rejected'],true)) throw new ApiProblem('Pendaftaran harus disetujui melalui tindakan Setujui pendaftaran.');
         if(!$active && $id===$this->actor['id']) throw new ApiProblem('Anda tidak dapat menonaktifkan akun sendiri.');
         if(!$active && $u['role']==='admin' && (int)$this->query("SELECT COUNT(*) FROM users WHERE role='admin' AND active=1")->fetchColumn()<=1) throw new ApiProblem('Minimal satu admin harus aktif.');
         $this->query('UPDATE users SET name=?,target=?,active=? WHERE id=?',[$name,$target,(int)$active,$id]);
         if(!$active) $this->query('DELETE FROM tokens WHERE user_id=?',[$id]);
         $this->audit('user.update','Memperbarui akun karyawan',$before,array_replace($before,['name'=>$name,'target'=>$target,'active'=>$active]));
+    }
+    private function reviewRegistration(array $p,bool $approved): void {
+        if(array_diff(array_keys($p),['id'])) throw new ApiProblem('Kolom persetujuan pendaftaran tidak didukung.');
+        $this->admin(); $id=$this->text($p,'id',40,true);
+        $u=$this->query('SELECT * FROM users WHERE id=? FOR UPDATE',[$id])->fetch(PDO::FETCH_ASSOC);
+        if(!$u) throw new ApiProblem('Pengguna tidak ditemukan.',404);
+        $r=$this->registrationRecord($id);
+        if($u['role']!=='employee' || !$r || !in_array($r['status'],$approved?['pending','rejected']:['pending'],true)) throw new ApiProblem('Pendaftaran ini sudah diproses atau tidak dapat ditinjau.',409);
+        $before=$this->publicUser($u); $r['status']=$approved?'approved':'rejected'; $r['reviewed_at']=$this->now(); $r['reviewed_by']=$this->actor['id'];
+        $this->save('registration',$r); $this->query('UPDATE users SET active=? WHERE id=?',[$approved?1:0,$id]);
+        $this->query('DELETE FROM tokens WHERE user_id=?',[$id]);
+        $this->audit($approved?'user.approve':'user.reject',($approved?'Menyetujui':'Menolak').' pendaftaran '.$u['name'],$before,array_replace($before,['active'=>$approved,'registration_status'=>$r['status']]));
+        if($approved) $this->insert('notification',['user_id'=>$id,'title'=>'Pendaftaran disetujui','message'=>'Selamat bergabung. Admin telah menyetujui akun Anda.','created_at'=>$this->now(),'read'=>false]);
     }
     private function purchaseFeed(array $p): void {
         $this->admin(); $items=$p['items']??null; if(!is_array($items) || count($items)<1 || count($items)>100) throw new ApiProblem('Pembelian harus memiliki 1–100 item.'); $out=[]; $total=0;

@@ -12,6 +12,7 @@ out/
 test-results/
 release/
 api/.env
+api/application/config/setup-token.php
 api/vendor/
 api/application/cache/*
 api/application/logs/*

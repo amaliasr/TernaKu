@@ -31,6 +31,8 @@ class Api extends CI_Controller {
     }
     public function health(): void { $this->run('GET',false,fn()=>['status'=>'ok','service'=>'TernaKu API','framework'=>'CodeIgniter 3.1.13','time'=>date('c')]); }
     public function login(): void { $this->run('POST',false,fn()=>$this->farm->login($this->body(),$_SERVER['REMOTE_ADDR']??'unknown')); }
+    public function registration_status(): void { $this->run('GET',false,fn()=>$this->farm->registrationStatus()); }
+    public function register(): void { $this->run('POST',false,fn()=>$this->farm->register($this->body(),$_SERVER['REMOTE_ADDR']??'unknown')); }
     public function logout(): void { $this->run('POST',true,function(){ $this->farm->logout($this->token()); return ['logged_out'=>true]; }); }
     public function bootstrap(): void { $this->run('GET',true,fn()=>$this->farm->bootstrap()); }
     public function commands(): void { $this->run('POST',true,function(){ $p=$this->body(); if(!is_string($p['action']??null) || !is_array($p['payload']??null) || !is_string($p['request_id']??'')) throw new ApiProblem('Perintah dan payload wajib diisi.'); return $this->farm->command($p['action'],$p['payload'],$p['request_id']??''); }); }

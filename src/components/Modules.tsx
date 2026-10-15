@@ -1508,11 +1508,55 @@ function PricesPage({ open }: { open: OpenForm }) {
   );
 }
 function EmployeesPage({ open }: { open: OpenForm }) {
-  const { state, user } = useFarm();
+  const { state, user, command } = useFarm();
   const [search, setSearch] = useState("");
   const [status, setStatus] = useState("");
   const [edit, setEdit] = useState<User | null>(null);
+  const [decision, setDecision] = useState<{
+    employee: User;
+    approve: boolean;
+  } | null>(null);
+  const [decisionBusy, setDecisionBusy] = useState(false);
+  const [decisionError, setDecisionError] = useState("");
+  const [decisionNotice, setDecisionNotice] = useState("");
   const action = useAction();
+  const registrationState = (employee: User) =>
+    employee.registration_status || "approved";
+  const pendingCount = state.users.filter(
+    (u) => registrationState(u) === "pending",
+  ).length;
+  const accountStatus = (employee: User) =>
+    registrationState(employee) === "approved"
+      ? employee.active
+        ? "active"
+        : "inactive"
+      : registrationState(employee);
+  function reviewRegistration(employee: User, approve: boolean) {
+    setDecisionError("");
+    setDecisionNotice("");
+    setDecision({ employee, approve });
+  }
+  async function submitDecision(event: React.FormEvent) {
+    event.preventDefault();
+    if (!decision || decisionBusy) return;
+    setDecisionBusy(true);
+    setDecisionError("");
+    try {
+      await command(decision.approve ? "user.approve" : "user.reject", {
+        id: decision.employee.id,
+      });
+      setDecisionNotice(
+        decision.approve
+          ? `Pendaftaran ${decision.employee.name} disetujui. Akun sudah dapat masuk sebagai karyawan.`
+          : `Pendaftaran ${decision.employee.name} ditolak. Akun tidak dapat masuk ke aplikasi.`,
+      );
+      setDecision(null);
+    } catch (err) {
+      setDecisionError(errorMessage(err));
+    } finally {
+      setDecisionBusy(false);
+    }
+  }
   const month = today().slice(0, 7);
   const sales = state.sales.filter(
     (s) => businessDate(s.date).slice(0, 7) === month,
@@ -1523,7 +1567,7 @@ function EmployeesPage({ open }: { open: OpenForm }) {
     .filter(
       (u) =>
         `${u.name} ${u.email}`.toLowerCase().includes(search.toLowerCase()) &&
-        (!status || (status === "active" ? u.active : !u.active)),
+        (!status || accountStatus(u) === status),
     )
     .sort((a, b) => omzet(b.id) - omzet(a.id));
   if (user?.role !== "admin")
@@ -1543,11 +1587,40 @@ function EmployeesPage({ open }: { open: OpenForm }) {
         <AddButton onClick={() => open("user")}>Tambah karyawan</AddButton>
       </Heading>
       {action.feedback}
+      {decisionNotice && (
+        <div className="alert alert-success" role="status">
+          {decisionNotice}
+        </div>
+      )}
+      {pendingCount > 0 && (
+        <div className="registration-review-notice">
+          <ShieldCheck size={22} />
+          <div>
+            <strong>{pendingCount} pendaftaran menunggu persetujuan</strong>
+            <p>
+              Periksa nama dan email sebelum memberikan akses ke peternakan.
+            </p>
+          </div>
+          <button
+            type="button"
+            className="btn btn-sm btn-outline-secondary"
+            onClick={() => {
+              setStatus("pending");
+              setSearch("");
+            }}
+          >
+            Lihat pendaftaran
+          </button>
+        </div>
+      )}
       <Stats
         items={[
           {
             label: "Anggota tim",
-            value: String(state.users.length),
+            value: String(
+              state.users.filter((u) => registrationState(u) === "approved")
+                .length,
+            ),
             note: "Termasuk atasan dan karyawan",
             icon: <Users size={22} />,
           },
@@ -1595,6 +1668,8 @@ function EmployeesPage({ open }: { open: OpenForm }) {
             <option value="">Semua status</option>
             <option value="active">Aktif</option>
             <option value="inactive">Nonaktif</option>
+            <option value="pending">Menunggu persetujuan</option>
+            <option value="rejected">Ditolak</option>
           </select>
         </div>
         {rows.length ? (
@@ -1654,38 +1729,80 @@ function EmployeesPage({ open }: { open: OpenForm }) {
                         </div>
                       </td>
                       <td>
-                        <Pill tone={u.active ? "success" : "neutral"}>
-                          {u.active ? "Aktif" : "Nonaktif"}
+                        <Pill
+                          tone={
+                            registrationState(u) === "pending"
+                              ? "warning"
+                              : registrationState(u) === "rejected"
+                                ? "danger"
+                                : u.active
+                                  ? "success"
+                                  : "neutral"
+                          }
+                        >
+                          {registrationState(u) === "pending"
+                            ? "Menunggu persetujuan"
+                            : registrationState(u) === "rejected"
+                              ? "Ditolak"
+                              : u.active
+                                ? "Aktif"
+                                : "Nonaktif"}
                         </Pill>
                       </td>
                       <td>
                         <div className="table-actions">
-                          <button
-                            className="icon-btn"
-                            aria-label={`Edit ${u.name}`}
-                            title="Edit nama dan target"
-                            onClick={() => setEdit(u)}
-                          >
-                            <Pencil size={16} />
-                          </button>
-                          <button
-                            className="btn btn-sm btn-light"
-                            disabled={action.busy || u.id === user.id}
-                            title={
-                              u.id === user.id
-                                ? "Akun sendiri tidak dapat dinonaktifkan"
-                                : undefined
-                            }
-                            onClick={() =>
-                              void action.run(
-                                "user.update",
-                                { id: u.id, active: !u.active },
-                                `Akun ${u.name} ${u.active ? "dinonaktifkan" : "diaktifkan"}.`,
-                              )
-                            }
-                          >
-                            {u.active ? "Nonaktifkan" : "Aktifkan"}
-                          </button>
+                          {registrationState(u) !== "approved" ? (
+                            <>
+                              <button
+                                className="btn btn-sm btn-outline-primary"
+                                disabled={decisionBusy}
+                                onClick={() => reviewRegistration(u, true)}
+                              >
+                                <Check size={14} />{" "}
+                                {registrationState(u) === "rejected"
+                                  ? "Setujui ulang"
+                                  : "Setujui"}
+                              </button>
+                              {registrationState(u) === "pending" && (
+                                <button
+                                  className="btn btn-sm btn-light text-danger"
+                                  disabled={decisionBusy}
+                                  onClick={() => reviewRegistration(u, false)}
+                                >
+                                  <X size={14} /> Tolak
+                                </button>
+                              )}
+                            </>
+                          ) : (
+                            <>
+                              <button
+                                className="icon-btn"
+                                aria-label={`Edit ${u.name}`}
+                                title="Edit nama dan target"
+                                onClick={() => setEdit(u)}
+                              >
+                                <Pencil size={16} />
+                              </button>
+                              <button
+                                className="btn btn-sm btn-light"
+                                disabled={action.busy || u.id === user.id}
+                                title={
+                                  u.id === user.id
+                                    ? "Akun sendiri tidak dapat dinonaktifkan"
+                                    : undefined
+                                }
+                                onClick={() =>
+                                  void action.run(
+                                    "user.update",
+                                    { id: u.id, active: !u.active },
+                                    `Akun ${u.name} ${u.active ? "dinonaktifkan" : "diaktifkan"}.`,
+                                  )
+                                }
+                              >
+                                {u.active ? "Nonaktifkan" : "Aktifkan"}
+                              </button>
+                            </>
+                          )}
                         </div>
                       </td>
                     </tr>
@@ -1700,6 +1817,57 @@ function EmployeesPage({ open }: { open: OpenForm }) {
         <TableEnd count={rows.length} label="anggota tim" />
       </section>
       {edit && <EmployeeDialog employee={edit} onClose={() => setEdit(null)} />}
+      {decision && (
+        <Dialog
+          title={
+            decision.approve ? "Setujui pendaftaran?" : "Tolak pendaftaran?"
+          }
+          subtitle="Tinjau akses karyawan"
+          onClose={() => {
+            if (!decisionBusy) setDecision(null);
+          }}
+        >
+          <form onSubmit={submitDecision}>
+            <div className="modal-body-custom">
+              <Person
+                name={decision.employee.name}
+                small={decision.employee.email}
+              />
+              <p className="mt-3 mb-0">
+                {decision.approve
+                  ? "Akun ini akan aktif sebagai karyawan di peternakan Anda dan dapat mulai mencatat produksi serta penjualan."
+                  : "Akun ini tidak akan mendapat akses ke peternakan. Anda tetap dapat menyetujuinya kembali dari daftar akun yang ditolak."}
+              </p>
+              {decisionError && (
+                <div className="alert alert-danger mt-3 mb-0" role="alert">
+                  {decisionError}
+                </div>
+              )}
+            </div>
+            <div className="modal-footer-custom">
+              <button
+                type="button"
+                className="btn btn-light"
+                disabled={decisionBusy}
+                onClick={() => setDecision(null)}
+              >
+                Batal
+              </button>
+              <button
+                type="submit"
+                className={`btn ${decision.approve ? "btn-primary" : "btn-danger"}`}
+                disabled={decisionBusy}
+              >
+                {decisionBusy
+                  ? "Menyimpan…"
+                  : decision.approve
+                    ? "Setujui & aktifkan"
+                    : "Tolak pendaftaran"}
+              </button>
+            </div>
+          </form>
+        </Dialog>
+      )}
     </>
   );
 }
@@ -1712,6 +1880,9 @@ const actionLabels: Record<string, string> = {
   "price.create": "Harga diperbarui",
   "user.create": "Akun dibuat",
   "user.update": "Akun diperbarui",
+  "user.register": "Akun didaftarkan",
+  "user.approve": "Pendaftaran disetujui",
+  "user.reject": "Pendaftaran ditolak",
   "feed.create": "Jenis pakan ditambahkan",
   "feed.purchase": "Pembelian pakan",
   "feed.use": "Pemakaian pakan",

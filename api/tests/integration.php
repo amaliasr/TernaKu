@@ -6,9 +6,11 @@ $dbName=getenv('DB_NAME') ?: '';
 if(getenv('ALLOW_TEST_RESET')!=='1' || !preg_match('/^[a-zA-Z0-9_]+_test$/D',$dbName)) { fwrite(STDERR,"Use dedicated DB_NAME ending _test and ALLOW_TEST_RESET=1. Never run against production.\n"); exit(1); }
 $base=getenv('TEST_API_URL') ?: 'http://127.0.0.1:8081';
 $db=new PDO('mysql:host='.(getenv('DB_HOST')?:'127.0.0.1').';port='.(getenv('DB_PORT')?:'3306').';dbname='.$dbName.';charset=utf8mb4',getenv('DB_USER'),getenv('DB_PASSWORD'),[PDO::ATTR_ERRMODE=>PDO::ERRMODE_EXCEPTION]);
-$db->exec('SET FOREIGN_KEY_CHECKS=0'); foreach(['records','tokens','login_attempts','command_requests','users','stock','command_mutex'] as $table) $db->exec('DROP TABLE IF EXISTS '.$table); $db->exec('SET FOREIGN_KEY_CHECKS=1');
-foreach(explode(';',preg_replace('/^--.*$/m','',file_get_contents(dirname(__DIR__).'/schema.sql'))) as $sql) if(trim($sql)!=='') $db->exec($sql);
-$stmt=$db->prepare("INSERT INTO users(id,name,email,password_hash,role) VALUES('admin_test','Admin Test','admin@test.local',?,'admin')"); $stmt->execute([password_hash('SecureTestPassword42',PASSWORD_DEFAULT)]);
+function resetTestDatabase(bool $schema=true): void {
+    global $db;
+    $db->exec('SET FOREIGN_KEY_CHECKS=0'); foreach(['records','tokens','login_attempts','command_requests','users','stock','command_mutex'] as $table) $db->exec('DROP TABLE IF EXISTS '.$table); $db->exec('SET FOREIGN_KEY_CHECKS=1');
+    if($schema) foreach(explode(';',preg_replace('/^--.*$/m','',file_get_contents(dirname(__DIR__).'/schema.sql'))) as $sql) if(trim($sql)!=='') $db->exec($sql);
+}
 $checks=0;
 function check(bool $ok,string $label): void { global $checks; if(!$ok) throw new RuntimeException('FAIL: '.$label); ++$checks; echo "PASS $label\n"; }
 function req(string $path,array $body=[],string $token='',string $method='POST',int $expected=200,?string $origin=null): array {
@@ -19,7 +21,74 @@ function req(string $path,array $body=[],string $token='',string $method='POST',
 }
 function cmd(string $action,array $payload,string $token,int $expected=200): array { return req('/commands',['action'=>$action,'payload'=>$payload],$token,'POST',$expected); }
 function first(array $state,string $collection,callable $predicate): array { foreach($state[$collection] as $r) if($predicate($r)) return $r; throw new RuntimeException('Missing '.$collection); }
+function registrationWorkers(array $jobs): array {
+    $workers=[]; foreach($jobs as $job) {
+        $pipes=[]; $process=proc_open([PHP_BINARY,__DIR__.'/registration-worker.php'],[0=>['pipe','r'],1=>['pipe','w'],2=>['pipe','w']],$pipes);
+        fwrite($pipes[0],json_encode($job)); fclose($pipes[0]); $workers[]=[$process,$pipes];
+    }
+    $results=[]; foreach($workers as [$process,$pipes]) {
+        $output=stream_get_contents($pipes[1]); $err=stream_get_contents($pipes[2]); fclose($pipes[1]); fclose($pipes[2]);
+        if(proc_close($process)!==0) throw new RuntimeException($err); $result=json_decode($output,true);
+        if(!is_array($result)) throw new RuntimeException('Invalid worker response: '.$output); $results[]=$result;
+    } return $results;
+}
 try {
+    $setupKey=getenv('SETUP_TOKEN') ?: ''; if(strlen($setupKey)<32) throw new RuntimeException('Set a test-only SETUP_TOKEN (32+ characters) for both this test and the test API server.');
+    resetTestDatabase(false);
+    $status=req('/auth/registration-status',[],'','GET'); check($status===['first_admin_required'=>true,'setup_enabled'=>true],'empty installation reports owner-key setup availability');
+    check(count($db->query('SHOW TABLES')->fetchAll())===0,'public registration status never initializes schema');
+    $disabled=registrationWorkers([['action'=>'status','setup_env'=>'']])[0]; check($disabled['data']['setup_enabled']===false,'first admin setup disabled without owner key');
+    $short=registrationWorkers([['action'=>'status','setup_env'=>'too-short']])[0]; check($short['data']['setup_enabled']===false,'short owner key never enables setup');
+    $owner=['name'=>'Owner','email'=>'owner@test.local','password'=>' Owner Password 42 ','password_confirmation'=>' Owner Password 42 ','setup_token'=>$setupKey];
+    req('/auth/register',array_replace($owner,['setup_token'=>'wrong-key']),'','POST',403); check(count($db->query('SHOW TABLES')->fetchAll())===0,'invalid owner key cannot create tables or first admin');
+    $result=req('/auth/register',$owner); check($result['status']==='active' && !isset($result['token']) && (int)$db->query("SELECT COUNT(*) FROM users WHERE role='admin' AND active=1")->fetchColumn()===1,'owner key initializes schema and exactly one active admin without automatic login');
+    $ownerLogin=req('/auth/login',['email'=>$owner['email'],'password'=>$owner['password']]); $ownerToken=$ownerLogin['token']; check($ownerLogin['user']['registration_status']==='approved','registration and login preserve leading and trailing password spaces');
+    $status=req('/auth/registration-status',[],'','GET'); check($status===['first_admin_required'=>false,'setup_enabled'=>false],'first admin setup permanently closes once a user exists');
+    req('/auth/register',array_replace($owner,['email'=>'second-owner@test.local']),'','POST',409); check((int)$db->query("SELECT COUNT(*) FROM users WHERE role='admin'")->fetchColumn()===1,'stale setup request cannot create a second admin');
+    $applicant=['name'=>'Calon Karyawan','email'=>'applicant@test.local','password'=>'KataSandiPanjang42','password_confirmation'=>'KataSandiPanjang42'];
+    req('/auth/register',$applicant+['role'=>'admin','active'=>true],'','POST',422); check(true,'public registration rejects role and active injection');
+    req('/auth/register',array_replace($applicant,['password_confirmation'=>'different']),'','POST',422); check(true,'registration requires matching password confirmation');
+    req('/auth/register',array_replace($applicant,['password'=>str_repeat('x',73),'password_confirmation'=>str_repeat('x',73)]),'','POST',422); check(true,'registration rejects bcrypt-truncated passwords');
+    req('/auth/register',array_replace($applicant,['password'=>'短い文字列六個','password_confirmation'=>'短い文字列六個']),'','POST',422); check(true,'password minimum counts Unicode characters, not bytes');
+    $pending=req('/auth/register',$applicant); $state=req('/bootstrap',[],$ownerToken,'GET'); $pendingUser=first($state,'users',fn($u)=>$u['email']===$applicant['email']);
+    check($pending['status']==='pending' && !$pendingUser['active'] && $pendingUser['role']==='employee' && $pendingUser['registration_status']==='pending','all subsequent signups become inactive employees awaiting approval');
+    check(count(array_filter($state['notifications'],fn($n)=>$n['title']==='Pendaftaran karyawan baru'))===1,'active admin receives registration notification');
+    req('/auth/register',array_replace($applicant,['email'=>'APPLICANT@test.local']),'','POST',409); check(true,'normalized duplicate email cannot overwrite a pending account');
+    $wrong=req('/auth/login',['email'=>$applicant['email'],'password'=>'wrong'],'','POST',401); check(!str_contains($wrong['error'],'menunggu'),'wrong password does not disclose pending registration status');
+    $waiting=req('/auth/login',['email'=>$applicant['email'],'password'=>$applicant['password']],'','POST',403); check(str_contains($waiting['error'],'menunggu'),'correct pending login explains admin approval requirement');
+    check((int)$db->query("SELECT COUNT(*) FROM tokens WHERE user_id=".$db->quote($pendingUser['id']))->fetchColumn()===0,'pending registrations never receive access tokens');
+    $db->exec('UPDATE users SET active=1 WHERE id='.$db->quote($pendingUser['id']));
+    $unexpectedToken=bin2hex(random_bytes(32)); $db->prepare('INSERT INTO tokens(token_hash,user_id,expires_at) VALUES(?,?,DATE_ADD(NOW(),INTERVAL 1 HOUR))')->execute([hash('sha256',$unexpectedToken),$pendingUser['id']]);
+    req('/bootstrap',[],$unexpectedToken,'GET',401); req('/auth/login',['email'=>$applicant['email'],'password'=>$applicant['password']],'','POST',403);
+    check(true,'pending status fails closed even if active flag and token are inconsistent');
+    $db->exec('UPDATE users SET active=0 WHERE id='.$db->quote($pendingUser['id']));
+    cmd('user.update',['id'=>$pendingUser['id'],'active'=>true],$ownerToken,422); check(true,'generic user update cannot bypass pending approval');
+    $state=cmd('user.approve',['id'=>$pendingUser['id']],$ownerToken); check(first($state,'users',fn($u)=>$u['id']===$pendingUser['id'])['registration_status']==='approved','admin approval activates employee and records approved status');
+    $approvedToken=req('/auth/login',['email'=>$applicant['email'],'password'=>$applicant['password']])['token']; check(strlen($approvedToken)===64,'approved employee can log in');
+    cmd('user.approve',['id'=>$pendingUser['id']],$ownerToken,409); check(true,'already-approved registration cannot be processed twice');
+    $db->exec('DELETE FROM login_attempts');
+    $second=array_replace($applicant,['email'=>'rejected@test.local','password'=>'éééééééééééé42','password_confirmation'=>'éééééééééééé42']); req('/auth/register',$second);
+    $state=req('/bootstrap',[],$ownerToken,'GET'); $secondUser=first($state,'users',fn($u)=>$u['email']===$second['email']);
+    cmd('user.reject',['id'=>$secondUser['id']],$approvedToken,403); check(true,'employee cannot review another registration');
+    $state=cmd('user.reject',['id'=>$secondUser['id']],$ownerToken); check(!first($state,'users',fn($u)=>$u['id']===$secondUser['id'])['active'],'admin rejection keeps account inactive');
+    req('/auth/login',['email'=>$second['email'],'password'=>$second['password']],'','POST',403); req('/auth/register',$second,'','POST',409); check(true,'rejected account cannot log in or overwrite itself by resubmitting');
+    cmd('user.update',['id'=>$secondUser['id'],'active'=>true],$ownerToken,422); cmd('user.approve',['id'=>$secondUser['id']],$ownerToken);
+    $unicodeLogin=req('/auth/login',['email'=>$second['email'],'password'=>$second['password']]); check($unicodeLogin['user']['registration_status']==='approved','admin can reconsider rejected registration and Unicode password authenticates');
+    $records=implode('', $db->query('SELECT data FROM records')->fetchAll(PDO::FETCH_COLUMN)); check(!str_contains($records,$setupKey) && !str_contains($records,$applicant['password']) && !str_contains($records,'password_hash'),'activity and notifications never contain owner key or password material');
+    $db->exec('UPDATE users SET active=0'); check(req('/auth/registration-status',[],'','GET')['first_admin_required']===false,'inactive accounts cannot reopen first-admin setup');
+    resetTestDatabase();
+    $race=registrationWorkers([['payload'=>array_replace($owner,['email'=>'owner-one@test.local']),'ip'=>'race-one'],['payload'=>array_replace($owner,['email'=>'owner-two@test.local']),'ip'=>'race-two']]); $codes=array_column($race,'code'); sort($codes);
+    check($codes===[200,409] && (int)$db->query("SELECT COUNT(*) FROM users WHERE role='admin'")->fetchColumn()===1,'concurrent setup processes create at most one admin');
+    $race=registrationWorkers([['payload'=>$applicant,'ip'=>'duplicate-one'],['payload'=>$applicant,'ip'=>'duplicate-two']]); $codes=array_column($race,'code'); sort($codes);
+    check($codes===[200,409] && (int)$db->query('SELECT COUNT(*) FROM users WHERE email='.$db->quote($applicant['email']))->fetchColumn()===1,'concurrent duplicate employee signup is atomic');
+    $db->exec('DELETE FROM login_attempts');
+    $jobs=[]; for($i=0;$i<6;$i++) $jobs[]=['payload'=>$applicant,'ip'=>'email-rate-'.$i];
+    $codes=array_column(registrationWorkers($jobs),'code'); sort($codes); check($codes===[409,409,409,409,409,429],'email registration throttle persists across different IP addresses');
+    $db->exec('DELETE FROM login_attempts');
+    $jobs=[]; for($i=0;$i<11;$i++) $jobs[]=['payload'=>array_replace($applicant,['email'=>'rate-'.$i.'@test.local']),'ip'=>'rate-one-ip'];
+    $codes=array_column(registrationWorkers($jobs),'code'); sort($codes); check(count(array_filter($codes,fn($c)=>$c===200))===10 && count(array_filter($codes,fn($c)=>$c===429))===1,'IP registration throttle persists across different email addresses');
+    resetTestDatabase();
+    $stmt=$db->prepare("INSERT INTO users(id,name,email,password_hash,role) VALUES('admin_test','Admin Test','admin@test.local',?,'admin')"); $stmt->execute([password_hash('SecureTestPassword42',PASSWORD_DEFAULT)]);
     req('/bootstrap',[],'','GET',401); check(true,'unauthenticated access rejected');
     req('/health',[],'','GET',403,'https://untrusted.example'); check(true,'CORS rejects unapproved origins');
     req('/auth/login',['email'=>'admin@test.local','password'=>'wrong'], '', 'POST',401);

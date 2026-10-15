@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import {
   ArrowDownToLine,
+  ArrowLeft,
   ArrowRight,
   Bell,
   Check,
@@ -11,11 +12,14 @@ import {
   CircleHelp,
   ClipboardList,
   Egg,
+  Eye,
+  EyeOff,
   History,
   House,
   LayoutDashboard,
   Leaf,
   LogOut,
+  LoaderCircle,
   Menu,
   Package,
   Plus,
@@ -85,11 +89,113 @@ function Brand() {
 }
 
 function Login() {
-  const { login, mode } = useFarm();
+  const { login, mode, registrationStatus, register } = useFarm();
+  const [screen, setScreen] = useState<"login" | "register">("login");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [registration, setRegistration] = useState({
+    name: "",
+    email: "",
+    password: "",
+    password_confirmation: "",
+    setup_token: "",
+  });
+  const [status, setStatus] = useState<{
+    first_admin_required: boolean;
+    setup_enabled: boolean;
+  } | null>(null);
+  const [statusBusy, setStatusBusy] = useState(false);
+  const [statusError, setStatusError] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
+  const [result, setResult] = useState<{
+    status: "active" | "pending";
+    message: string;
+  } | null>(null);
+  async function loadRegistrationStatus() {
+    setStatusBusy(true);
+    setStatusError("");
+    try {
+      setStatus(await registrationStatus());
+    } catch (err) {
+      setStatus(null);
+      setStatusError(
+        err instanceof Error ? err.message : "Pendaftaran belum dapat dimuat.",
+      );
+    } finally {
+      setStatusBusy(false);
+    }
+  }
+  function openRegistration() {
+    setScreen("register");
+    setError("");
+    setResult(null);
+    setShowPassword(false);
+    void loadRegistrationStatus();
+  }
+  function backToLogin() {
+    if (result) setEmail(registration.email.trim());
+    setPassword("");
+    setScreen("login");
+    setError("");
+    setResult(null);
+    setRegistration((value) => ({
+      ...value,
+      password: "",
+      password_confirmation: "",
+      setup_token: "",
+    }));
+  }
+  async function signUp(event: React.FormEvent) {
+    event.preventDefault();
+    if (!status || statusBusy || busy) return;
+    setError("");
+    if (registration.password !== registration.password_confirmation) {
+      setError(
+        "Konfirmasi kata sandi belum sama. Periksa kembali kata sandi Anda.",
+      );
+      return;
+    }
+    const passwordBytes = new TextEncoder().encode(
+      registration.password,
+    ).length;
+    if (Array.from(registration.password).length < 12) {
+      setError("Gunakan kata sandi minimal 12 karakter.");
+      return;
+    }
+    if (passwordBytes > 72) {
+      setError("Kata sandi terlalu panjang. Gunakan lebih sedikit karakter.");
+      return;
+    }
+    setBusy(true);
+    try {
+      const response = await register({
+        name: registration.name.trim(),
+        email: registration.email.trim(),
+        password: registration.password,
+        password_confirmation: registration.password_confirmation,
+        ...(status.first_admin_required
+          ? { setup_token: registration.setup_token.trim() }
+          : {}),
+      });
+      setResult(response);
+      setRegistration((value) => ({
+        ...value,
+        password: "",
+        password_confirmation: "",
+        setup_token: "",
+      }));
+    } catch (err) {
+      setError(
+        err instanceof Error ? err.message : "Akun belum dapat didaftarkan.",
+      );
+      // Refresh setup state if another owner completed first-admin setup.
+      void loadRegistrationStatus();
+    } finally {
+      setBusy(false);
+    }
+  }
   async function signIn(e?: React.FormEvent, demoEmail?: string) {
     e?.preventDefault();
     setBusy(true);
@@ -122,76 +228,334 @@ function Login() {
         <small>Peternakan dalam genggaman.</small>
       </section>
       <section className="login-form-wrap">
-        <form onSubmit={signIn} className="login-form">
-          <span className="icon-box green">
-            <Sprout />
-          </span>
-          <h2>Selamat datang kembali</h2>
-          <p className="text-muted">
-            Masuk untuk mulai mengelola peternakan Anda.
-          </p>
-          <label className="form-label mt-4" htmlFor="email">
-            Alamat email
-          </label>
-          <input
-            id="email"
-            type="email"
-            className="form-control"
-            placeholder="nama@peternakan.id"
-            autoComplete="username"
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-            required
-          />
-          <label className="form-label mt-3" htmlFor="password">
-            Kata sandi
-          </label>
-          <input
-            id="password"
-            type="password"
-            className="form-control"
-            placeholder="Masukkan kata sandi"
-            autoComplete="current-password"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            required
-          />
-          {error && (
-            <div className="alert alert-danger mt-3" role="alert">
-              {error}
-            </div>
-          )}
-          <button className="btn btn-primary w-100 mt-4" disabled={busy}>
-            {busy ? "Sedang masuk…" : "Masuk ke TernaKu"}
-            <ArrowRight size={17} />
-          </button>
-          {mode === "demo" && (
-            <div className="demo-login">
-              <span>COBA DENGAN DATA CONTOH</span>
-              <button
-                type="button"
-                className="btn btn-outline-secondary"
-                disabled={busy}
-                onClick={() => signIn(undefined, "admin@ternaku.id")}
-              >
-                Sebagai admin
+        {screen === "register" ? (
+          <div className="login-form registration-form">
+            <button
+              type="button"
+              className="auth-back"
+              onClick={backToLogin}
+              disabled={busy}
+            >
+              <ArrowLeft size={16} /> Kembali ke masuk
+            </button>
+            <span className="icon-box green">
+              {result ? <Check /> : <Users />}
+            </span>
+            {result ? (
+              <div className="registration-result" role="status">
+                <h2>
+                  {result.status === "active"
+                    ? "Akun admin siap digunakan"
+                    : "Pendaftaran diterima"}
+                </h2>
+                <p>{result.message}</p>
+                {result.status === "pending" && (
+                  <div className="auth-notice">
+                    <ShieldCheck size={20} />
+                    <div>
+                      <strong>Menunggu persetujuan admin</strong>
+                      <p>
+                        Admin peternakan akan memeriksa pendaftaran Anda. Akun
+                        baru dapat masuk setelah disetujui. Hubungi admin untuk
+                        mengetahui statusnya.
+                      </p>
+                    </div>
+                  </div>
+                )}
+                <button
+                  className="btn btn-primary w-100 mt-4"
+                  type="button"
+                  onClick={backToLogin}
+                >
+                  Kembali ke halaman masuk <ArrowRight size={17} />
+                </button>
+              </div>
+            ) : (
+              <form onSubmit={signUp}>
+                <h2>
+                  {status?.first_admin_required
+                    ? "Buat admin pertama"
+                    : "Daftar akun TernaKu"}
+                </h2>
+                <p className="auth-description">
+                  {status?.first_admin_required
+                    ? "Mulai kelola peternakan dengan akun admin Anda."
+                    : "Bergabung sebagai karyawan di peternakan ini."}
+                </p>
+                {statusBusy && (
+                  <p className="auth-status" role="status">
+                    <LoaderCircle size={16} className="spin" /> Memeriksa
+                    pendaftaran…
+                  </p>
+                )}
+                {statusError && (
+                  <div className="alert alert-danger mt-3" role="alert">
+                    <p className="mb-2">{statusError}</p>
+                    <button
+                      type="button"
+                      className="btn btn-sm btn-outline-secondary"
+                      onClick={() => void loadRegistrationStatus()}
+                      disabled={statusBusy}
+                    >
+                      Coba lagi
+                    </button>
+                  </div>
+                )}
+                {status && !statusBusy && (
+                  <div className="auth-notice">
+                    <ShieldCheck size={19} />
+                    <div>
+                      <strong>
+                        {status.first_admin_required
+                          ? "Khusus pemilik peternakan"
+                          : "Persetujuan admin diperlukan"}
+                      </strong>
+                      <p>
+                        {status.first_admin_required
+                          ? status.setup_enabled
+                            ? "Masukkan kode penyiapan dari pengelola hosting untuk membuat admin pertama."
+                            : "Kode penyiapan belum diaktifkan. Hubungi pengelola hosting untuk mengaktifkan pendaftaran admin pertama."
+                          : "Akun terdaftar sebagai karyawan dan dapat digunakan setelah disetujui oleh admin."}
+                      </p>
+                    </div>
+                  </div>
+                )}
+                <label className="form-label mt-3" htmlFor="register-name">
+                  Nama lengkap
+                </label>
+                <input
+                  id="register-name"
+                  className="form-control"
+                  placeholder="Nama lengkap Anda"
+                  autoComplete="name"
+                  value={registration.name}
+                  onChange={(e) =>
+                    setRegistration({ ...registration, name: e.target.value })
+                  }
+                  minLength={2}
+                  maxLength={120}
+                  disabled={busy}
+                  required
+                />
+                <label className="form-label mt-3" htmlFor="register-email">
+                  Alamat email
+                </label>
+                <input
+                  id="register-email"
+                  type="email"
+                  className="form-control"
+                  placeholder="nama@peternakan.id"
+                  autoComplete="username"
+                  value={registration.email}
+                  onChange={(e) =>
+                    setRegistration({ ...registration, email: e.target.value })
+                  }
+                  maxLength={190}
+                  disabled={busy}
+                  required
+                />
+                <label className="form-label mt-3" htmlFor="register-password">
+                  Kata sandi
+                </label>
+                <div className="auth-password">
+                  <input
+                    id="register-password"
+                    type={showPassword ? "text" : "password"}
+                    className="form-control"
+                    placeholder="Minimal 12 karakter"
+                    autoComplete="new-password"
+                    aria-describedby="register-password-hint"
+                    value={registration.password}
+                    onChange={(e) =>
+                      setRegistration({
+                        ...registration,
+                        password: e.target.value,
+                      })
+                    }
+                    minLength={12}
+                    maxLength={72}
+                    disabled={busy}
+                    required
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowPassword(!showPassword)}
+                    aria-label={
+                      showPassword
+                        ? "Sembunyikan kata sandi"
+                        : "Tampilkan kata sandi"
+                    }
+                    aria-pressed={showPassword}
+                  >
+                    {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
+                  </button>
+                </div>
+                <small className="auth-hint" id="register-password-hint">
+                  Gunakan minimal 12 karakter yang sulit ditebak.
+                </small>
+                <label
+                  className="form-label mt-3"
+                  htmlFor="register-confirmation"
+                >
+                  Konfirmasi kata sandi
+                </label>
+                <input
+                  id="register-confirmation"
+                  type={showPassword ? "text" : "password"}
+                  className="form-control"
+                  placeholder="Ulangi kata sandi"
+                  autoComplete="new-password"
+                  value={registration.password_confirmation}
+                  onChange={(e) =>
+                    setRegistration({
+                      ...registration,
+                      password_confirmation: e.target.value,
+                    })
+                  }
+                  minLength={12}
+                  maxLength={72}
+                  disabled={busy}
+                  required
+                />
+                {status?.first_admin_required && (
+                  <>
+                    <label
+                      className="form-label mt-3"
+                      htmlFor="register-setup-token"
+                    >
+                      Kode penyiapan admin
+                    </label>
+                    <input
+                      id="register-setup-token"
+                      type="password"
+                      className="form-control"
+                      placeholder="Kode dari pengelola hosting"
+                      autoComplete="off"
+                      spellCheck={false}
+                      value={registration.setup_token}
+                      onChange={(e) =>
+                        setRegistration({
+                          ...registration,
+                          setup_token: e.target.value,
+                        })
+                      }
+                      maxLength={256}
+                      disabled={busy}
+                      required
+                    />
+                  </>
+                )}
+                {error && (
+                  <div className="alert alert-danger mt-3" role="alert">
+                    {error}
+                  </div>
+                )}
+                <button
+                  className="btn btn-primary w-100 mt-4"
+                  disabled={
+                    busy ||
+                    statusBusy ||
+                    !status ||
+                    (status.first_admin_required && !status.setup_enabled)
+                  }
+                >
+                  {busy
+                    ? "Mendaftarkan akun…"
+                    : status?.first_admin_required
+                      ? "Buat akun admin"
+                      : "Daftar sebagai karyawan"}
+                  {busy ? (
+                    <LoaderCircle size={17} className="spin" />
+                  ) : (
+                    <ArrowRight size={17} />
+                  )}
+                </button>
+                {mode === "demo" && (
+                  <p className="auth-hint mt-3 text-center">
+                    Mode demo · pendaftaran disimpan hanya di browser ini.
+                  </p>
+                )}
+              </form>
+            )}
+          </div>
+        ) : (
+          <form onSubmit={signIn} className="login-form">
+            <span className="icon-box green">
+              <Sprout />
+            </span>
+            <h2>Selamat datang kembali</h2>
+            <p className="text-muted">
+              Masuk untuk mulai mengelola peternakan Anda.
+            </p>
+            <label className="form-label mt-4" htmlFor="email">
+              Alamat email
+            </label>
+            <input
+              id="email"
+              type="email"
+              className="form-control"
+              placeholder="nama@peternakan.id"
+              autoComplete="username"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              required
+            />
+            <label className="form-label mt-3" htmlFor="password">
+              Kata sandi
+            </label>
+            <input
+              id="password"
+              type="password"
+              className="form-control"
+              placeholder="Masukkan kata sandi"
+              autoComplete="current-password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              required
+            />
+            {error && (
+              <div className="alert alert-danger mt-3" role="alert">
+                {error}
+              </div>
+            )}
+            <button className="btn btn-primary w-100 mt-4" disabled={busy}>
+              {busy ? "Sedang masuk…" : "Masuk ke TernaKu"}
+              <ArrowRight size={17} />
+            </button>
+            <div className="auth-register-link">
+              <span>Belum punya akun?</span>
+              <button type="button" onClick={openRegistration} disabled={busy}>
+                Daftar akun
               </button>
-              <button
-                type="button"
-                className="btn btn-outline-secondary"
-                disabled={busy}
-                onClick={() => signIn(undefined, "sari@ternaku.id")}
-              >
-                Sebagai karyawan
-              </button>
-              <small>Data demo disimpan hanya di browser ini.</small>
             </div>
-          )}
-          <p className="login-foot">
-            <ShieldCheck size={15} /> Akses sesuai peran, pencatatan lebih
-            terjaga.
-          </p>
-        </form>
+            {mode === "demo" && (
+              <div className="demo-login">
+                <span>COBA DENGAN DATA CONTOH</span>
+                <button
+                  type="button"
+                  className="btn btn-outline-secondary"
+                  disabled={busy}
+                  onClick={() => signIn(undefined, "admin@ternaku.id")}
+                >
+                  Sebagai admin
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-outline-secondary"
+                  disabled={busy}
+                  onClick={() => signIn(undefined, "sari@ternaku.id")}
+                >
+                  Sebagai karyawan
+                </button>
+                <small>Data demo disimpan hanya di browser ini.</small>
+              </div>
+            )}
+            <p className="login-foot">
+              <ShieldCheck size={15} /> Akses sesuai peran, pencatatan lebih
+              terjaga.
+            </p>
+          </form>
+        )}
       </section>
     </main>
   );
@@ -285,6 +649,7 @@ export function FarmArt() {
 function Workspace() {
   const { state, user, mode, loading, error, logout, command, refresh } =
     useFarm();
+  const [bootstrapped, setBootstrapped] = useState(false);
   const [page, setPage] = useState("dashboard");
   const [mobile, setMobile] = useState(false);
   const [search, setSearch] = useState("");
@@ -299,6 +664,9 @@ function Workspace() {
     setSearch("");
   };
   useEffect(() => {
+    if (!loading) setBootstrapped(true);
+  }, [loading]);
+  useEffect(() => {
     const read = () => {
       const id = window.location.hash.slice(1);
       if (navigation.some((n) => n.id === id)) setPage(id);
@@ -312,7 +680,7 @@ function Workspace() {
     const timer = setTimeout(() => setNotice(""), 5000);
     return () => clearTimeout(timer);
   }, [notice]);
-  if (loading && !user)
+  if (loading && !user && !bootstrapped)
     return (
       <div className="app-loading">
         <Sprout size={36} />
@@ -654,8 +1022,8 @@ function Workspace() {
               {mode === "demo" && (
                 <p className="small text-muted mt-3">
                   Mode demo menggunakan data contoh di browser. Keluar untuk
-                  mencoba akun karyawan. Akun produksi dibuat oleh admin pada
-                  server Anda.
+                  mencoba akun karyawan. Pendaftaran karyawan memerlukan
+                  persetujuan admin melalui menu Karyawan.
                 </p>
               )}
             </div>

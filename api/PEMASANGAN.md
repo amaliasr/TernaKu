@@ -90,9 +90,20 @@ Pastikan PHP dapat membaca `.env` dan menulis ke `application/logs/`. Umumnya di
 
 Periksa `https://api.buildmanagement.id/ternaku/.env`; hasilnya wajib **403/404**, tanpa menampilkan isi konfigurasi.
 
-## 5. Jalankan installer untuk membuat admin
+## 5. Buat admin pertama
 
-Pilih **salah satu** cara berikut. Installer membuat tabel, akun admin pertama, dan sumber produksi `Kandang Ayam Utama`. Installer ini hanya dapat berjalan melalui PHP CLI; membuka `/scripts/install.php` di browser memang ditolak.
+Pilih **salah satu** cara berikut. Pembuatan admin pertama menyiapkan tabel, akun admin, dan sumber produksi `Kandang Ayam Utama`. Akun yang sudah ada tidak dihapus atau diganti.
+
+### Melalui halaman Daftar
+
+1. Buat kode setup acak yang panjangnya minimal 32 karakter. Contoh cara menghasilkan kode melalui PHP CLI adalah `php -r 'echo bin2hex(random_bytes(24)), PHP_EOL;'`. Simpan kode sebagai `SETUP_TOKEN` pada `.env` API. Kode ini hanya untuk pemilik hosting dan jangan dimasukkan ke environment frontend atau GitHub.
+2. Buka **https://ternaku.rstudiohub.com**, lalu tekan **Daftar**. Jika belum ada akun, formulir menampilkan pembuatan admin pertama dan kolom kode setup.
+3. Isi nama, email, kata sandi minimal 12 karakter, konfirmasi kata sandi, dan kode setup. Pendaftaran membentuk database yang diperlukan jika belum tersedia, setelah kode pemilik diverifikasi. Koneksi MySQL pada langkah 4 harus sudah benar.
+4. Setelah berhasil, masuk dengan email dan kata sandi yang baru dibuat. Hapus `SETUP_TOKEN` dari `.env` setelah selesai. Pembuatan admin pertama tetap terkunci ketika akun sudah ada, meskipun kode belum dihapus.
+
+Pengelola deployment juga dapat menyimpan kode di `application/config/setup-token.php` yang mengembalikan string PHP, sebagai alternatif `.env`. File tersebut dilindungi aturan server dan diabaikan Git; tidak ikut paket distribusi. `SETUP_TOKEN` yang diisi pada environment API menjadi sumber utama. Jangan menggunakan contoh kode yang sama untuk semua instalasi.
+
+**Tombol Daftar tetap tersedia setelah admin dibuat.** Pendaftaran berikutnya menghasilkan akun karyawan berstatus **Menunggu persetujuan**. Admin membuka menu **Karyawan**, lalu menyetujui atau menolak permohonan. Karyawan baru dapat masuk setelah disetujui. Form publik tidak menyediakan pilihan admin; akun admin tambahan hanya dibuat oleh admin yang sudah masuk.
 
 ### Cara A — Terminal atau SSH hosting
 
@@ -148,7 +159,7 @@ Gunakan cara ini jika panel menyediakan Cron Jobs dengan perintah PHP CLI:
 3. Jadwalkan eksekusi terdekat yang tersedia, lalu baca log dari File Manager. Tunggu pesan instalasi berhasil seperti pada Cara A.
 4. **Hapus Cron Job** setelah berhasil dan hapus tiga baris `ADMIN_*` dari `.env`. Pengaturan database tetap disimpan. Hapus log instalasi setelah selesai diperiksa.
 
-Jika hosting tidak menyediakan Terminal maupun Cron Jobs PHP CLI, siapkan tiga baris `ADMIN_*` sementara seperti Cara B, lalu minta dukungan hosting menjalankan `php scripts/install.php` sekali dari folder API. Setelah berhasil, hapus kembali ketiga baris tersebut. Installer web melalui browser belum tersedia pada versi ini.
+Jika memakai installer CLI, membuka `/scripts/install.php` melalui browser memang ditolak. Gunakan halaman **Daftar** di website untuk pembuatan admin melalui browser, seperti petunjuk di atas.
 
 ## 6. Periksa API dan login
 
@@ -173,6 +184,8 @@ Alamat penting:
 | --- | --- |
 | Cek API | `GET https://api.buildmanagement.id/ternaku/health` |
 | Login dari aplikasi | `POST https://api.buildmanagement.id/ternaku/auth/login` |
+| Status pendaftaran | `GET https://api.buildmanagement.id/ternaku/auth/registration-status` |
+| Pendaftaran | `POST https://api.buildmanagement.id/ternaku/auth/register` |
 | Data setelah login | `GET https://api.buildmanagement.id/ternaku/bootstrap` dengan bearer token |
 
 Tidak ada tambahan `/api` setelah `/ternaku`. Membuka alamat login langsung melalui address bar mengirim GET, sehingga bukan cara menguji login.
@@ -209,6 +222,9 @@ Untuk mencoba transaksi fiktif, gunakan mode demo atau instalasi uji terpisah. J
 | Email/password ditolak | Gunakan akun yang dibuat installer, bukan akun demo; pastikan akun aktif. Installer ulang tidak mereset password akun lama. |
 | `Origin tidak diizinkan` atau kesalahan CORS | Cocokkan `ALLOWED_ORIGINS` dengan origin website secara persis: HTTPS, ejaan domain, dan port bila ada. Jangan memakai `*`. Pastikan respons bukan halaman error hosting. |
 | Website masih menampilkan DEMO | Build ulang frontend dengan `NEXT_PUBLIC_DEMO_MODE=false`, upload hasil `out/` terbaru, lalu muat ulang halaman. |
+| Form Daftar tidak bisa memuat status | Pasang pembaruan API yang menyediakan `/auth/registration-status` dan `/auth/register`, lalu periksa koneksi serta origin website. |
+| Setup admin belum diaktifkan | Konfigurasikan kode setup minimal 32 karakter hanya pada server API. Pembuatan admin melalui browser sengaja dinonaktifkan jika kode belum disiapkan. |
+| Akun baru belum bisa masuk | Admin harus menyetujui permohonan di menu Karyawan; tombol Daftar tidak memberi akses otomatis ke data peternakan. |
 | Installer gagal atau tidak berjalan lewat Cron Jobs | Periksa path absolut, versi PHP CLI, ekstensi `pdo_mysql`, koneksi DB, dan izin folder log privat. |
 | `.env` atau file internal dapat diunduh | Hentikan setup sampai aturan penolakan server berfungsi. Jika rahasia sudah terpapar, ganti password terkait. |
 
@@ -223,7 +239,7 @@ Sebelum memperbarui, cadangkan database MySQL dan `.env` di lokasi privat. Ekstr
 | Folder API | `/ternaku` | `/rumahflow` |
 | Database | MySQL/MariaDB, koneksi `DB_*` | SQLite pada penyimpanan privat |
 | Konfigurasi | `.env` dibaca otomatis | Pengaturan lingkungan pada paket RumahFlow |
-| Admin pertama | Installer PHP CLI | Alur pendaftaran admin awal RumahFlow |
+| Admin pertama | Halaman Daftar dengan kode setup pemilik, atau installer PHP CLI | Alur pendaftaran admin awal RumahFlow |
 | Status API | `/ternaku/health` | `/rumahflow/api/auth/status` |
 | Koneksi frontend | Langsung ke API, bearer token, `ALLOWED_ORIGINS` | Proxy Next.js dan cookie sesi |
 | Frontend dua domain | Static export `out/` | Server Next.js dengan build/start |

@@ -4,6 +4,8 @@ Frontend: Next.js App Router + React + TypeScript, Bootstrap 5, Poppins. Static 
 
 API base routes: `GET /health`, `POST /auth/login` `{email,password}`, `POST /auth/logout`, `GET /bootstrap`, `POST /commands` `{action,payload,request_id}`. JSON success `{data: ...}`, error `{error: string}` with appropriate status. Login data `{token,user}`. Bearer token; store hashed tokens in DB, expiration, active user check every request. Bootstrap returns State; employees see only their own production/pickup/sales/corrections, public prices/barns/feed plus safe user list and aggregated inventory/feed_inventory, their notifications, no admin audit. All amounts, IDs and dates match `src/lib/types.ts`. Prices are integer Rupiah/kg; weight precision 3 decimal places. Indonesia business timezone Asia/Jakarta.
 
+Public registration: `GET /auth/registration-status` returns `{first_admin_required,setup_enabled}`; `POST /auth/register` accepts only `{name,email,password,password_confirmation,setup_token?}` and returns `{status:'active'|'pending',message}` without a login token. The Daftar button always remains visible on the login screen. Only an empty users table plus a valid owner setup key may create the first admin. Subsequent registrations are employees of the same farm, inactive and pending admin approval; clients cannot choose a role. Passwords preserve whitespace, require at least 12 Unicode characters, and cannot exceed 72 UTF-8 bytes. Pending/rejected users cannot authenticate even if their active flag is inconsistent. Registration status is stored in records; existing/manual accounts default to approved. Setup, duplicate emails, and approval are serialized with the command mutex; signup is limited per IP and email. Owner setup keys/passwords must never enter audit records or public deployment packages.
+
 Commands (all produce refreshed bootstrap State as response data):
 
 - production.create: `{date,barn_id,category,eggs,kg,trays,notes,photo?,location?}`; own recorder; stock increase; valid positive eggs/kg, trays nonnegative independent actual kg.
@@ -14,6 +16,8 @@ Commands (all produce refreshed bootstrap State as response data):
 - price.create ADMIN: `{good_price,cracked_price,effective_at}` no deletes; notify all. active price <= now. effective datetime includes timezone or unambiguous local.
 - user.create ADMIN: `{name,email,password,role,target}` hash password, unique email.
 - user.update ADMIN: `{id,name?,active?,target?}` prevent self-disable/last admin lockout.
+- user.approve ADMIN: `{id}` approve pending/rejected employee registration and activate the account.
+- user.reject ADMIN: `{id}` reject pending employee registration. Generic user.update cannot activate pending/rejected registrations.
 - Incentives: Coming Soon only; no calculations.
 - barn.create ADMIN: `{name,type,capacity,notes}` type ayam.
 - Cattle management: Coming Soon only.
