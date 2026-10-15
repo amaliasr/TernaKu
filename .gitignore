@@ -1,5 +1,8 @@
 node_modules/
 .next/
+# Temporary Next.js config copies/compiled files created during hosting builds.
+/*.next.config
+/*.next.config.*
 out/
 .env*
 !.env.example

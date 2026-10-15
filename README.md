@@ -103,6 +103,14 @@ Workflow menyiapkan paket deploy; belum ada transfer otomatis ke hosting karena 
 
 Build lokal production juga dapat dilakukan dengan `.env.local` berisi `NEXT_PUBLIC_DEMO_MODE=false` dan URL API production, lalu `npm run build`. Hasilnya berada di `out/`; `npm run preview` menayangkannya secara lokal. Variabel `NEXT_PUBLIC_*` ditanam pada waktu build, sehingga perubahan URL atau mode memerlukan build ulang.
 
+### Jika build hosting gagal karena SWC atau GLIBC
+
+Jika log hosting menampilkan `GLIBC_2.29 not found` saat memuat `@next/swc-linux-x64-gnu`, binary tersebut tidak dapat dijalankan dengan GLIBC yang tersedia pada lingkungan build itu. Mengabaikan file sementara tidak memperbarui GLIBC. Gunakan paket **ternaku-web** dari GitHub Actions yang berhasil: ekstrak dan unggah isinya ke document root frontend, sehingga `index.html` dan `_next/` berada langsung di sana. Hosting cukup melayani hasil build; tidak perlu membangun ulang atau menjalankan `npm start`. Alternatifnya, minta penyedia hosting menggunakan lingkungan build Linux yang kompatibel dengan binary tersebut.
+
+Konfigurasi utama repository tetap **`next.config.ts`**. Nama seperti `6ad0815167323.next.config.ts` merupakan file tambahan; keberadaannya di pesan error tidak membuktikan file itu tersimpan di Git. Pola file sementara `*.next.config` dan `*.next.config.*` pada root sudah diabaikan oleh `.gitignore`. Jika file sementara masih ada di workspace build hosting, lakukan deployment dari checkout bersih branch `main`; mengubah `.gitignore` tidak menghapus file yang sudah ada di hosting.
+
+Rujukan: [kegagalan memuat SWC](https://nextjs.org/docs/messages/failed-loading-swc) dan [static export Next.js](https://nextjs.org/docs/app/guides/static-exports).
+
 ## Aturan penting dan batas versi awal
 
 Harga transaksi ditetapkan dari waktu server saat disimpan, walaupun tanggal laporan dimundurkan. Semua total/bayar/sisa tagihan dihitung server. Bila harga yang tampil di form berubah sebelum disimpan, frontend mengambil harga terbaru dan pengguna menyimpan kembali. Snapshot harga, sumber/kategori item, dan pemilik penjualan tidak dapat diganti melalui koreksi.
