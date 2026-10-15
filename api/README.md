@@ -6,6 +6,8 @@ Fitur aktif: autentikasi admin/karyawan, produksi, stok/pengambilan/pengembalian
 
 ## Instalasi pertama
 
+Untuk langkah pemasangan melalui File Manager hosting seperti RumahFlow, baca **[Petunjuk pemasangan API TernaKu](PEMASANGAN.md)**. Tersedia pilihan installer melalui terminal/SSH dan Cron Jobs sementara jika terminal tidak tersedia.
+
 1. Buat database MySQL kosong ber-charset `utf8mb4` dan user khusus dengan akses ke database itu. Jangan memakai akun root di production.
 2. Salin `.env.example` menjadi `.env`, lalu isi koneksi database, `APP_URL`, dan `ALLOWED_ORIGINS`. Jangan commit `.env`.
 3. Jalankan installer melalui terminal, dengan kredensial admin pertama di environment shell:

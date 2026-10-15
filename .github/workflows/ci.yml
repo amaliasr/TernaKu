@@ -84,7 +84,7 @@ jobs:
       - name: Package API with an explicit deployment allowlist
         run: |
           mkdir -p "$RUNNER_TEMP/ternaku-deploy/api/application/logs"
-          cp api/index.php api/.htaccess api/.env.example api/schema.sql api/CI-LICENSE.txt api/README.md "$RUNNER_TEMP/ternaku-deploy/api/"
+          cp api/index.php api/.htaccess api/.env.example api/schema.sql api/CI-LICENSE.txt api/README.md api/PEMASANGAN.md "$RUNNER_TEMP/ternaku-deploy/api/"
           cp -R api/system "$RUNNER_TEMP/ternaku-deploy/api/system"
           cp -R api/application/config api/application/controllers api/application/libraries "$RUNNER_TEMP/ternaku-deploy/api/application/"
           if [ -d api/application/views ]; then cp -R api/application/views "$RUNNER_TEMP/ternaku-deploy/api/application/views"; fi
