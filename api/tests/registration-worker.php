@@ -7,6 +7,7 @@ try {
     if(isset($p['setup_env'])) putenv('SETUP_TOKEN='.$p['setup_env']);
     $farm=new FarmService();
     if(($p['action']??'')==='status') echo json_encode(['code'=>200,'data'=>$farm->registrationStatus()]);
+    elseif(($p['action']??'')==='login') { $farm->login($p['payload'],$p['ip']??'test-worker'); echo json_encode(['code'=>200]); }
     else echo json_encode(['code'=>200,'data'=>$farm->register($p['payload'],$p['ip']??'test-worker')]);
 } catch(ApiProblem $e) { echo json_encode(['code'=>$e->status,'error'=>$e->getMessage()]); }
 catch(Throwable $e) { fwrite(STDERR,$e->getMessage()); exit(1); }

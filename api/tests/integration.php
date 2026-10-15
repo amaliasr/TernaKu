@@ -87,6 +87,20 @@ try {
     $db->exec('DELETE FROM login_attempts');
     $jobs=[]; for($i=0;$i<11;$i++) $jobs[]=['payload'=>array_replace($applicant,['email'=>'rate-'.$i.'@test.local']),'ip'=>'rate-one-ip'];
     $codes=array_column(registrationWorkers($jobs),'code'); sort($codes); check(count(array_filter($codes,fn($c)=>$c===200))===10 && count(array_filter($codes,fn($c)=>$c===429))===1,'IP registration throttle persists across different email addresses');
+    // Exercise shared-table contention and an expired window under genuine parallel connections.
+    $db->exec('DELETE FROM login_attempts');
+    $expired=$db->prepare('INSERT INTO login_attempts(attempt_key,attempts,started_at) VALUES(?,10,DATE_SUB(NOW(),INTERVAL 16 MINUTE))');
+    for($i=0;$i<100;$i++) $expired->execute([hash('sha256','expired-noise-'.$i)]);
+    $jobs=[]; for($i=0;$i<6;$i++) $jobs[]=['payload'=>$applicant,'ip'=>'mixed-register-'.$i];
+    for($i=0;$i<11;$i++) $jobs[]=['action'=>'login','payload'=>['email'=>'missing@test.local','password'=>'WrongPassword42'],'ip'=>'mixed-login'];
+    $results=registrationWorkers($jobs); $registrationCodes=array_column(array_slice($results,0,6),'code'); sort($registrationCodes); $loginCodes=array_column(array_slice($results,6),'code'); sort($loginCodes);
+    check($registrationCodes===[409,409,409,409,409,429] && count(array_filter($loginCodes,fn($c)=>$c===401))===10 && count(array_filter($loginCodes,fn($c)=>$c===429))===1,'simultaneous login and signup enforce independent limits without shared-table deadlocks');
+    $db->prepare('UPDATE login_attempts SET started_at=DATE_SUB(NOW(),INTERVAL 16 MINUTE) WHERE attempt_key=?')->execute([hash('sha256','mixed-login|missing@test.local')]);
+    $jobs=[]; for($i=0;$i<11;$i++) $jobs[]=['action'=>'login','payload'=>['email'=>'missing@test.local','password'=>'WrongPassword42'],'ip'=>'mixed-login'];
+    $codes=array_column(registrationWorkers($jobs),'code'); check(count(array_filter($codes,fn($c)=>$c===401))===10 && count(array_filter($codes,fn($c)=>$c===429))===1,'expired login counter resets once atomically under concurrency');
+    $db->prepare('UPDATE login_attempts SET started_at=DATE_SUB(NOW(),INTERVAL 16 MINUTE) WHERE attempt_key=?')->execute([hash('sha256','registration-email|'.$applicant['email'])]);
+    $jobs=[]; for($i=0;$i<6;$i++) $jobs[]=['payload'=>$applicant,'ip'=>'expired-register-'.$i];
+    $codes=array_column(registrationWorkers($jobs),'code'); sort($codes); check($codes===[409,409,409,409,409,429],'expired signup counter resets once atomically under concurrency');
     resetTestDatabase();
     $stmt=$db->prepare("INSERT INTO users(id,name,email,password_hash,role) VALUES('admin_test','Admin Test','admin@test.local',?,'admin')"); $stmt->execute([password_hash('SecureTestPassword42',PASSWORD_DEFAULT)]);
     req('/bootstrap',[],'','GET',401); check(true,'unauthenticated access rejected');

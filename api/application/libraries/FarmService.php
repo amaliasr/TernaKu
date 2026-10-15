@@ -119,17 +119,37 @@ class FarmService {
     }
     private function registrationAttempt(string $ip,string $email): void {
         $keys=[hash('sha256','registration-ip|'.$ip)=>10,hash('sha256','registration-email|'.$email)=>5];
-        $this->db->beginTransaction();
-        try {
-            $this->query('DELETE FROM login_attempts WHERE started_at<DATE_SUB(NOW(),INTERVAL 15 MINUTE)');
+        ksort($keys,SORT_STRING);
+        $this->authTransaction(function() use($keys): void {
             foreach($keys as $key=>$limit) {
-                $this->query('INSERT IGNORE INTO login_attempts(attempt_key,attempts,started_at) VALUES(?,0,NOW())',[$key]);
-                $attempts=(int)$this->query('SELECT attempts FROM login_attempts WHERE attempt_key=? FOR UPDATE',[$key])->fetchColumn();
+                $attempts=$this->lockedAttempts($key);
                 if($attempts>=$limit) { $this->db->commit(); throw new ApiProblem('Terlalu banyak pendaftaran. Coba kembali dalam 15 menit.',429); }
                 $this->query('UPDATE login_attempts SET attempts=attempts+1 WHERE attempt_key=?',[$key]);
             }
-            $this->db->commit();
-        } catch(Throwable $e) { if($this->db->inTransaction()) $this->db->rollBack(); throw $e; }
+        });
+    }
+    private function lockedAttempts(string $key): int {
+        // Upsert takes an exclusive row lock directly. Reset only this key's expired window;
+        // a table-wide DELETE here creates next-key locks and deadlocks on MySQL 8.
+        $this->query('INSERT INTO login_attempts(attempt_key,attempts,started_at) VALUES(?,0,NOW()) ON DUPLICATE KEY UPDATE attempts=IF(started_at<DATE_SUB(NOW(),INTERVAL 15 MINUTE),0,attempts),started_at=IF(started_at<DATE_SUB(NOW(),INTERVAL 15 MINUTE),NOW(),started_at)',[$key]);
+        return (int)$this->query('SELECT attempts FROM login_attempts WHERE attempt_key=? FOR UPDATE',[$key])->fetchColumn();
+    }
+    private function authTransaction(callable $operation): mixed {
+        for($attempt=0;$attempt<5;$attempt++) {
+            $this->db->beginTransaction();
+            try {
+                $result=$operation();
+                if($this->db->inTransaction()) $this->db->commit();
+                return $result;
+            } catch(Throwable $e) {
+                if($this->db->inTransaction()) $this->db->rollBack();
+                if(!$e instanceof PDOException || !in_array((int)($e->errorInfo[1]??0),[1213,1205],true)) throw $e;
+                // Retry the entire rolled-back transaction, never a partial counter increment.
+                if($attempt===4) throw new ApiProblem('Layanan sedang sibuk. Coba kembali sebentar lagi.',503);
+                usleep(random_int(10000,30000)*($attempt+1));
+            }
+        }
+        throw new ApiProblem('Layanan sedang sibuk. Coba kembali sebentar lagi.',503);
     }
     public function register(array $p,string $ip): array {
         if(array_diff(array_keys($p),['name','email','password','password_confirmation','setup_token'])) throw new ApiProblem('Kolom pendaftaran tidak didukung. Peran dan status ditentukan oleh sistem.');
@@ -167,11 +187,8 @@ class FarmService {
         $email=strtolower($this->text($p,'email',190,true)); $password=$p['password']??'';
         if(!is_string($password) || strlen($password)>200 || $password==='') throw new ApiProblem('Kata sandi wajib diisi.');
         $key=hash('sha256',$ip.'|'.$email);
-        $this->db->beginTransaction();
-        try {
-            $this->query('DELETE FROM login_attempts WHERE started_at<DATE_SUB(NOW(),INTERVAL 15 MINUTE)');
-            $this->query('INSERT IGNORE INTO login_attempts(attempt_key,attempts,started_at) VALUES(?,0,NOW())',[$key]);
-            $a=$this->query('SELECT attempts FROM login_attempts WHERE attempt_key=? FOR UPDATE',[$key])->fetchColumn();
+        return $this->authTransaction(function() use($email,$password,$key): array {
+            $a=$this->lockedAttempts($key);
             if ((int)$a>=10) { $this->db->commit(); throw new ApiProblem('Terlalu banyak percobaan. Coba kembali dalam 15 menit.',429); }
             $this->query('UPDATE login_attempts SET attempts=attempts+1 WHERE attempt_key=?',[$key]);
             $u=$this->query('SELECT * FROM users WHERE email=?',[$email])->fetch(PDO::FETCH_ASSOC);
@@ -190,7 +207,7 @@ class FarmService {
             $this->query('INSERT INTO tokens(token_hash,user_id,expires_at) VALUES(?,?,?)',[hash('sha256',$token),$u['id'],date('Y-m-d H:i:s',time()+$ttl*3600)]);
             $this->actor=$this->publicUser($u); $this->audit('auth.login','Masuk ke aplikasi');
             $this->db->commit(); return ['token'=>$token,'user'=>$this->actor];
-        } catch (Throwable $e) { if ($this->db->inTransaction()) $this->db->rollBack(); throw $e; }
+        });
     }
     public function logout(string $token): void {
         $this->db->beginTransaction();
