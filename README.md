@@ -9,7 +9,7 @@ Tujuan deployment:
 | Komponen   | Lokasi                                                      |
 | ---------- | ----------------------------------------------------------- |
 | Repository | [amaliasr/TernaKu](https://github.com/amaliasr/TernaKu)     |
-| Frontend   | `https://ternakku.rstudio.com`                              |
+| Frontend   | `https://ternaku.rstudiohub.com`                              |
 | API        | `https://api.buildmanagement.id/ternaku`                    |
 | Database   | MySQL pada hosting API; tidak diakses langsung oleh browser |
 
@@ -90,14 +90,14 @@ Untuk pemasangan manual melalui File Manager seperti RumahFlow, ikuti **[Petunju
 
 Workflow [.github/workflows/ci.yml](.github/workflows/ci.yml) berjalan pada push ke `main`/`master`, pull request, atau pemicu manual. Workflow memasang dependencies, memeriksa TypeScript, menjalankan tes domain, memeriksa sintaks PHP aplikasi, menjalankan tes HTTP+MySQL termasuk persaingan stok, lalu membangun frontend **dengan DEMO=false**. Setelah berhasil tersedia dua artifact:
 
-- `ternaku-web`: isi hasil static export `out/`, untuk document root `ternakku.rstudio.com`.
+- `ternaku-web`: isi hasil static export `out/`, untuk document root `ternaku.rstudiohub.com`.
 - `ternaku-api`: arsip `ternaku-api.tar.gz`, untuk folder `/ternaku` di document root `api.buildmanagement.id`. Arsip memakai daftar file yang diizinkan dan mencakup runtime CI3 resmi. File `.env`, database/log lokal, tes, dan unduhan sementara tidak dimasukkan.
 
 Workflow menyiapkan paket deploy; belum ada transfer otomatis ke hosting karena akses deployment belum dikonfigurasi. Untuk deploy manual:
 
 1. Unduh artifact dari GitHub Actions yang berhasil dan unggah isi `ternaku-web` ke document root frontend. Ini adalah file statis, tidak membutuhkan server Node.js di hosting.
 2. Ekstrak `ternaku-api.tar.gz` ke folder API, termasuk `.htaccess`, `application/`, dan `system/`.
-3. Buat `.env` di folder `ternaku/` pada hosting API, sejajar dengan `index.php`, dari contoh yang tersedia. Isi `APP_ENV=production`, `APP_URL=https://api.buildmanagement.id/ternaku`, `ALLOWED_ORIGINS=https://ternakku.rstudio.com`, dan kredensial database khusus hosting. Jalankan installer via terminal hosting atau Cron Jobs sementara sesuai petunjuk pemasangan.
+3. Buat `.env` di folder `ternaku/` pada hosting API, sejajar dengan `index.php`, dari contoh yang tersedia. Isi `APP_ENV=production`, `APP_URL=https://api.buildmanagement.id/ternaku`, `ALLOWED_ORIGINS=https://ternaku.rstudiohub.com`, dan kredensial database khusus hosting. Jalankan installer via terminal hosting atau Cron Jobs sementara sesuai petunjuk pemasangan.
 4. Aktifkan HTTPS kedua domain dan pastikan Apache mengizinkan `.htaccess`/rewrite. Folder `application/logs/` harus dapat ditulis oleh PHP. Untuk Nginx, terapkan larangan akses direktori internal dan `.env` yang setara; `.htaccess` hanya berlaku di Apache.
 5. Periksa `/ternaku/health`, login dari domain frontend, dan verifikasi bahwa `.env`, `schema.sql`, serta `application/` tidak dapat diunduh melalui browser.
 
@@ -105,11 +105,15 @@ Build lokal production juga dapat dilakukan dengan `.env.local` berisi `NEXT_PUB
 
 ### Jika build hosting gagal karena SWC atau GLIBC
 
-Jika log hosting menampilkan `GLIBC_2.29 not found` saat memuat `@next/swc-linux-x64-gnu`, binary tersebut tidak dapat dijalankan dengan GLIBC yang tersedia pada lingkungan build itu. Mengabaikan file sementara tidak memperbarui GLIBC. Gunakan paket **ternaku-web** dari GitHub Actions yang berhasil: ekstrak dan unggah isinya ke document root frontend, sehingga `index.html` dan `_next/` berada langsung di sana. Hosting cukup melayani hasil build; tidak perlu membangun ulang atau menjalankan `npm start`. Alternatifnya, minta penyedia hosting menggunakan lingkungan build Linux yang kompatibel dengan binary tersebut.
+Jika log hosting menampilkan `GLIBC_2.29 not found` saat memuat `@next/swc-linux-x64-gnu`, binary tersebut tidak dapat dijalankan dengan GLIBC yang tersedia pada lingkungan build itu. Perintah `npm run build` memakai **Webpack** (`next build --webpack`) agar kompilasi dapat menggunakan fallback SWC WASM ketika native SWC tidak dapat dimuat. Turbopack membutuhkan native bindings, sehingga fallback WASM saja tidak cukup untuk build Turbopack.
 
 Konfigurasi utama repository tetap **`next.config.ts`**. Nama seperti `6ad0815167323.next.config.ts` merupakan file tambahan; keberadaannya di pesan error tidak membuktikan file itu tersimpan di Git. Pola file sementara `*.next.config` dan `*.next.config.*` pada root sudah diabaikan oleh `.gitignore`. Jika file sementara masih ada di workspace build hosting, lakukan deployment dari checkout bersih branch `main`; mengubah `.gitignore` tidak menghapus file yang sudah ada di hosting.
 
-Rujukan: [kegagalan memuat SWC](https://nextjs.org/docs/messages/failed-loading-swc) dan [static export Next.js](https://nextjs.org/docs/app/guides/static-exports).
+Jika preset Next.js hosting tetap mengubah konfigurasi dan gagal mengimpor file bernama acak `*.next.config`, coba preset **Other** untuk build frontend statis, Node.js **22**, package manager **npm**, root **`./`**, build command **`npm run build`**, output directory **`out`**, tanpa entry file/server. Aplikasi tetap dibuat dengan Next.js; pilihan Other menguji apakah kegagalan berasal dari penyesuaian khusus preset Next.js oleh hosting. Pertahankan environment frontend production. Jalankan build baru dan periksa log karena keberhasilan GitHub Actions tidak menjamin konfigurasi server hosting sama.
+
+Pilihan tanpa build di hosting: gunakan paket **ternaku-web** dari GitHub Actions yang berhasil, ekstrak dan unggah isinya ke hosting statis frontend sehingga `index.html` dan `_next/` berada langsung di document root. Hosting cukup melayani hasil build; tidak perlu membangun ulang atau menjalankan `npm start`. Jika native SWC tetap dibutuhkan untuk fitur tambahan di kemudian hari, penyedia hosting perlu menyediakan lingkungan Linux yang kompatibel.
+
+Rujukan: [kegagalan memuat SWC](https://nextjs.org/docs/messages/failed-loading-swc), [static export Next.js](https://nextjs.org/docs/app/guides/static-exports), dan [konfigurasi deployment Hostinger](https://www.hostinger.com/support/how-to-deploy-a-nodejs-website-in-hostinger/).
 
 ## Aturan penting dan batas versi awal
 

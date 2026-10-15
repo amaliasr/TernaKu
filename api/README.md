@@ -41,7 +41,7 @@ Upload isi `api/` ke folder publik `/ternaku` pada domain API, termasuk `.htacce
 ```dotenv
 APP_ENV=production
 APP_URL=https://api.buildmanagement.id/ternaku
-ALLOWED_ORIGINS=https://ternakku.rstudio.com
+ALLOWED_ORIGINS=https://ternaku.rstudiohub.com
 DB_HOST=127.0.0.1
 DB_PORT=3306
 DB_NAME=nama_database_hosting

@@ -6,7 +6,7 @@ class Api extends CI_Controller {
     public function __construct() {
         parent::__construct();
         header('Content-Type: application/json; charset=utf-8'); header('Cache-Control: no-store'); header('X-Content-Type-Options: nosniff'); header('Referrer-Policy: no-referrer');
-        $origin=$_SERVER['HTTP_ORIGIN']??''; $allowed=array_filter(array_map('trim',explode(',',getenv('ALLOWED_ORIGINS') ?: 'https://ternakku.rstudio.com')));
+        $origin=$_SERVER['HTTP_ORIGIN']??''; $allowed=array_filter(array_map('trim',explode(',',getenv('ALLOWED_ORIGINS') ?: 'https://ternaku.rstudiohub.com')));
         header('Vary: Origin');
         if($origin!=='' && !in_array($origin,$allowed,true)) $this->respond(['error'=>'Origin tidak diizinkan.'],403);
         if($origin!=='') header('Access-Control-Allow-Origin: '.$origin);

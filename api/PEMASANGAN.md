@@ -1,6 +1,6 @@
 # Petunjuk pemasangan API TernaKu
 
-API TernaKu dipasang melalui File Manager hosting, seperti pola pemasangan RumahFlow. Targetnya **https://api.buildmanagement.id/ternaku**, dengan website di **https://ternakku.rstudio.com**. Gunakan folder dan database tersendiri agar pemasangan RumahFlow yang sudah ada tetap berjalan.
+API TernaKu dipasang melalui File Manager hosting, seperti pola pemasangan RumahFlow. Targetnya **https://api.buildmanagement.id/ternaku**, dengan website di **https://ternaku.rstudiohub.com**. Gunakan folder dan database tersendiri agar pemasangan RumahFlow yang sudah ada tetap berjalan.
 
 Panduan ini mengikuti paket dan installer TernaKu yang tersedia di repository. Pemasangan ke hosting dilakukan melalui langkah di bawah.
 
@@ -71,7 +71,7 @@ Salin `.env.example` menjadi **`.env`** di folder `ternaku`, sejajar dengan `ind
 ```dotenv
 APP_ENV=production
 APP_URL=https://api.buildmanagement.id/ternaku
-ALLOWED_ORIGINS=https://ternakku.rstudio.com
+ALLOWED_ORIGINS=https://ternaku.rstudiohub.com
 DB_HOST=localhost
 DB_PORT=3306
 DB_NAME=akun_ternaku
@@ -82,7 +82,7 @@ TOKEN_TTL_HOURS=12
 
 `DB_HOST=localhost` di atas hanya contoh. Jika hosting memberikan `127.0.0.1` atau hostname lain, gunakan nilai tersebut. Tulis setiap pengaturan dalam satu baris dan jangan menambahkan komentar di belakang nilainya.
 
-`APP_URL` tidak memakai `/index.php`, tambahan `/api`, atau garis miring di akhir. `ALLOWED_ORIGINS` berisi alamat website, tanpa path dan tanpa garis miring di akhir. Domain tujuan memakai **ternakku** dengan dua huruf **k**. Jika domain website berubah, pengaturan ini juga perlu diubah.
+`APP_URL` tidak memakai `/index.php`, tambahan `/api`, atau garis miring di akhir. `ALLOWED_ORIGINS` berisi alamat website, tanpa path dan tanpa garis miring di akhir. Domain frontend final adalah **ternaku.rstudiohub.com**. Jika domain website berubah, pengaturan ini juga perlu diubah.
 
 TernaKu membaca `.env` otomatis. Koneksi MySQL diambil dari `DB_*`; tidak perlu mengubah `application/config/database.php` atau menyalin pengaturan cookie/proxy RumahFlow. Jangan simpan `.env` di GitHub atau di folder website frontend.
 
@@ -186,7 +186,7 @@ NEXT_PUBLIC_API_URL=https://api.buildmanagement.id/ternaku
 NEXT_PUBLIC_DEMO_MODE=false
 ```
 
-Workflow GitHub yang tersedia sudah memakai kedua nilai tersebut. Unduh artifact **ternaku-web** dari build yang berhasil, lalu upload **isinya** ke document root `ternakku.rstudio.com`. `index.html` dan folder `_next` harus langsung berada di document root frontend.
+Workflow GitHub yang tersedia sudah memakai kedua nilai tersebut. Unduh artifact **ternaku-web** dari build yang berhasil, lalu upload **isinya** ke document root `ternaku.rstudiohub.com`. `index.html` dan folder `_next` harus langsung berada di document root frontend.
 
 TernaKu menggunakan hasil static export Next.js. Hosting frontend cukup melayani file tersebut; tidak perlu `npm start`. URL API tertanam saat build, sehingga perubahan alamat API memerlukan build dan upload frontend ulang.
 
