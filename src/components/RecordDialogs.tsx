@@ -11,6 +11,7 @@ import {
   pickupBalance,
 } from "@/lib/domain";
 import { printReceipt } from "@/lib/export";
+import ImagePreview from "./ImagePreview";
 import type { Pickup, Production, RecordEntity, Sale, User } from "@/lib/types";
 import {
   categoryLabel,
@@ -89,7 +90,8 @@ export function CorrectionDialog({
       title={direct ? "Koreksi pencatatan" : "Ajukan koreksi"}
       subtitle="Setiap perubahan disimpan dalam jejak aktivitas."
       onClose={() => {
-        if (!busy) onClose();
+        if (busy) return false;
+        onClose();
       }}
       wide={entity === "sale"}
     >
@@ -668,10 +670,10 @@ export function SaleDetail({
         </div>
         {sale.notes && <p className="mt-3 mb-0 text-muted">{sale.notes}</p>}
         {sale.photo && (
-          <img
+          <ImagePreview
             src={sale.photo}
             alt="Bukti pembayaran"
-            className="photo-preview mt-3"
+            className="mt-3"
           />
         )}
         <div className="info-note mt-3">

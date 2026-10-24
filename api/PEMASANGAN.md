@@ -83,7 +83,6 @@ DB_PORT=3306
 DB_NAME=akun_ternaku
 DB_USER=akun_ternakuuser
 DB_PASSWORD="GANTI_DENGAN_PASSWORD_DATABASE"
-TOKEN_TTL_HOURS=12
 ```
 
 `DB_HOST=localhost` di atas hanya contoh. Jika hosting memberikan `127.0.0.1` atau hostname lain, gunakan nilai tersebut. Tulis setiap pengaturan dalam satu baris dan jangan menambahkan komentar di belakang nilainya.
@@ -246,6 +245,14 @@ Setelah server siap, login pada HP dan tekan **Aktifkan notifikasi**, lalu beri 
 ## Pembaruan API berikutnya
 
 Sebelum memperbarui, cadangkan database MySQL, `.env`, dan `application/config/push-keys.php` bila tersedia di lokasi privat. Ekstrak paket terbaru sambil mempertahankan `.env` dan kunci push milik hosting. Ikuti petunjuk migrasi pada rilis jika ada; jangan mengosongkan database atau mengimpor data contoh. Installer awal tidak menggantikan migrasi schema untuk perubahan versi mendatang. Setelah pembaruan, periksa `/health`, login kembali, dan coba notifikasi pada perangkat sendiri.
+
+### Pembaruan 24 Oktober 2026: sesi dan profil
+
+Untuk API yang sudah memasang Web Push versi sebelumnya, paket **`ternaku-api-update-2026-10-24.zip`** hanya berisi `application/libraries/FarmService.php`. Cadangkan file lama, lalu ekstrak ZIP **di folder `public_html/ternaku/`** pada `api.buildmanagement.id`. Hasil akhirnya harus `public_html/ternaku/application/libraries/FarmService.php`; jangan membuat folder `api/` tambahan. `.env`, kunci setup/push, `vendor/`, dan data MySQL tetap dipertahankan. **Tidak ada migrasi SQL dan installer tidak perlu dijalankan ulang.**
+
+Setelah frontend terbaru dipasang, akun tetap tersimpan ketika aplikasi ditutup. Server memperpanjang sesi sampai 30 hari sejak aktivitas terakhir, dengan batas 90 hari sejak login. Logout mencabut sesi; jaringan terputus tidak otomatis menghapus akun yang tersimpan. Pengaturan `TOKEN_TTL_HOURS` lama tidak lagi digunakan. Sesi yang telah kedaluwarsa sebelum pembaruan perlu login sekali lagi.
+
+Menu profil menggunakan perintah `profile.update` untuk mengubah nama dan foto akun sendiri. Foto baru dikompres lalu diperiksa server sebagai JPEG/PNG/WebP maksimal **1 MiB (1.048.576 byte gambar asli setelah base64 didekode)**. Foto lama tetap bisa dibaca. Mengubah nama tanpa mengganti foto mempertahankan foto lama; menghapus foto mengirim nilai kosong. Perubahan profil tidak dapat mengganti email, kata sandi, peran, atau status akun. Setelah pemasangan, periksa `/health`, login, lalu pastikan akun tetap terbuka setelah aplikasi ditutup dan dibuka kembali.
 
 ## Perbedaan dengan pemasangan RumahFlow
 

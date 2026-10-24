@@ -37,6 +37,10 @@ import EntryModal from "./EntryModal";
 import InstallApp from "./InstallApp";
 import PushNotifications from "./PushNotifications";
 import ThemeToggle from "./ThemeToggle";
+import ProfileSettings from "./ProfileSettings";
+import Avatar from "./Avatar";
+import ImagePreview from "./ImagePreview";
+import { usePageNavigation } from "@/lib/navigation";
 import Modules from "./Modules";
 import Reports from "./Reports";
 import { categoryLabel, Dialog } from "./ModuleUI";
@@ -79,7 +83,12 @@ const latest = <T extends { created_at: string }>(rows: T[]) =>
 export default function EmployeeWorkspace() {
   const { state, user, logout, command, refresh, error, mode, priceSync } =
     useFarm();
-  const [page, setPage] = useState<Page>("home");
+  const [page, navigate] = usePageNavigation(
+    Object.keys(pageNames) as Page[],
+    "home",
+    "employee-",
+  );
+  const [profileOpen, setProfileOpen] = useState(false);
   const [modal, setModal] = useState<string | null>(null);
   const [notificationsOpen, setNotificationsOpen] = useState(false);
   const [notice, setNotice] = useState("");
@@ -96,17 +105,9 @@ export default function EmployeeWorkspace() {
   const [refreshing, setRefreshing] = useState(false);
 
   useEffect(() => {
-    const readHash = () => {
-      const hash = window.location.hash.slice(1).replace(/^employee-/, "");
-      if (Object.hasOwn(pageNames, hash)) {
-        setPage(hash as Page);
-        setShown(8);
-      }
-    };
-    readHash();
-    window.addEventListener("hashchange", readHash);
-    return () => window.removeEventListener("hashchange", readHash);
-  }, []);
+    setShown(8);
+    setMore(false);
+  }, [page]);
 
   useEffect(() => {
     if (!confirmation) return;
@@ -116,10 +117,9 @@ export default function EmployeeWorkspace() {
 
   if (!user) return null;
   const go = (next: Page) => {
-    setPage(next);
+    navigate(next);
     setShown(8);
     setMore(false);
-    window.location.hash = `employee-${next}`;
     window.scrollTo({ top: 0, behavior: "auto" });
   };
   const price = activePrice(state);
@@ -183,6 +183,13 @@ export default function EmployeeWorkspace() {
         </button>
         <div className={styles.headerActions}>
           <ThemeToggle compact />
+          <button
+            className={styles.profileButton}
+            aria-label="Profil dan pengaturan"
+            onClick={() => setProfileOpen(true)}
+          >
+            <Avatar user={user} size="sm" />
+          </button>
           {mode === "demo" && <span className={styles.demo}>Demo</span>}
           <button
             className={styles.bell}
@@ -223,7 +230,11 @@ export default function EmployeeWorkspace() {
               <Egg size={17} /> Telur bentes
             </span>
             <strong>
-              {price ? price.cracked_price === 0 ? "Gratis" : money(price.cracked_price) : "Belum ada"}
+              {price
+                ? price.cracked_price === 0
+                  ? "Gratis"
+                  : money(price.cracked_price)
+                : "Belum ada"}
               {price && price.cracked_price > 0 && <small>/kg</small>}
             </strong>
           </div>
@@ -369,6 +380,10 @@ export default function EmployeeWorkspace() {
               </button>
               {more && (
                 <div id="employee-more" className={styles.moreMenu}>
+                  <button onClick={() => setProfileOpen(true)}>
+                    <Avatar user={user} size="sm" /> Profil dan pengaturan{" "}
+                    <ArrowRight size={17} />
+                  </button>
                   <button onClick={() => go("feed")}>
                     <Wheat size={21} /> Pakan ternak <ArrowRight size={17} />
                   </button>
@@ -448,6 +463,9 @@ export default function EmployeeWorkspace() {
                       ?.name || "Kandang"}
                   </p>
                   {row.notes && <p className={styles.notes}>{row.notes}</p>}
+                  {row.photo && (
+                    <ImagePreview src={row.photo} alt="Foto panen" />
+                  )}
                   <button
                     className={styles.textButton}
                     onClick={() =>
@@ -513,7 +531,9 @@ export default function EmployeeWorkspace() {
                     {row.items.map((item) => (
                       <span key={item.id}>
                         {categoryLabel(item.category)} · {quantity(item.kg)} kg
-                        {item.category === "cracked" && item.unit_price === 0 && " · Gratis"}
+                        {item.category === "cracked" &&
+                          item.unit_price === 0 &&
+                          " · Gratis"}
                       </span>
                     ))}
                   </div>
@@ -736,6 +756,7 @@ export default function EmployeeWorkspace() {
         </div>
       )}
 
+      {profileOpen && <ProfileSettings onClose={() => setProfileOpen(false)} />}
       {modal && (
         <EntryModal
           key={modal}

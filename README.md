@@ -29,7 +29,10 @@ Source dan workflow build siap digunakan. Publikasi ke domain memerlukan akses h
 - Halaman karyawan khusus HP: tombol besar Panen/Jual/Gudang, stok bagus dan bentes terpisah, formulir singkat, serta rincian tambahan yang dapat dibuka bila diperlukan.
 - Harga karyawan diperiksa setiap 5 detik saat aplikasi terlihat. Input tetap tersimpan di formulir selama pembaruan; harga baru pada penjualan harus ditinjau sebelum menyimpan. Status koneksi dan waktu pemeriksaan terakhir ditampilkan.
 - Pemasangan ke layar utama HP sebagai aplikasi web (PWA), dengan ikon TernaKu, tampilan standalone, dan petunjuk Android/iPhone.
-- Mode terang/gelap tersedia di halaman masuk, admin, dan karyawan; pilihan tersimpan pada perangkat. Foto dapat diambil langsung dari kamera atau galeri dan diperkecil otomatis sebelum dikirim.
+- Tampilan awal terang. Menu **Profil & tampilan** menyediakan pilihan terang/gelap dan ukuran tulisan Kecil, Normal, atau Besar; pilihan tersimpan pada perangkat.
+- Profil akun dapat mengubah nama dan foto. Semua foto bisa diperbesar, diambil dari kamera atau dipilih dari galeri. Foto besar dikompres otomatis hingga maksimal 1 MiB sebelum dikirim; foto kecil yang sesuai dipertahankan.
+- Login tetap tersimpan setelah aplikasi ditutup. Sesi berlaku selama 30 hari sejak aktivitas terakhir, dengan batas 90 hari sejak login. Koneksi terputus tidak otomatis mengeluarkan akun.
+- Tombol kembali mengikuti menu yang dikunjungi. Saat foto atau formulir terbuka, tombol kembali menutup tampilan tersebut lebih dahulu.
 - Notifikasi harga ke HP melalui Web Push setelah perangkat memberi izin, termasuk ketika admin menyimpan nominal harga yang sama. Penyiapan server dan cron dijelaskan dalam [panduan notifikasi HP](api/PUSH.md).
 - Laporan PDF dan Excel (`.xlsx`) serta peringkat penjualan. Export dibuat di browser menggunakan jsPDF dan ExcelJS.
 - **Insentif karyawan dan manajemen kandang sapi ditampilkan sebagai Coming Soon**, sesuai perubahan cakupan.
@@ -148,7 +151,7 @@ Koreksi wajib menyertakan alasan. Karyawan bisa langsung mengoreksi produksi sen
 
 Berat memakai maksimal 3 desimal, rupiah dibulatkan per item, dan zona waktu bisnis Asia/Jakarta. Penguncian database mencegah dua permintaan mengambil saldo yang sama. Permintaan tulis memakai ID idempotensi untuk mencegah duplikasi saat respons hilang. Backend memeriksa token aktif, role, kepemilikan, kategori, harga, dan saldo; pembatasan UI bukan satu-satunya pengaman.
 
-Notifikasi harga dalam aplikasi mengikuti penyegaran data; Web Push dapat dikirim saat aplikasi ditutup setelah server dan perangkat disiapkan. Tidak ada integrasi WhatsApp/SMS. Foto kamera/galeri diperkecil menjadi JPEG maksimal 1 MB, lalu disimpan sebagai data gambar; belum memakai penyimpanan objek terpisah. Bootstrap memuat riwayat pengguna sekaligus; untuk volume transaksi besar perlu pagination, agregasi laporan di server, dan penyesuaian penguncian dari mutex global ke kunci per entitas. Backup database perlu disiapkan di hosting.
+Notifikasi harga dalam aplikasi mengikuti penyegaran data; Web Push dapat dikirim saat aplikasi ditutup setelah server dan perangkat disiapkan. Tidak ada integrasi WhatsApp/SMS. Unggahan foto JPEG/PNG/WebP disimpan sebagai data gambar maksimal 1 MiB (1.048.576 byte), dengan foto sumber maksimal 25 MiB; belum memakai penyimpanan objek terpisah. Foto kecil yang sesuai mempertahankan byte aslinya, sedangkan foto besar dikompres dengan kualitas tinggi dan penyesuaian dimensi bila diperlukan. Kompresi foto besar dapat mengubah detail piksel. Bootstrap memuat riwayat pengguna sekaligus; untuk volume transaksi besar perlu pagination, agregasi laporan di server, dan penyesuaian penguncian dari mutex global ke kunci per entitas. Backup database perlu disiapkan di hosting.
 
 ## Pemeriksaan lokal
 

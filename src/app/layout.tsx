@@ -33,7 +33,7 @@ export default function RootLayout({
       <head>
         <script
           dangerouslySetInnerHTML={{
-            __html: `(function(){try{var p=localStorage.getItem('ternaku.theme');var t=p==='dark'||(p!=='light'&&matchMedia('(prefers-color-scheme: dark)').matches)?'dark':'light';document.documentElement.dataset.theme=t;document.documentElement.dataset.bsTheme=t;document.documentElement.style.colorScheme=t}catch(e){}})();`,
+            __html: `(function(){var t='light',f='normal';try{if(localStorage.getItem('ternaku.theme')==='dark')t='dark';var s=localStorage.getItem('ternaku.font-size');if(s==='small'||s==='large')f=s}catch(e){}document.documentElement.dataset.theme=t;document.documentElement.dataset.bsTheme=t;document.documentElement.style.colorScheme=t;document.documentElement.dataset.fontSize=f})();`,
           }}
         />
       </head>

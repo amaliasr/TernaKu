@@ -8,7 +8,7 @@
   display: block;
 }
 .panel-header h2 {
-  font-size: 14px;
+  font-size: calc(14px * var(--font-scale, 1));
   font-weight: 600;
   letter-spacing: -0.2px;
   margin: 0 0 5px;
@@ -47,20 +47,20 @@
 }
 .module-stat > div > span {
   color: #98a28d;
-  font-size: 10px;
+  font-size: calc(10px * var(--font-scale, 1));
   display: block;
   margin-bottom: 5px;
 }
 .module-stat strong {
   display: block;
-  font-size: 25px;
+  font-size: calc(25px * var(--font-scale, 1));
   font-weight: 600;
   letter-spacing: -0.9px;
   white-space: nowrap;
 }
 .module-stat small {
   display: block;
-  font-size: 8px;
+  font-size: calc(8px * var(--font-scale, 1));
   color: #a9b19d;
   margin-top: 5px;
 }
@@ -80,7 +80,7 @@
   align-items: center;
   gap: 15px;
   padding: 16px 22px;
-  font-size: 9px;
+  font-size: calc(9px * var(--font-scale, 1));
   color: #9da993;
 }
 .table-end strong {
@@ -88,13 +88,13 @@
   font-weight: 500;
 }
 .table-end small {
-  font-size: 8px;
+  font-size: calc(8px * var(--font-scale, 1));
   color: #b0baa5;
 }
 .cell-sub {
   display: block;
   margin-top: 5px;
-  font-size: 8px;
+  font-size: calc(8px * var(--font-scale, 1));
   color: #a7b19b;
 }
 .text-link {
@@ -126,7 +126,7 @@
   background: none;
   border-bottom: 2px solid transparent;
   color: #95a488;
-  font-size: 11px;
+  font-size: calc(11px * var(--font-scale, 1));
   padding: 17px 4px;
   white-space: nowrap;
 }
@@ -142,12 +142,12 @@
 .detail-grid small {
   display: block;
   color: #9ca68f;
-  font-size: 10px;
+  font-size: calc(10px * var(--font-scale, 1));
   margin-bottom: 6px;
 }
 .detail-grid strong {
   display: block;
-  font-size: 12px;
+  font-size: calc(12px * var(--font-scale, 1));
   font-weight: 500;
   color: #738665;
 }
@@ -159,10 +159,10 @@
   justify-content: space-between;
   gap: 10px;
   margin-bottom: 8px;
-  font-size: 9px;
+  font-size: calc(9px * var(--font-scale, 1));
 }
 .target-cell > div:first-child strong {
-  font-size: 9px;
+  font-size: calc(9px * var(--font-scale, 1));
 }
 .activity-list {
   padding: 4px 24px;
@@ -187,25 +187,25 @@
   flex-shrink: 0;
 }
 .activity-item strong {
-  font-size: 11px;
+  font-size: calc(11px * var(--font-scale, 1));
   font-weight: 500;
 }
 .activity-item time {
-  font-size: 9px;
+  font-size: calc(9px * var(--font-scale, 1));
   color: #a9b599;
 }
 .activity-item p {
-  font-size: 10px;
+  font-size: calc(10px * var(--font-scale, 1));
   color: #8e9f7a;
   margin: 6px 0;
 }
 .activity-item small {
-  font-size: 9px;
+  font-size: calc(9px * var(--font-scale, 1));
   color: #a8b398;
 }
 .audit-details {
   margin-top: 10px;
-  font-size: 10px;
+  font-size: calc(10px * var(--font-scale, 1));
   color: #8da175;
 }
 .audit-details pre {
@@ -213,7 +213,7 @@
   border: 1px solid #e8efdf;
   padding: 12px;
   border-radius: 7px;
-  font-size: 9px;
+  font-size: calc(9px * var(--font-scale, 1));
   max-height: 250px;
   overflow: auto;
   color: #7b9166;
@@ -234,11 +234,11 @@
   margin-bottom: 0;
 }
 .correction-card h3 {
-  font-size: 12px;
+  font-size: calc(12px * var(--font-scale, 1));
   margin: 0 0 7px;
 }
 .correction-card p {
-  font-size: 11px;
+  font-size: calc(11px * var(--font-scale, 1));
   color: #899b74;
 }
 .correction-changes {
@@ -250,20 +250,20 @@
   padding: 12px 15px;
 }
 .correction-changes small {
-  font-size: 8px;
+  font-size: calc(8px * var(--font-scale, 1));
   display: block;
   color: #acb69e;
   margin-bottom: 4px;
 }
 .correction-changes span {
-  font-size: 11px;
+  font-size: calc(11px * var(--font-scale, 1));
   color: #799065;
 }
 .movement-label {
   display: flex;
   align-items: center;
   gap: 7px;
-  font-size: 9px;
+  font-size: calc(9px * var(--font-scale, 1));
 }
 .movement-label.incoming {
   color: #7ba264;
@@ -283,7 +283,7 @@
 .notes-cell {
   max-width: 200px;
   white-space: normal;
-  font-size: 9px;
+  font-size: calc(9px * var(--font-scale, 1));
 }
 .price-cards {
   display: grid;
@@ -302,16 +302,16 @@
   border-color: #efe7cc;
 }
 .price-feature h2 {
-  font-size: 13px;
+  font-size: calc(13px * var(--font-scale, 1));
   font-weight: 500;
   margin: 0 0 8px;
 }
 .price-feature h3 {
-  font-size: 13px;
+  font-size: calc(13px * var(--font-scale, 1));
   font-weight: 500;
 }
 .price-feature strong {
-  font-size: 30px;
+  font-size: calc(30px * var(--font-scale, 1));
   letter-spacing: -1px;
   font-weight: 600;
   display: inline-block;
@@ -319,11 +319,11 @@
 }
 .price-feature small {
   color: #9cab8a;
-  font-size: 10px;
+  font-size: calc(10px * var(--font-scale, 1));
   margin-left: 5px;
 }
 .price-feature p {
-  font-size: 10px;
+  font-size: calc(10px * var(--font-scale, 1));
   color: #9ba98b;
   margin: 14px 0 0;
 }
@@ -341,11 +341,11 @@
   display: block;
 }
 .form-check-label {
-  font-size: 11px;
+  font-size: calc(11px * var(--font-scale, 1));
   color: #8a9b78;
 }
 .form-summary strong {
-  font-size: 15px;
+  font-size: calc(15px * var(--font-scale, 1));
   color: #648548;
 }
 .invoice-summary > div:last-child {
@@ -371,7 +371,7 @@
   gap: 7px;
 }
 .workspace-select strong {
-  font-size: 9px;
+  font-size: calc(9px * var(--font-scale, 1));
 }
 @media (max-width: 1200px) {
   .module-stat {
@@ -379,14 +379,14 @@
     gap: 12px;
   }
   .module-stat strong {
-    font-size: 23px;
+    font-size: calc(23px * var(--font-scale, 1));
   }
   .module-stat .icon-box {
     width: 33px;
     height: 33px;
   }
   .module-stat small {
-    font-size: 7px;
+    font-size: calc(7px * var(--font-scale, 1));
   }
 }
 @media (max-width: 980px) {
@@ -401,16 +401,16 @@
     margin-bottom: 12px;
   }
   .module-stat strong {
-    font-size: 21px;
+    font-size: calc(21px * var(--font-scale, 1));
   }
   .module-stat > div > span {
-    font-size: 9px;
+    font-size: calc(9px * var(--font-scale, 1));
   }
   .price-feature {
     padding: 22px;
   }
   .price-feature strong {
-    font-size: 25px;
+    font-size: calc(25px * var(--font-scale, 1));
   }
 }
 @media (max-width: 760px) {
@@ -426,7 +426,7 @@
     margin-bottom: 0;
   }
   .module-stat small {
-    font-size: 8px;
+    font-size: calc(8px * var(--font-scale, 1));
   }
   .module-toolbar .filter-select {
     width: 100%;
@@ -443,7 +443,7 @@
   }
   .page-actions .btn {
     flex: 1;
-    font-size: 10px;
+    font-size: calc(10px * var(--font-scale, 1));
   }
   .price-cards {
     gap: 12px;
@@ -452,16 +452,16 @@
     padding: 18px 15px;
   }
   .price-feature strong {
-    font-size: 22px;
+    font-size: calc(22px * var(--font-scale, 1));
   }
   .price-feature p {
-    font-size: 8px;
+    font-size: calc(8px * var(--font-scale, 1));
   }
   .price-feature h2 {
-    font-size: 11px;
+    font-size: calc(11px * var(--font-scale, 1));
   }
   .price-feature small {
-    font-size: 8px;
+    font-size: calc(8px * var(--font-scale, 1));
   }
   .activity-list {
     padding: 0 17px;
@@ -470,7 +470,7 @@
     gap: 11px;
   }
   .activity-item p {
-    font-size: 9px;
+    font-size: calc(9px * var(--font-scale, 1));
   }
   .correction-list {
     padding: 14px;
@@ -483,13 +483,13 @@
     padding: 0 16px;
   }
   .module-tabs button {
-    font-size: 10px;
+    font-size: calc(10px * var(--font-scale, 1));
   }
   .form-summary {
-    font-size: 10px;
+    font-size: calc(10px * var(--font-scale, 1));
   }
   .form-summary strong {
-    font-size: 12px;
+    font-size: calc(12px * var(--font-scale, 1));
   }
 }
 @media (max-width: 760px) {
@@ -504,19 +504,19 @@
     gap: 22px;
   }
   .price-values strong {
-    font-size: 21px;
+    font-size: calc(21px * var(--font-scale, 1));
   }
   .price-values > div + div {
     padding-left: 22px;
   }
   .price-panel h3 {
-    font-size: 12px;
+    font-size: calc(12px * var(--font-scale, 1));
   }
   .price-footer {
     padding: 11px 20px;
   }
   .welcome-banner h2 {
-    font-size: 23px;
+    font-size: calc(23px * var(--font-scale, 1));
   }
   .welcome-banner .farm-art {
     width: 40%;
@@ -532,6 +532,6 @@
     min-height: 220px;
   }
   .workspace-select strong {
-    font-size: 10px;
+    font-size: calc(10px * var(--font-scale, 1));
   }
 }

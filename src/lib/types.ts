@@ -26,6 +26,7 @@ export interface User {
   registration_status?: RegistrationStatus;
   target: number;
   avatar?: string;
+  photo?: string;
 }
 export interface Barn {
   id: string;

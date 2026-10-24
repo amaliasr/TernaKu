@@ -210,6 +210,7 @@ function QuantityEntry({
   const [kg, setKg] = useState("");
   const [trays, setTrays] = useState("");
   const [photo, setPhoto] = useState("");
+  const [photoBusy, setPhotoBusy] = useState(false);
   const [date, setDate] = useState("");
   const isPickup = kind === "pickup";
   const [initialDate] = useState(() => (isPickup ? localNow() : today()));
@@ -227,10 +228,11 @@ function QuantityEntry({
     <SimpleForm
       busy={busy}
       onClose={onClose}
-      label={isPickup ? "Simpan pengambilan" : "Simpan panen"}
-      disabled={isPickup && (!available?.kg || !available.eggs)}
+      label={photoBusy ? "Memproses foto…" : isPickup ? "Simpan pengambilan" : "Simpan panen"}
+      disabled={photoBusy || (isPickup && (!available?.kg || !available.eggs))}
       onSubmit={(event) => {
         event.preventDefault();
+        if (photoBusy) return;
         const data = dataFrom(event.currentTarget);
         void onSave(`${kind}.create`, {
           ...data,
@@ -342,7 +344,7 @@ function QuantityEntry({
             maxLength={2000}
           />
         </Field>
-        {!isPickup && <Photo onChange={setPhoto} />}
+        {!isPickup && <Photo value={photo} onChange={setPhoto} onBusyChange={setPhotoBusy} disabled={busy} />}
       </Optional>
       <div className={styles.summary}>
         <span>{categoryLabel(category)}</span>
@@ -388,6 +390,7 @@ function SaleEntry({ onSave, busy, onClose, onSwitchKind }: Props) {
   const [paid, setPaid] = useState("0");
   const [customer, setCustomer] = useState("");
   const [photo, setPhoto] = useState("");
+  const [photoBusy, setPhotoBusy] = useState(false);
   const [date, setDate] = useState("");
   const [initialDate] = useState(localNow);
   const [reviewedPriceId, setReviewedPriceId] = useState(price?.id);
@@ -458,10 +461,11 @@ function SaleEntry({ onSave, busy, onClose, onSwitchKind }: Props) {
     <SimpleForm
       busy={busy}
       onClose={onClose}
-      label="Simpan penjualan"
-      disabled={!price}
+      label={photoBusy ? "Memproses foto…" : "Simpan penjualan"}
+      disabled={!price || photoBusy}
       onSubmit={(event) => {
         event.preventDefault();
+        if (photoBusy) return;
         if (priceChanged) {
           setReviewMessage(true);
           priceReviewRef.current?.focus();
@@ -794,7 +798,7 @@ function SaleEntry({ onSave, busy, onClose, onSwitchKind }: Props) {
             maxLength={2000}
           />
         </Field>
-        <Photo onChange={setPhoto} />
+        <Photo value={photo} onChange={setPhoto} onBusyChange={setPhotoBusy} label="Bukti pembayaran" disabled={busy} />
       </Optional>
       <div className={styles.summary} aria-live="polite">
         <span>Total penjualan</span>

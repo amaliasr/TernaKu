@@ -47,7 +47,6 @@ DB_PORT=3306
 DB_NAME=nama_database_hosting
 DB_USER=user_database_hosting
 DB_PASSWORD=password_database_hosting
-TOKEN_TTL_HOURS=12
 ```
 
 `APP_URL` tidak memakai `/index.php` atau garis miring terakhir. Apache harus mengizinkan `.htaccess` (`AllowOverride All`). Pastikan `application/logs/` dapat ditulis oleh PHP dan tidak dapat dibaca melalui HTTP. `.htaccess` membatasi direktori internal, `.env`, SQL, dan PHP selain entrypoint. Endpoint seperti `/ternaku/.env`, `/ternaku/schema.sql`, dan `/ternaku/application/config/config.php` harus menghasilkan 403/404, bukan isi file. Untuk Nginx, buat aturan penolakan yang setara; `.htaccess` tidak berlaku di Nginx. Hanya `index.php` boleh menjadi entrypoint PHP. Gunakan HTTPS di kedua domain.
@@ -66,13 +65,13 @@ Frontend production memakai `NEXT_PUBLIC_API_URL=https://api.buildmanagement.id/
 | GET | `/bootstrap` | State sesuai hak pengguna |
 | POST | `/commands` | `{action,payload,request_id?}` → State terbaru |
 
-Semua respons berhasil dibungkus `{"data":...}` dan kesalahan `{"error":"pesan"}`. Permintaan tulis memakai `Content-Type: application/json`; setelah login gunakan `Authorization: Bearer <token>`. Token acak disimpan sebagai hash SHA-256, kadaluarsa 12 jam secara default, dan dicabut ketika akun dinonaktifkan atau logout. Percobaan login dibatasi 10 per pasangan IP/email per 15 menit. CORS hanya mengizinkan origin yang tercantum, tidak memakai `*` dan tidak bergantung pada cookie.
+Semua respons berhasil dibungkus `{"data":...}` dan kesalahan `{"error":"pesan"}`. Permintaan tulis memakai `Content-Type: application/json`; setelah login gunakan `Authorization: Bearer <token>`. Token acak disimpan sebagai hash SHA-256. Setiap permintaan terautentikasi memperpanjang sesi hingga 30 hari sejak aktivitas terakhir, dengan batas mutlak 90 hari sejak login. Logout dan penonaktifan akun mencabut token. `TOKEN_TTL_HOURS` lama tidak digunakan lagi. Frontend menyimpan sesi di perangkat, memindahkan sesi tab versi lama secara otomatis, dan mempertahankannya saat koneksi terputus; respons 401 meminta login kembali. Percobaan login dibatasi 10 per pasangan IP/email per 15 menit. CORS hanya mengizinkan origin yang tercantum, tidak memakai `*` dan tidak bergantung pada cookie.
 
 Tombol **Daftar** tetap tersedia setelah admin dibuat. Pendaftaran pertama memerlukan tabel pengguna kosong dan kode pemilik acak `SETUP_TOKEN` (minimal 32 karakter), atau file terlindungi `application/config/setup-token.php` yang mengembalikan kode tersebut. Pendaftaran berikutnya selalu menjadi karyawan peternakan yang sama dengan status menunggu; admin menyetujui atau menolak melalui menu Karyawan. Form pendaftaran tidak boleh menentukan role/aktivasi sendiri dan tidak menghasilkan token login. Password pendaftaran minimal 12 karakter Unicode dan maksimal 72 byte UTF-8; spasi dipertahankan. Pendaftaran dibatasi 10 percobaan per IP dan 5 per email dalam 15 menit. Status pendaftaran disimpan di tabel `records`, sehingga pemasangan lama tidak memerlukan migrasi skema. Akun lama tetap dianggap disetujui. Hapus kode setup setelah admin pertama berhasil dibuat, dan jangan masukkan kode/password ke Git atau paket deployment.
 
 `request_id` opsional disarankan untuk seluruh penulisan: gunakan UUID baru untuk suatu tindakan, pertahankan UUID tersebut ketika mengulangi permintaan yang hasilnya tidak diketahui karena jaringan putus. Permintaan identik dengan ID yang sama dari pengguna yang sama tidak menulis ulang data; payload berbeda dengan ID sama menghasilkan 409. Kunci disimpan atomik bersama perubahan. Gunakan UUID baru untuk tindakan baru yang memang ingin dicatat dua kali.
 
-Status: 400 JSON tidak valid, 401 sesi tidak sah, 403 hak/origin ditolak, 404 data/endpoint tidak ditemukan, 405 metode salah, 409 konflik idempotensi, 413 terlalu besar, 415 tipe konten salah, 422 validasi bisnis, 429 pembatasan login, 500 kesalahan server. Body maksimal 3 MB. Foto opsional berupa data URL JPEG/PNG/WebP (maksimal sekitar 1,3 MB biner) atau URL HTTPS, disimpan di dokumen transaksi; belum ada layanan upload/CDN terpisah.
+Status: 400 JSON tidak valid, 401 sesi tidak sah, 403 hak/origin ditolak, 404 data/endpoint tidak ditemukan, 405 metode salah, 409 konflik idempotensi, 413 terlalu besar, 415 tipe konten salah, 422 validasi bisnis, 429 pembatasan login, 500 kesalahan server. Body maksimal 3 MB. Foto baru harus berupa data URL JPEG/PNG/WebP, maksimal **1 MiB (1.048.576 byte setelah base64 didekode)**. Server memeriksa isi gambar dan kesesuaian MIME; URL eksternal tidak diterima sebagai unggahan baru. Frontend mengompres sebelum mengirim. Foto lama tetap dapat dibaca, termasuk yang melebihi batas baru; belum ada layanan upload/CDN terpisah.
 
 ## Perintah
 
@@ -88,6 +87,7 @@ Nama kolom dan struktur respons mengikuti `../src/lib/types.ts` dan `../CONTRACT
 | `price.create` | good_price, cracked_price, effective_at | Admin |
 | `user.create` | name, email, password, role, target | Admin |
 | `user.update` | id, name?, active?, target? | Admin |
+| `profile.update` | name, photo? | Akun sendiri, admin maupun karyawan |
 | `user.approve` | id | Admin, menyetujui pendaftaran karyawan |
 | `user.reject` | id | Admin, menolak pendaftaran yang menunggu |
 | `barn.create` | name, type:`ayam`, capacity, notes | Admin |
@@ -116,7 +116,13 @@ Setiap command menggunakan transaksi dan kunci baris. Kunci command global yang 
 
 Admin menerima semua transaksi dan audit; karyawan hanya menerima produksi, pickup, penjualan, koreksi, pemakaian pakan, dan notifikasinya sendiri. `stock_movements` mencatat produksi, pengambilan, setiap pengembalian, dan delta koreksi dengan tanggal, referensi, serta jumlah bertanda positif/negatif; karyawan hanya menerima ledger miliknya. Saldo stok telur/pakan tetap berasal dari agregat seluruh peternakan, bukan data karyawan yang disaring. Karyawan tidak menerima hash password, token pengguna lain, audit admin, biaya pembelian pakan, atau email karyawan lain. Laporan, grafik, PDF/Excel, dan nota dirender frontend dari state ini.
 
-Notifikasi harga tersimpan di database dan muncul saat frontend menyegarkan state/polling. Tidak ada push browser ketika aplikasi ditutup, layanan WhatsApp/SMS, atau notifikasi native.
+`profile.update` menerima nama 1–120 karakter dan foto opsional. Foto yang tidak dikirim dipertahankan; `photo: ""` menghapusnya. Untuk perubahan nama saja, jangan mengirim ulang foto lama agar batas unggahan baru tidak diterapkan pada foto tersebut. Identitas pengguna selalu berasal dari token; kolom lain seperti `id`, `role`, `active`, `email`, dan `password` ditolak. Profil disimpan memakai `users` dan record privat `user_profile`, tanpa migrasi skema.
+
+Notifikasi harga tersimpan di database dan muncul saat frontend menyegarkan state/polling. Web Push juga tersedia ketika aplikasi ditutup setelah pengguna mengaktifkannya; lihat [panduan Web Push](PUSH.md). Tidak ada layanan WhatsApp/SMS.
+
+## Pembaruan 24 Oktober 2026
+
+Untuk instalasi yang sudah memakai versi Web Push sebelumnya, cadangkan lalu ganti hanya `application/libraries/FarmService.php` di folder API `public_html/ternaku/`. Paket `ternaku-api-update-2026-10-24.zip` berisi path relatif tersebut; ekstrak langsung di `ternaku/`, bukan di `public_html/` atau `ternaku/api/`. Pertahankan `.env`, kunci setup/push, `vendor/`, dan database. Tidak perlu menjalankan installer atau migrasi SQL. Sesi lama yang sudah kedaluwarsa perlu login sekali lagi; sesi yang masih aktif diperpanjang saat digunakan. Deploy frontend terbaru agar profil dan penyimpanan sesi tersedia.
 
 ## Pengujian nyata
 

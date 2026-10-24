@@ -4,6 +4,7 @@ import { useEffect, useRef, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { X, Inbox, Search, LoaderCircle } from "lucide-react";
 import { businessDate, dateLabel } from "@/lib/domain";
+import { useBackLayer } from "@/lib/navigation";
 export { businessDate } from "@/lib/domain";
 
 export const categoryLabel = (value: string) =>
@@ -136,10 +137,11 @@ export function Dialog({
   title: string;
   subtitle?: string;
   children: ReactNode;
-  onClose: () => void;
+  onClose: () => void | boolean;
   wide?: boolean;
 }) {
   const ref = useRef<HTMLDivElement>(null);
+  useBackLayer(true, onClose);
   const closeRef = useRef(onClose);
   useEffect(() => {
     closeRef.current = onClose;
@@ -159,6 +161,8 @@ export function Dialog({
       );
     focusable()[0]?.focus();
     const handler = (event: KeyboardEvent) => {
+      const dialogs = document.querySelectorAll('[role="dialog"][aria-modal="true"]');
+      if (dialogs[dialogs.length - 1] !== ref.current) return;
       if (event.key === "Escape") closeRef.current();
       if (event.key === "Tab") {
         const elements = focusable(),

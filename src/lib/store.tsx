@@ -22,6 +22,14 @@ import { refreshInterval, SessionSync } from "./session-sync";
 import { ApiError } from "./request-errors";
 import { readPendingRequestIds } from "./request-retries";
 import { detachBrowserPush } from "./push-client";
+import {
+  AUTH_SESSION_KEY,
+  clearSession,
+  isExpiredSession,
+  parseSession,
+  restoreSession,
+  saveSession,
+} from "./auth-session";
 export {
   isUncertainWriteError,
   shouldPreserveUnconfirmedWrite,
@@ -51,6 +59,7 @@ interface FarmContextValue {
   user: User | null;
   mode: FarmMode;
   loading: boolean;
+  sessionRecovery: boolean;
   error: string | null;
   priceSync: PriceSync;
   login: (email: string, password: string) => Promise<void>;
@@ -73,7 +82,6 @@ const Context = createContext<FarmContextValue | undefined>(undefined);
 const STORAGE_KEY = "ternaku.demo.v1";
 const DEMO_USER_KEY = "ternaku.demo.user";
 const DEMO_AUTH_KEY = "ternaku.demo.credentials";
-const TOKEN_KEY = "ternaku.api.token";
 const RETRY_KEY = "ternaku.api.pending";
 const API_URL = (
   process.env.NEXT_PUBLIC_API_URL || "https://api.buildmanagement.id/ternaku"
@@ -132,6 +140,8 @@ async function request<T>(
     try {
       json = await response.json();
     } catch {
+      if (response.status === 401)
+        throw new ApiError("Sesi berakhir. Silakan masuk kembali.", 401);
       throw new Error(
         "API mengirim respons yang tidak valid. Periksa konfigurasi server.",
       );
@@ -161,12 +171,15 @@ export function FarmProvider({ children }: { children: ReactNode }) {
   const [allState, setAllState] = useState<State>(emptyState);
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
+  const [sessionRecovery, setSessionRecovery] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [priceSync, setPriceSync] = useState<PriceSync>(emptyPriceSync);
   const sync = useRef(new SessionSync());
   const stateRef = useRef(allState);
   const userRef = useRef(user);
   const tokenRef = useRef<string | null>(null);
+  const sessionUserId = useRef<string | null>(null);
+  const authEpoch = useRef(0);
   const commit = useCallback((next: State) => {
     stateRef.current = next;
     setAllState(next);
@@ -194,9 +207,17 @@ export function FarmProvider({ children }: { children: ReactNode }) {
     setUser(next);
   }, []);
   const invalidateSession = useCallback(() => {
+    const previousToken = tokenRef.current;
+    ++authEpoch.current;
+    sync.current.invalidate();
     tokenRef.current = null;
-    sessionStorage.removeItem(TOKEN_KEY);
-    sessionStorage.removeItem(`${TOKEN_KEY}.user`);
+    sessionUserId.current = null;
+    try {
+      clearSession(localStorage, sessionStorage, previousToken);
+    } catch {
+      /* Always clear the current view even if browser storage is unavailable. */
+    }
+    setSessionRecovery(false);
     setSessionUser(null);
     commit(emptyState());
     setPriceSync(emptyPriceSync);
@@ -204,6 +225,7 @@ export function FarmProvider({ children }: { children: ReactNode }) {
   const refreshData = useCallback(
     (background = false) => {
       const refreshToken = tokenRef.current;
+      const refreshEpoch = authEpoch.current;
       if (mode === "live" && !refreshToken) return Promise.resolve();
       return sync.current.refresh(async ({ canApply, sessionActive }) => {
         if (!canApply()) return;
@@ -222,14 +244,36 @@ export function FarmProvider({ children }: { children: ReactNode }) {
             if (!isState(next))
               throw new Error("Struktur data API tidak sesuai.");
           }
-          if (!canApply() || tokenRef.current !== refreshToken) return;
+          if (
+            !canApply() ||
+            tokenRef.current !== refreshToken ||
+            authEpoch.current !== refreshEpoch
+          )
+            return;
+          if (mode === "live") {
+            const restoredUser = next.users.find(
+              (u) => u.id === sessionUserId.current && !accountAccessError(u),
+            );
+            if (!restoredUser)
+              throw new Error(
+                "Data akun belum dapat dimuat. Silakan coba kembali.",
+              );
+            setSessionUser(restoredUser);
+            setSessionRecovery(false);
+            setPriceSync((previous) => ({ ...previous, refreshing: false }));
+          }
           commit(next);
           if (!background) setError(null);
         } catch (cause) {
-          if (!canApply() || tokenRef.current !== refreshToken) return;
+          if (
+            !canApply() ||
+            tokenRef.current !== refreshToken ||
+            authEpoch.current !== refreshEpoch
+          )
+            return;
           const message =
             cause instanceof Error ? cause.message : "Gagal memperbarui harga.";
-          if (cause instanceof ApiError && cause.status === 401) {
+          if (isExpiredSession(cause)) {
             invalidateSession();
             setError(message);
           } else {
@@ -243,11 +287,12 @@ export function FarmProvider({ children }: { children: ReactNode }) {
         }
       });
     },
-    [commit, invalidateSession],
+    [commit, invalidateSession, setSessionUser],
   );
   const refresh = useCallback(() => refreshData(), [refreshData]);
   useEffect(() => {
     let mounted = true;
+    const initEpoch = authEpoch.current;
     async function init() {
       try {
         if (mode === "demo") {
@@ -265,7 +310,11 @@ export function FarmProvider({ children }: { children: ReactNode }) {
             next = createDemoState();
             localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
           }
-          const storedUser = sessionStorage.getItem(DEMO_USER_KEY);
+          const storedUser =
+            localStorage.getItem(DEMO_USER_KEY) ??
+            sessionStorage.getItem(DEMO_USER_KEY);
+          if (storedUser) localStorage.setItem(DEMO_USER_KEY, storedUser);
+          sessionStorage.removeItem(DEMO_USER_KEY);
           const initialUser =
             storedUser === "logged-out"
               ? null
@@ -278,38 +327,19 @@ export function FarmProvider({ children }: { children: ReactNode }) {
             setSessionUser(initialUser);
           }
         } else {
-          const token = sessionStorage.getItem(TOKEN_KEY);
-          tokenRef.current = token;
-          if (token) {
-            const next = await request<State>("/bootstrap", token);
-            if (!isState(next))
-              throw new Error("Struktur data API tidak sesuai.");
-            const sessionUserRaw = sessionStorage.getItem(`${TOKEN_KEY}.user`);
-            const savedUser = sessionUserRaw
-              ? (JSON.parse(sessionUserRaw) as User)
-              : null;
-            const sessionUser =
-              next.users.find(
-                (u) => u.id === savedUser?.id && !accountAccessError(u),
-              ) || null;
-            if (!sessionUser)
-              throw new Error("Sesi tidak valid. Silakan masuk kembali.");
-            if (mounted) {
-              commit(next);
-              setSessionUser(sessionUser);
-            }
+          const saved = restoreSession(localStorage, sessionStorage);
+          tokenRef.current = saved?.token ?? null;
+          sessionUserId.current = saved?.userId ?? null;
+          if (saved) {
+            setSessionRecovery(true);
+            await refreshData();
           }
         }
       } catch (cause) {
-        if (mounted) {
+        if (mounted && authEpoch.current === initEpoch) {
           setError(
             cause instanceof Error ? cause.message : "Gagal memuat aplikasi.",
           );
-          if (mode === "live") {
-            tokenRef.current = null;
-            sessionStorage.removeItem(TOKEN_KEY);
-            sessionStorage.removeItem(`${TOKEN_KEY}.user`);
-          }
         }
       } finally {
         if (mounted) setLoading(false);
@@ -319,16 +349,49 @@ export function FarmProvider({ children }: { children: ReactNode }) {
     const onStorage = (event: StorageEvent) => {
       if (mode === "demo" && event.key === STORAGE_KEY)
         void refresh().catch(() => {});
+      if (
+        mode === "demo" &&
+        (event.key === DEMO_USER_KEY || event.key === null)
+      ) {
+        ++authEpoch.current;
+        sync.current.invalidate();
+        const id = localStorage.getItem(DEMO_USER_KEY);
+        setSessionUser(
+          stateRef.current.users.find(
+            (u) => u.id === id && !accountAccessError(u),
+          ) ?? null,
+        );
+      }
+      if (
+        mode === "live" &&
+        (event.key === AUTH_SESSION_KEY || event.key === null)
+      ) {
+        // Read the current record: an older queued event must not undo a newer login.
+        const saved = parseSession(localStorage.getItem(AUTH_SESSION_KEY));
+        if (saved && saved.token === tokenRef.current) return;
+        ++authEpoch.current;
+        sync.current.invalidate();
+        tokenRef.current = saved?.token ?? null;
+        sessionUserId.current = saved?.userId ?? null;
+        setSessionUser(null);
+        commit(emptyState());
+        setPriceSync(emptyPriceSync);
+        setSessionRecovery(!!saved);
+        setError(null);
+        setLoading(false);
+        if (saved) void refreshData().catch(() => {});
+      }
     };
     window.addEventListener("storage", onStorage);
     return () => {
       mounted = false;
+      ++authEpoch.current;
       sync.current.invalidate();
       window.removeEventListener("storage", onStorage);
     };
-  }, [commit, refresh, setSessionUser]);
+  }, [commit, refresh, refreshData, setSessionUser]);
   useEffect(() => {
-    if (!user) return;
+    if (!user && !sessionRecovery) return;
     const update = () => {
       if (document.visibilityState === "visible")
         void refreshData(true).catch(() => {});
@@ -341,7 +404,10 @@ export function FarmProvider({ children }: { children: ReactNode }) {
             "Koneksi terputus. Harga akan diperbarui setelah tersambung kembali.",
         }));
     };
-    const interval = setInterval(update, refreshInterval(user.role));
+    const interval = setInterval(
+      update,
+      refreshInterval(user?.role ?? "employee"),
+    );
     document.addEventListener("visibilitychange", update);
     window.addEventListener("online", update);
     window.addEventListener("offline", offline);
@@ -351,7 +417,7 @@ export function FarmProvider({ children }: { children: ReactNode }) {
       window.removeEventListener("online", update);
       window.removeEventListener("offline", offline);
     };
-  }, [refreshData, user?.id, user?.role]);
+  }, [refreshData, user?.id, user?.role, sessionRecovery]);
 
   const registrationStatus =
     useCallback(async (): Promise<RegistrationAvailability> => {
@@ -397,6 +463,8 @@ export function FarmProvider({ children }: { children: ReactNode }) {
 
   const login = useCallback(
     async (email: string, password: string) => {
+      const loginEpoch = ++authEpoch.current;
+      sync.current.invalidate();
       setError(null);
       setLoading(true);
       try {
@@ -421,7 +489,9 @@ export function FarmProvider({ children }: { children: ReactNode }) {
             throw new Error("Email atau kata sandi tidak sesuai.");
           const accessError = accountAccessError(found);
           if (accessError) throw new Error(accessError);
-          sessionStorage.setItem(DEMO_USER_KEY, found.id);
+          if (authEpoch.current !== loginEpoch) return;
+          localStorage.setItem(DEMO_USER_KEY, found.id);
+          sessionStorage.removeItem(DEMO_USER_KEY);
           commit(source);
           setSessionUser(found);
         } else {
@@ -430,51 +500,56 @@ export function FarmProvider({ children }: { children: ReactNode }) {
             null,
             { email: email.trim(), password },
           );
-          const next = await request<State>("/bootstrap", result.token);
-          if (!isState(next))
-            throw new Error("Struktur data API tidak sesuai.");
-          sessionStorage.setItem(TOKEN_KEY, result.token);
-          sessionStorage.setItem(
-            `${TOKEN_KEY}.user`,
-            JSON.stringify(result.user),
-          );
+          if (authEpoch.current !== loginEpoch) {
+            void request("/auth/logout", result.token, {}).catch(() => {});
+            return;
+          }
+          try {
+            saveSession(localStorage, {
+              token: result.token,
+              userId: result.user.id,
+            });
+          } catch (cause) {
+            void request("/auth/logout", result.token, {}).catch(() => {});
+            throw cause;
+          }
           tokenRef.current = result.token;
-          commit(next);
-          setSessionUser(result.user);
+          sessionUserId.current = result.user.id;
+          setSessionRecovery(true);
+          // Persist credentials before bootstrap, so a temporary outage does not lose a successful login.
+          await refreshData();
         }
       } catch (cause) {
-        setError(cause instanceof Error ? cause.message : "Gagal masuk.");
+        if (authEpoch.current === loginEpoch)
+          setError(cause instanceof Error ? cause.message : "Gagal masuk.");
         throw cause;
       } finally {
-        setLoading(false);
+        if (authEpoch.current === loginEpoch || !tokenRef.current)
+          setLoading(false);
       }
     },
-    [commit, setSessionUser],
+    [commit, refreshData, setSessionUser],
   );
   const logout = useCallback(async () => {
     const token = tokenRef.current;
-    // Stop pending push operations from attaching while browser revocation is awaited.
-    tokenRef.current = null;
-    const pushEndpoint =
-      mode === "live" ? await detachBrowserPush() : undefined;
-    setSessionUser(null);
+    // Clear credentials and invalidate pending requests before waiting for network/browser cleanup.
+    invalidateSession();
     setError(null);
-    setPriceSync(emptyPriceSync);
-    if (mode === "demo") sessionStorage.setItem(DEMO_USER_KEY, "logged-out");
-    else {
-      sessionStorage.removeItem(TOKEN_KEY);
-      sessionStorage.removeItem(`${TOKEN_KEY}.user`);
-      commit(emptyState());
-      setPriceSync(emptyPriceSync);
-      if (token) {
-        try {
-          await request("/auth/logout", token, { push_endpoint: pushEndpoint });
-        } catch {
-          /* Local credentials are removed even if the network is unavailable. */
-        }
-      }
+    setLoading(false);
+    if (mode === "demo") {
+      localStorage.setItem(DEMO_USER_KEY, "logged-out");
+      sessionStorage.removeItem(DEMO_USER_KEY);
+    } else {
+      // The server revokes every push binding belonging to this token; it must
+      // not wait for a browser's subscription API, which can stall offline.
+      const revoke = token
+        ? request("/auth/logout", token, {}).catch(() => {
+            /* Local credentials are removed even if the network is unavailable. */
+          })
+        : Promise.resolve();
+      await Promise.all([revoke, detachBrowserPush()]);
     }
-  }, [commit, setSessionUser]);
+  }, [invalidateSession]);
   const pushRequest = useCallback(
     async <T,>(
       action: "status" | "subscribe" | "unsubscribe" | "test",
@@ -491,14 +566,21 @@ export function FarmProvider({ children }: { children: ReactNode }) {
         throw new Error(
           "Akun berubah. Buka kembali pengaturan notifikasi pada akun Anda.",
         );
-      const result = await request<T>(`/push/${action}`, token, body);
+      let result: T;
+      try {
+        result = await request<T>(`/push/${action}`, token, body);
+      } catch (cause) {
+        if (tokenRef.current === token && isExpiredSession(cause))
+          invalidateSession();
+        throw cause;
+      }
       if (tokenRef.current !== token || userRef.current?.id !== userId)
         throw new Error(
           "Akun berubah. Buka kembali pengaturan notifikasi pada akun Anda.",
         );
       return result;
     },
-    [],
+    [invalidateSession],
   );
   const command = useCallback(
     async (action: string, payload: CommandPayload, requestId?: string) => {
@@ -586,8 +668,7 @@ export function FarmProvider({ children }: { children: ReactNode }) {
           tokenRef.current === sessionToken &&
           userRef.current?.id === currentUser.id
         ) {
-          if (cause instanceof ApiError && cause.status === 401)
-            invalidateSession();
+          if (isExpiredSession(cause)) invalidateSession();
           setError(
             cause instanceof Error ? cause.message : "Data gagal disimpan.",
           );
@@ -610,6 +691,7 @@ export function FarmProvider({ children }: { children: ReactNode }) {
         user,
         mode,
         loading,
+        sessionRecovery,
         error,
         priceSync,
         pushRequest,

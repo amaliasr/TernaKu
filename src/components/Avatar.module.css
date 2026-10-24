@@ -1,0 +1,40 @@
+.avatar {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  overflow: hidden;
+  border-radius: 50%;
+  background: #e3eedb;
+  color: #38623e;
+  border: 1px solid #d5e2cc;
+  font-weight: 600;
+  line-height: 1;
+  vertical-align: middle;
+}
+.avatar img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.sm {
+  width: 32px;
+  height: 32px;
+  font-size: calc(11px * var(--font-scale, 1));
+}
+.md {
+  width: 42px;
+  height: 42px;
+  font-size: calc(14px * var(--font-scale, 1));
+}
+.lg {
+  width: 76px;
+  height: 76px;
+  font-size: calc(23px * var(--font-scale, 1));
+}
+:global(html[data-theme="dark"]) .avatar {
+  background: #314a34;
+  border-color: #57734b;
+  color: #dbedc8;
+}

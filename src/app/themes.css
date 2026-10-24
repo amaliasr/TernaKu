@@ -1,8 +1,67 @@
 :root {
   color-scheme: light;
+  --font-scale: 1;
   --surface: #ffffff;
   --surface-raised: #f1f5ec;
   --text: #25372b;
+}
+html {
+  font-size: calc(16px * var(--font-scale, 1));
+}
+html[data-font-size="small"] {
+  --font-scale: 0.9;
+}
+html[data-font-size="normal"] {
+  --font-scale: 1;
+}
+html[data-font-size="large"] {
+  --font-scale: 1.16;
+}
+/* Text grows inside the existing responsive layout; controls stay usable. */
+html[data-font-size="large"]
+  :is(
+    .summary-value,
+    .module-stat strong,
+    .price-values strong,
+    .metric-card strong
+  ) {
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+html[data-font-size="large"] :is(.btn, .user-switch, .workspace-select strong) {
+  white-space: normal;
+}
+html[data-font-size="large"] .sidebar {
+  width: 264px;
+}
+html[data-font-size="large"] .main-shell {
+  margin-left: 264px;
+  width: calc(100% - 264px);
+}
+html[data-font-size="large"] .recharts-cartesian-axis-tick-value {
+  font-size: calc(10px * var(--font-scale, 1));
+}
+@media (max-width: 760px) {
+  html[data-font-size="large"] .sidebar {
+    left: -264px;
+  }
+  html[data-font-size="large"] .sidebar.is-open {
+    left: 0;
+  }
+  html[data-font-size="large"] .main-shell {
+    margin-left: 0;
+    width: 100%;
+  }
+}
+@media (max-width: 767px) {
+  html[data-font-size]
+    :is(
+      input:not([type="checkbox"]):not([type="radio"]):not([type="file"]),
+      select,
+      textarea
+    ) {
+    font-size: max(16px, calc(16px * var(--font-scale, 1))) !important;
+  }
 }
 .theme-toggle {
   display: inline-flex;
@@ -16,7 +75,7 @@
   background: #ffffff;
   color: #3a6446;
   font: inherit;
-  font-size: 12px;
+  font-size: calc(12px * var(--font-scale, 1));
   font-weight: 500;
   white-space: nowrap;
   flex-shrink: 0;

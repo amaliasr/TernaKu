@@ -907,7 +907,7 @@ test("finite numeric inputs, precision, active accounts, and self-disable are en
   assert.throws(() => take(disabled), /dinonaktifkan/);
 });
 test("photo attachments retain complete data rather than silently truncating base64", () => {
-  const encoded = `data:image/png;base64,${"A".repeat(20000)}`;
+  const encoded = `data:image/png;base64,${Buffer.concat([Buffer.from("89504e470d0a1a0a", "hex"), Buffer.alloc(20000)]).toString("base64")}`;
   const s = cmd(fixture(), "a", "production.create", {
     date: DATE,
     barn_id: "barn",
@@ -917,6 +917,66 @@ test("photo attachments retain complete data rather than silently truncating bas
     photo: encoded,
   });
   assert.equal(s.productions.at(-1)?.photo, encoded);
+});
+test("own profile supports name/photo/remove, preserves authorization and disallows another user", () => {
+  const image =
+    "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aC9sAAAAASUVORK5CYII=";
+  let state = cmd(fixture(), "a", "profile.update", {
+    name: "  Sari Baru  ",
+    photo: image,
+  });
+  assert.equal(state.users.find((u) => u.id === "a")?.name, "Sari Baru");
+  assert.equal(state.users.find((u) => u.id === "a")?.photo, image);
+  assert.equal(state.users.find((u) => u.id === "b")?.name, "Budi");
+  assert.equal(state.users.find((u) => u.id === "a")?.role, "employee");
+  state = cmd(state, "a", "profile.update", { name: "Sari" });
+  assert.equal(state.users.find((u) => u.id === "a")?.photo, image);
+  state = cmd(state, "a", "profile.update", { name: "Sari", photo: "" });
+  assert.equal(state.users.find((u) => u.id === "a")?.photo, "");
+  for (const field of [
+    "id",
+    "role",
+    "active",
+    "email",
+    "password",
+    "target",
+    "registration_status",
+  ])
+    assert.throws(
+      () =>
+        cmd(state, "a", "profile.update", { name: "Sari", [field]: "admin" }),
+      /hanya/,
+    );
+  for (const name of [" ", "x".repeat(121), 123])
+    assert.throws(() => cmd(state, "a", "profile.update", { name }), /Nama/);
+  const legacy = fixture();
+  legacy.users[1].photo = "data:image/png;base64," + "A".repeat(1800000);
+  assert.equal(
+    cmd(legacy, "a", "profile.update", { name: "Sari" }).users[1].photo,
+    legacy.users[1].photo,
+  );
+});
+test("new photo uploads enforce decoded 1 MiB and MIME while legacy reads remain unchanged", () => {
+  const make = (size: number) =>
+    `data:image/png;base64,${Buffer.concat([Buffer.from("89504e470d0a1a0a", "hex"), Buffer.alloc(size - 8)]).toString("base64")}`;
+  assert.equal(
+    cmd(fixture(), "a", "profile.update", {
+      name: "Sari",
+      photo: make(1048576),
+    }).users[1].photo,
+    make(1048576),
+  );
+  for (const image of [
+    make(1048577),
+    "https://example.com/photo.jpg",
+    "data:image/png;base64,aGVsbG8=",
+    make(20).replace("image/png", "image/jpeg"),
+  ])
+    assert.throws(
+      () =>
+        cmd(fixture(), "a", "profile.update", { name: "Sari", photo: image }),
+      /Foto|foto/,
+    );
 });
 test("optional production source and dated signed stock ledger preserve corrections and returns", () => {
   let s = cmd(fixture(), "a", "production.create", {
