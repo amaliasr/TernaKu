@@ -20,6 +20,8 @@ import {
 import { createDemoState, DEMO_PASSWORD } from "./seed";
 import { refreshInterval, SessionSync } from "./session-sync";
 import { ApiError } from "./request-errors";
+import { readApiResponse } from "./api-response";
+import { requestTimeout } from "./request-timeout";
 import { readPendingRequestIds } from "./request-retries";
 import { detachBrowserPush } from "./push-client";
 import {
@@ -123,7 +125,7 @@ async function request<T>(
   body?: unknown,
 ): Promise<T> {
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 20000);
+  const timeout = setTimeout(() => controller.abort(), requestTimeout(path, body));
   try {
     const response = await fetch(`${API_URL}${path}`, {
       method: body === undefined ? "GET" : "POST",
@@ -136,30 +138,19 @@ async function request<T>(
       signal: controller.signal,
       cache: "no-store",
     });
-    let json: { data?: T; error?: string };
-    try {
-      json = await response.json();
-    } catch {
-      if (response.status === 401)
-        throw new ApiError("Sesi berakhir. Silakan masuk kembali.", 401);
-      throw new Error(
-        "API mengirim respons yang tidak valid. Periksa konfigurasi server.",
-      );
-    }
-    if (!response.ok || json.error)
-      throw new ApiError(
-        json.error || `Permintaan gagal (${response.status}).`,
-        response.status,
-      );
-    if (json.data === undefined)
-      throw new Error("Data respons API tidak lengkap.");
-    return json.data;
+    return await readApiResponse<T>(response);
   } catch (cause) {
     if (cause instanceof DOMException && cause.name === "AbortError")
-      throw new Error("API tidak merespons. Silakan coba kembali.");
+      throw new Error(
+        path === "/commands"
+          ? "Koneksi terlalu lambat untuk memastikan hasil penyimpanan. Data mungkin sudah tersimpan. Coba lagi tanpa mengubah isian."
+          : "Memuat data terlalu lama. Periksa koneksi internet, lalu coba kembali.",
+      );
     if (cause instanceof TypeError)
       throw new Error(
-        "Tidak dapat terhubung ke API. Periksa koneksi internet dan konfigurasi server.",
+        path === "/commands"
+          ? "Koneksi terputus saat menyimpan. Data mungkin sudah tersimpan. Sambungkan internet, lalu coba lagi tanpa mengubah isian."
+          : "Belum dapat terhubung ke server. Periksa koneksi internet, lalu coba kembali.",
       );
     throw cause;
   } finally {
