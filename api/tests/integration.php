@@ -6,6 +6,8 @@ $dbName=getenv('DB_NAME') ?: '';
 if(getenv('ALLOW_TEST_RESET')!=='1' || !preg_match('/^[a-zA-Z0-9_]+_test$/D',$dbName)) { fwrite(STDERR,"Use dedicated DB_NAME ending _test and ALLOW_TEST_RESET=1. Never run against production.\n"); exit(1); }
 $base=getenv('TEST_API_URL') ?: 'http://127.0.0.1:8081';
 $db=new PDO('mysql:host='.(getenv('DB_HOST')?:'127.0.0.1').';port='.(getenv('DB_PORT')?:'3306').';dbname='.$dbName.';charset=utf8mb4',getenv('DB_USER'),getenv('DB_PASSWORD'),[PDO::ATTR_ERRMODE=>PDO::ERRMODE_EXCEPTION]);
+// DATETIME fixtures and NOW() assertions must use the same session timezone as FarmService, even on UTC CI hosts.
+$db->exec("SET time_zone = '+07:00'");
 function resetTestDatabase(bool $schema=true): void {
     global $db;
     $db->exec('SET FOREIGN_KEY_CHECKS=0'); foreach(['records','tokens','login_attempts','command_requests','users','stock','command_mutex'] as $table) $db->exec('DROP TABLE IF EXISTS '.$table); $db->exec('SET FOREIGN_KEY_CHECKS=1');
