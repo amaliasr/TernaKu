@@ -4,6 +4,7 @@ import { useCallback, useEffect, useId, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { Maximize2, Minimize2, X, ZoomIn } from "lucide-react";
 import { useBackLayer } from "@/lib/navigation";
+import { lockBodyScroll } from "@/lib/scroll-lock";
 import styles from "./ImagePreview.module.css";
 
 export default function ImagePreview({ src, alt, className = "", thumbnailClassName = "" }: {
@@ -25,8 +26,7 @@ export default function ImagePreview({ src, alt, className = "", thumbnailClassN
   useEffect(() => {
     if (!open) return;
     const previous = document.activeElement as HTMLElement | null;
-    const overflow = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
+    const releaseScroll = lockBodyScroll();
     closeButton.current?.focus();
     function keydown(event: KeyboardEvent) {
       const overlays = document.querySelectorAll('[role="dialog"]');
@@ -46,7 +46,7 @@ export default function ImagePreview({ src, alt, className = "", thumbnailClassN
     document.addEventListener("keydown", keydown, true);
     return () => {
       document.removeEventListener("keydown", keydown, true);
-      document.body.style.overflow = overflow;
+      releaseScroll();
       if (previous?.isConnected) previous.focus();
     };
   }, [open, close]);

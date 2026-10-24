@@ -5,6 +5,7 @@ import { createPortal } from "react-dom";
 import { X, Inbox, Search, LoaderCircle } from "lucide-react";
 import { businessDate, dateLabel } from "@/lib/domain";
 import { useBackLayer } from "@/lib/navigation";
+import { lockBodyScroll } from "@/lib/scroll-lock";
 export { businessDate } from "@/lib/domain";
 
 export const categoryLabel = (value: string) =>
@@ -148,8 +149,7 @@ export function Dialog({
   }, [onClose]);
   useEffect(() => {
     const previous = document.activeElement as HTMLElement | null;
-    const original = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
+    const releaseScroll = lockBodyScroll();
     const focusable = () =>
       Array.from(
         ref.current?.querySelectorAll<HTMLElement>(
@@ -180,7 +180,7 @@ export function Dialog({
     };
     document.addEventListener("keydown", handler);
     return () => {
-      document.body.style.overflow = original;
+      releaseScroll();
       document.removeEventListener("keydown", handler);
       previous?.focus();
     };
