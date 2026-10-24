@@ -12,9 +12,6 @@
   white-space: normal;
   overflow-wrap: anywhere;
 }
-:global(html[data-font-size="large"]) .header {
-  flex-wrap: wrap;
-}
 :global(html[data-font-size="large"]) .brand {
   font-size: calc(21px * var(--font-scale, 1)) !important;
 }
@@ -32,6 +29,7 @@
 }
 .header {
   display: flex;
+  flex-wrap: wrap;
   justify-content: space-between;
   align-items: center;
   padding: 15px 20px 12px;
@@ -64,8 +62,13 @@
 }
 .headerActions {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
+  justify-content: flex-end;
   gap: 10px;
+  min-width: 0;
+  max-width: 100%;
+  margin-left: auto;
 }
 .bell,
 .profileButton {
@@ -78,6 +81,7 @@
   display: grid;
   place-items: center;
   position: relative;
+  flex-shrink: 0;
 }
 .bell > span {
   position: absolute;
