@@ -202,7 +202,7 @@ export default function Reports() {
     },
     {
       name: "Stok saat ini",
-      columns: ["Waktu snapshot WIB", "Kategori", "Butir", "Berat (kg)"],
+      columns: ["Waktu pencatatan WIB", "Kategori", "Butir", "Berat (kg)"],
       rows: (["good", "cracked"] as const).map((c) => {
         const stock = eggStock(state, c);
         return [

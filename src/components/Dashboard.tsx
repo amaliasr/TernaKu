@@ -120,7 +120,7 @@ export default function Dashboard({
     <>
       <div className="page-heading dashboard-heading">
         <div>
-          <div className="eyebrow">DARI PETERNAKAN, UNTUK MASA DEPAN</div>
+          <div className="eyebrow">CATATAN PETERNAKAN</div>
           <h1>
             Ringkasan peternakan<span className="heading-dot">.</span>
           </h1>
@@ -175,14 +175,14 @@ export default function Dashboard({
         <section className="welcome-banner">
           <div>
             <span className="banner-kicker">
-              <span /> CATAT HARI INI, TUMBUH ESOK HARI
+              <span /> KEGIATAN HARI INI
             </span>
             <h2>
-              Peternakan terkelola.
+              Sudah catat
               <br />
-              Pikiran lebih tenang.
+              panen hari ini?
             </h2>
-            <p>Semua aktivitas usaha, dalam satu tempat.</p>
+            <p>Masukkan hasil timbangan dan jumlah telur yang terkumpul.</p>
             <button onClick={() => open("production")}>
               Catat panen hari ini <ArrowUpRight size={17} />
             </button>
@@ -205,7 +205,7 @@ export default function Dashboard({
             </div>
             <span className="live-tag">
               <span />
-              Live
+              Aktif
             </span>
           </div>
           <div className="price-values">
@@ -225,7 +225,11 @@ export default function Dashboard({
                 Telur bentes
               </span>
               <strong>
-                {price ? price.cracked_price === 0 ? "Gratis" : money(price.cracked_price) : "—"}
+                {price
+                  ? price.cracked_price === 0
+                    ? "Gratis"
+                    : money(price.cracked_price)
+                  : "—"}
                 {price && price.cracked_price > 0 && <small>/kg</small>}
               </strong>
             </div>
@@ -242,7 +246,11 @@ export default function Dashboard({
         </section>
       </div>
       <div className="section-bar">
-        <h3>{user.role === "admin" ? "Hari ini di peternakan" : "Aktivitas Anda hari ini"}</h3>
+        <h3>
+          {user.role === "admin"
+            ? "Hari ini di peternakan"
+            : "Aktivitas Anda hari ini"}
+        </h3>
         <span>
           <CalendarDays size={15} />
           {dateLabel(day)}
@@ -279,12 +287,22 @@ export default function Dashboard({
           onClick={() => go("stock")}
         />
         <Metric
-          title={user.role === "admin" ? "Karyawan aktif" : "Target bulanan Anda"}
-          value={user.role === "admin" ? number(employees.length, 0) : money(user.target)}
+          title={
+            user.role === "admin" ? "Karyawan aktif" : "Target bulanan Anda"
+          }
+          value={
+            user.role === "admin"
+              ? number(employees.length, 0)
+              : money(user.target)
+          }
           unit={user.role === "admin" ? "orang" : undefined}
           icon={<Users size={21} />}
           color="purple"
-          detail={user.role === "admin" ? "Bersama mengembangkan usaha" : "Pantau pencapaian pada laporan"}
+          detail={
+            user.role === "admin"
+              ? "Bersama mengembangkan usaha"
+              : "Pantau pencapaian pada laporan"
+          }
           foot={
             user.role === "admin"
               ? "Lihat performa tim Anda"
@@ -298,7 +316,7 @@ export default function Dashboard({
           <div className="panel-header">
             <div>
               <h3>Perkembangan usaha</h3>
-              <p>Hasil kerja yang terus bertumbuh</p>
+              <p>Lihat jumlah panen dan penjualan selama periode ini.</p>
             </div>
             <select
               className="form-select period-select"
@@ -515,7 +533,7 @@ export default function Dashboard({
           <div className="panel-header">
             <div>
               <h3>Penjualan terbaru</h3>
-              <p>Setiap transaksi, tercatat dengan baik</p>
+              <p>Transaksi yang baru dicatat oleh tim.</p>
             </div>
             <button className="text-button" onClick={() => go("sales")}>
               Lihat semua

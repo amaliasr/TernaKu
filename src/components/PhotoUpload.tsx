@@ -1,43 +1,65 @@
 "use client";
 
-import { useId, useRef, useState, type ChangeEvent } from "react";
+import { useEffect, useId, useRef, useState, type ChangeEvent } from "react";
 import { Camera, ImagePlus, X } from "lucide-react";
 import { preparePhoto } from "@/lib/photos";
+import ImagePreview from "./ImagePreview";
 import styles from "./PhotoUpload.module.css";
 
-export default function PhotoUpload({ onChange, label = "Foto dokumentasi" }: { onChange: (value: string) => void; label?: string }) {
+type PhotoUploadProps = {
+  onChange: (value: string) => void;
+  value?: string;
+  defaultValue?: string;
+  label?: string;
+  disabled?: boolean;
+  optional?: boolean;
+  capture?: "user" | "environment";
+  onBusyChange?: (busy: boolean) => void;
+};
+
+export default function PhotoUpload({ onChange, value, defaultValue = "", label = "Foto dokumentasi", disabled = false, optional = true, capture = "environment", onBusyChange }: PhotoUploadProps) {
   const id = useId();
   const camera = useRef<HTMLInputElement>(null);
   const gallery = useRef<HTMLInputElement>(null);
-  const [preview, setPreview] = useState("");
+  const [localValue, setLocalValue] = useState(defaultValue);
+  const preview = value ?? localValue;
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  const generation = useRef(0);
+  const busyCallback = useRef(onBusyChange);
+  busyCallback.current = onBusyChange;
+  useEffect(() => () => { generation.current++; busyCallback.current?.(false); }, []);
+
+  function change(photo: string) { setLocalValue(photo); onChange(photo); }
   async function select(event: ChangeEvent<HTMLInputElement>) {
     const input = event.currentTarget;
     const file = input.files?.[0];
-    if (!file) return;
+    if (!file || disabled || busy) return;
+    const current = ++generation.current;
     setBusy(true); setError("");
+    busyCallback.current?.(true);
     input.setCustomValidity("Tunggu sampai foto selesai diproses sebelum menyimpan.");
     try {
       const photo = await preparePhoto(file);
-      setPreview(photo); onChange(photo);
+      if (current === generation.current) change(photo);
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Foto belum dapat dibaca.");
+      if (current === generation.current) setError(cause instanceof Error ? cause.message : "Foto belum dapat dibaca.");
     } finally {
-      input.setCustomValidity(""); input.value = ""; setBusy(false);
+      input.setCustomValidity(""); input.value = "";
+      if (current === generation.current) { setBusy(false); busyCallback.current?.(false); }
     }
   }
   return <div className={styles.upload} role="group" aria-labelledby={`${id}-label`} aria-busy={busy}>
-    <span id={`${id}-label`} className="form-label">{label} <small>(opsional)</small></span>
+    <span id={`${id}-label`} className="form-label">{label} {optional && <small>(opsional)</small>}</span>
     <div className={styles.buttons}>
-      <button type="button" className="btn btn-primary" disabled={busy} onClick={() => camera.current?.click()}><Camera size={20} /> Ambil foto</button>
-      <button type="button" className="btn btn-light" disabled={busy} onClick={() => gallery.current?.click()}><ImagePlus size={20} /> Pilih dari galeri</button>
+      <button type="button" className="btn btn-primary" disabled={busy || disabled} onClick={() => camera.current?.click()}><Camera size={20} /> Ambil foto</button>
+      <button type="button" className="btn btn-light" disabled={busy || disabled} onClick={() => gallery.current?.click()}><ImagePlus size={20} /> Pilih dari galeri</button>
     </div>
-    <input ref={camera} className="visually-hidden" type="file" accept="image/*" capture="environment" aria-label={`${label}: ambil foto`} onChange={(event) => void select(event)} />
-    <input ref={gallery} className="visually-hidden" type="file" accept="image/*" aria-label={`${label}: pilih dari galeri`} onChange={(event) => void select(event)} />
-    <small className="text-muted">Foto dari kamera akan diperkecil otomatis. Pilihan kamera mengikuti dukungan perangkat.</small>
+    <input ref={camera} className="visually-hidden" type="file" accept="image/*" capture={capture} disabled={disabled} aria-label={`${label}: ambil foto`} aria-describedby={`${id}-help`} onChange={(event) => void select(event)} />
+    <input ref={gallery} className="visually-hidden" type="file" accept="image/*" disabled={disabled} aria-label={`${label}: pilih dari galeri`} aria-describedby={`${id}-help`} onChange={(event) => void select(event)} />
+    <small id={`${id}-help`} className="text-muted">Foto besar disesuaikan otomatis hingga maksimal 1 MB. Foto yang sudah kecil dipertahankan bila sesuai. Foto sumber maksimal 25 MB.</small>
     {busy && <p role="status">Memproses foto…</p>}
     {error && <p role="alert" className="text-danger">{error}</p>}
-    {preview && <div className={styles.preview}><img src={preview} alt={`Pratinjau ${label.toLowerCase()}`} /><button type="button" className="btn btn-light" disabled={busy} onClick={() => { setPreview(""); onChange(""); setError(""); }}><X size={18} /> Hapus foto</button></div>}
+    {preview && <div className={styles.preview}><ImagePreview src={preview} alt={label} /><button type="button" className="btn btn-light" disabled={busy || disabled} onClick={() => { change(""); setError(""); }}><X size={18} /> Hapus foto</button></div>}
   </div>;
 }

@@ -339,14 +339,27 @@ function requiredText(value: unknown, name: string): string {
 function photo(value: unknown): string {
   if (value === undefined || value === "") return "";
   assert(
-    typeof value === "string" && value.length <= 1800000,
+    typeof value === "string" && value.length <= 1398130,
     "Foto maksimal 1 MB.",
   );
-  assert(
-    /^data:image\/(jpeg|png|webp);base64,[A-Za-z0-9+/=]+$/.test(value) ||
-      /^https:\/\//.test(value),
-    "Foto harus berupa JPEG, PNG, WebP, atau URL HTTPS.",
-  );
+  const match =
+    /^data:image\/(jpeg|png|webp);base64,([A-Za-z0-9+/]+={0,2})$/.exec(value);
+  assert(match, "Foto harus berupa gambar JPEG, PNG, atau WebP.");
+  let bytes: string;
+  try {
+    bytes = atob(match[2]);
+  } catch {
+    throw new Error("Data foto tidak valid.");
+  }
+  assert(btoa(bytes) === match[2], "Data foto tidak valid.");
+  assert(bytes.length <= 1048576, "Foto maksimal 1 MB setelah dikompres.");
+  const valid =
+    match[1] === "jpeg"
+      ? bytes.startsWith("\xff\xd8\xff")
+      : match[1] === "png"
+        ? bytes.startsWith("\x89PNG\r\n\x1a\n")
+        : bytes.startsWith("RIFF") && bytes.slice(8, 12) === "WEBP";
+  assert(valid, "Isi foto tidak sesuai dengan format JPEG, PNG, atau WebP.");
   return value;
 }
 function category(value: unknown): Category {
@@ -810,6 +823,30 @@ export function executeCommand(
           read: false,
           created_at: stamp,
         });
+      break;
+    }
+    case "profile.update": {
+      assert(
+        Object.keys(payload).every((key) => key === "name" || key === "photo"),
+        "Profil hanya dapat mengubah nama dan foto.",
+      );
+      assert(
+        typeof payload.name === "string" &&
+          payload.name.trim().length > 0 &&
+          Array.from(payload.name.trim()).length <= 120,
+        "Nama wajib diisi dan maksimal 120 karakter.",
+      );
+      const profile = state.users.find((u) => u.id === user.id)!;
+      const before = profile.name;
+      profile.name = payload.name.trim();
+      if (Object.hasOwn(payload, "photo")) profile.photo = photo(payload.photo);
+      detail = {
+        before: { name: before },
+        after: {
+          name: profile.name,
+          photo_changed: Object.hasOwn(payload, "photo"),
+        },
+      };
       break;
     }
     case "user.create": {

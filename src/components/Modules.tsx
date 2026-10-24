@@ -48,6 +48,7 @@ import type {
   User,
 } from "@/lib/types";
 import EntryModal from "./EntryModal";
+import ImagePreview from "./ImagePreview";
 import {
   businessDate,
   categoryLabel,
@@ -150,7 +151,7 @@ function TableEnd({
       <span>
         Menampilkan <strong>{number(count)}</strong> {label}
       </span>
-      <small>Semua perubahan tersimpan otomatis</small>
+      <small>Data yang ditampilkan sudah tersimpan</small>
     </div>
   );
 }
@@ -354,7 +355,7 @@ function ProductionPage({ open }: { open: OpenForm }) {
           {
             label: "Total produksi",
             value: `${number(rows.reduce((s, p) => s + p.kg, 0))} kg`,
-            note: `${number(rows.reduce((s, p) => s + p.eggs, 0))} butir · sesuai filter`,
+            note: `${number(rows.reduce((s, p) => s + p.eggs, 0))} butir · sesuai pilihan`,
             icon: <Egg size={22} />,
           },
           {
@@ -500,8 +501,8 @@ function ProductionPage({ open }: { open: OpenForm }) {
             </div>
             {opened.notes && <p className="text-muted mt-3">{opened.notes}</p>}
             {opened.photo && (
-              <img
-                className="photo-preview mt-3"
+              <ImagePreview
+                className="mt-3"
                 src={opened.photo}
                 alt="Dokumentasi panen"
               />
@@ -548,7 +549,7 @@ function SalesPage({ open }: { open: OpenForm }) {
           {
             label: "Omzet penjualan",
             value: money(rows.reduce((s, x) => s + x.total, 0)),
-            note: `${rows.length} transaksi · sesuai filter`,
+            note: `${rows.length} transaksi · sesuai pilihan`,
             icon: <ShoppingBag size={22} />,
           },
           {
@@ -695,7 +696,7 @@ function SalesPage({ open }: { open: OpenForm }) {
         ) : (
           <Empty
             title="Belum ada transaksi yang sesuai"
-            description="Catat penjualan pertama atau ubah filter pencarian Anda."
+            description="Catat penjualan pertama atau ubah pilihan pencarian."
           />
         )}
         <TableEnd count={rows.length} label="transaksi" />
@@ -1015,9 +1016,9 @@ function StockPage({ open }: { open: OpenForm }) {
             <p className="small text-muted px-4">
               {state.stock_movements
                 ? user?.role === "admin"
-                  ? "Riwayat setiap produksi, pengambilan, retur, dan koreksi stok."
+                  ? "Riwayat panen, pengambilan, pengembalian, dan koreksi stok."
                   : "Riwayat pergerakan stok dari pencatatan Anda."
-                : "Retur ditampilkan sebagai akumulasi per pengambilan dan tidak disertakan saat filter tanggal digunakan."}
+                : "Pengembalian dijumlahkan untuk setiap pengambilan. Data ini tidak ditampilkan saat Anda memilih rentang tanggal."}
             </p>
           </>
         ) : (
@@ -1660,7 +1661,7 @@ function EmployeesPage({ open }: { open: OpenForm }) {
             <h2>Tim TernaKu</h2>
             <p>Diurutkan berdasarkan omzet tertinggi bulan ini.</p>
           </div>
-          <Pill>Insentif · Coming Soon</Pill>
+          <Pill>Insentif · Segera hadir</Pill>
         </div>
         <div className="module-toolbar">
           <div className="search-input">
@@ -1894,6 +1895,7 @@ const actionLabels: Record<string, string> = {
   "price.create": "Harga diperbarui",
   "user.create": "Akun dibuat",
   "user.update": "Akun diperbarui",
+  "profile.update": "Profil diperbarui",
   "user.register": "Akun didaftarkan",
   "user.approve": "Pendaftaran disetujui",
   "user.reject": "Pendaftaran ditolak",
@@ -2198,8 +2200,8 @@ export function Modules({ page }: { page: string }) {
         <CorrectionsPage />
       ) : (
         <Empty
-          title="Coming Soon"
-          description="Modul ini sedang dipersiapkan untuk pembaruan berikutnya."
+          title="Segera hadir"
+          description="Fitur ini sedang disiapkan untuk pembaruan berikutnya."
         />
       )}
       <EntryModal

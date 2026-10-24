@@ -22,7 +22,11 @@ class FarmService {
         $data=$this->query("SELECT data FROM records WHERE kind='registration' AND user_id=? LIMIT 1",[$userId])->fetchColumn();
         return $data?json_decode($data,true,512,JSON_THROW_ON_ERROR):null;
     }
-    private function publicUser(array $u): array { return ['id'=>$u['id'],'name'=>$u['name'],'email'=>$u['email'],'role'=>$u['role'],'active'=>(bool)$u['active'],'target'=>(float)$u['target'],'registration_status'=>$this->registrationRecord($u['id'])['status']??'approved']; }
+    private function publicUser(array $u): array {
+        $profile=$this->query("SELECT data FROM records WHERE kind='user_profile' AND user_id=? LIMIT 1",[$u['id']])->fetchColumn();
+        $photo=$profile ? (json_decode($profile,true,512,JSON_THROW_ON_ERROR)['photo']??'') : '';
+        return ['id'=>$u['id'],'name'=>$u['name'],'email'=>$u['email'],'role'=>$u['role'],'active'=>(bool)$u['active'],'target'=>(float)$u['target'],'registration_status'=>$this->registrationRecord($u['id'])['status']??'approved','photo'=>$photo];
+    }
     private function text(array $p, string $key, int $max = 2000, bool $required = false): string {
         $v = $p[$key] ?? '';
         if (!is_string($v)) throw new ApiProblem("Kolom $key harus berupa teks.");
@@ -46,9 +50,14 @@ class FarmService {
     }
     private function quantity(array $p): array { return ['eggs'=>(int)$this->number($p,'eggs',1,true,100000000),'kg'=>$this->number($p,'kg',0.001,false,1000000),'trays'=>(int)$this->number($p+['trays'=>0],'trays',0,true,1000000)]; }
     private function photo(array $p): string {
-        $photo = $this->text($p,'photo',1800000);
-        if ($photo !== '' && !preg_match('~^data:image/(?:jpeg|png|webp);base64,[A-Za-z0-9+/=]+$~D',$photo) && !filter_var($photo,FILTER_VALIDATE_URL)) throw new ApiProblem('Foto harus berupa URL HTTPS atau gambar JPEG, PNG, atau WebP.');
-        if ($photo !== '' && strpos($photo,'data:') !== 0 && strpos($photo,'https://') !== 0) throw new ApiProblem('URL foto harus menggunakan HTTPS.');
+        $photo = $this->text($p,'photo',1398130);
+        if ($photo==='') return '';
+        if (!preg_match('~^data:(image/(?:jpeg|png|webp));base64,([A-Za-z0-9+/]+={0,2})$~D',$photo,$match)) throw new ApiProblem('Foto harus berupa gambar JPEG, PNG, atau WebP.');
+        $bytes=base64_decode($match[2],true);
+        if ($bytes===false || base64_encode($bytes)!==$match[2]) throw new ApiProblem('Data foto tidak valid.');
+        if (strlen($bytes)>1048576) throw new ApiProblem('Foto maksimal 1 MB setelah dikompres.');
+        $image=@getimagesizefromstring($bytes);
+        if (!$image || ($image['mime']??'')!==$match[1]) throw new ApiProblem('Isi foto tidak sesuai dengan format JPEG, PNG, atau WebP.');
         return $photo;
     }
     private function admin(): void { if (($this->actor['role'] ?? '') !== 'admin') throw new ApiProblem('Akses ini hanya untuk admin.',403); }
@@ -84,8 +93,11 @@ class FarmService {
     }
     public function authenticate(string $token): array {
         if (!preg_match('/^[a-f0-9]{64}$/D',$token)) throw new ApiProblem('Silakan masuk terlebih dahulu.',401);
-        $u=$this->query('SELECT u.* FROM users u JOIN tokens t ON t.user_id=u.id WHERE t.token_hash=? AND t.expires_at>NOW() AND u.active=1',[hash('sha256',$token)])->fetch(PDO::FETCH_ASSOC);
+        $hash=hash('sha256',$token);
+        $u=$this->query('SELECT u.* FROM users u JOIN tokens t ON t.user_id=u.id WHERE t.token_hash=? AND t.expires_at>NOW() AND t.created_at>DATE_SUB(NOW(),INTERVAL 90 DAY) AND u.active=1',[$hash])->fetch(PDO::FETCH_ASSOC);
         if (!$u || ($this->registrationRecord($u['id'])['status']??'approved')!=='approved') throw new ApiProblem('Sesi berakhir atau akun belum disetujui/nonaktif. Silakan masuk kembali.',401);
+        // Activity renews the idle window, but never beyond 90 days from login.
+        $this->query('UPDATE tokens SET expires_at=LEAST(DATE_ADD(NOW(),INTERVAL 30 DAY),DATE_ADD(created_at,INTERVAL 90 DAY)) WHERE token_hash=? AND expires_at>NOW() AND created_at>DATE_SUB(NOW(),INTERVAL 90 DAY)',[$hash]);
         return $this->actor=$this->publicUser($u);
     }
     private function setupToken(): string {
@@ -203,9 +215,9 @@ class FarmService {
                 throw new ApiProblem('Email atau kata sandi salah, atau akun tidak aktif.',401);
             }
             $this->query('DELETE FROM login_attempts WHERE attempt_key=?',[$key]);
-            $this->query('DELETE FROM tokens WHERE expires_at<=NOW()');
-            $token=bin2hex(random_bytes(32)); $ttl=max(1,min(168,(int)(getenv('TOKEN_TTL_HOURS') ?: 12)));
-            $this->query('INSERT INTO tokens(token_hash,user_id,expires_at) VALUES(?,?,?)',[hash('sha256',$token),$u['id'],date('Y-m-d H:i:s',time()+$ttl*3600)]);
+            $this->query('DELETE FROM tokens WHERE expires_at<=NOW() OR created_at<=DATE_SUB(NOW(),INTERVAL 90 DAY)');
+            $token=bin2hex(random_bytes(32));
+            $this->query('INSERT INTO tokens(token_hash,user_id,expires_at) VALUES(?,?,DATE_ADD(NOW(),INTERVAL 30 DAY))',[hash('sha256',$token),$u['id']]);
             $this->actor=$this->publicUser($u); $this->audit('auth.login','Masuk ke aplikasi');
             $this->db->commit(); return ['token'=>$token,'user'=>$this->actor];
         });
@@ -361,6 +373,7 @@ class FarmService {
                 (new PushService($this->db))->enqueuePrice($r);
                 $this->audit($action,'Menetapkan harga telur',null,$r); break;
             case 'user.create': $this->createUser($p); break;
+            case 'profile.update': $this->updateProfile($p); break;
             case 'user.update': $this->updateUser($p); break;
             case 'user.approve': $this->reviewRegistration($p,true); break;
             case 'user.reject': $this->reviewRegistration($p,false); break;
@@ -432,6 +445,19 @@ class FarmService {
         $id=$this->id('user'); $name=$this->text($p,'name',120,true); $role=$this->enum($p,'role',['admin','employee']); $target=$this->number($p+['target'=>0],'target',0,true);
         $this->query('INSERT INTO users(id,name,email,password_hash,role,target) VALUES(?,?,?,?,?,?)',[$id,$name,$email,password_hash($password,PASSWORD_DEFAULT),$role,$target]);
         $this->audit('user.create','Membuat akun karyawan',null,['id'=>$id,'name'=>$name,'email'=>$email,'role'=>$role,'target'=>$target]);
+    }
+    private function updateProfile(array $p): void {
+        if (array_diff(array_keys($p),['name','photo'])) throw new ApiProblem('Profil hanya dapat mengubah nama dan foto.');
+        $name=$this->text($p,'name',120,true);
+        $id=$this->actor['id'];
+        $before=$this->query('SELECT name FROM users WHERE id=?',[$id])->fetchColumn();
+        $this->query('UPDATE users SET name=? WHERE id=?',[$name,$id]);
+        if (array_key_exists('photo',$p)) {
+            $photo=$this->photo($p);
+            $profileId='profile_'.substr(hash('sha256',$id),0,32);
+            $this->query("INSERT INTO records(id,kind,user_id,occurred_at,data) VALUES(?,'user_profile',?,NOW(),?) ON DUPLICATE KEY UPDATE data=VALUES(data)",[$profileId,$id,$this->json(['photo'=>$photo])]);
+        }
+        $this->audit('profile.update','Memperbarui profil sendiri',['name'=>$before],['name'=>$name,'photo_changed'=>array_key_exists('photo',$p)]);
     }
     private function updateUser(array $p): void {
         if(array_diff(array_keys($p),['id','name','target','active'])) throw new ApiProblem('Kolom perubahan akun tidak didukung.');

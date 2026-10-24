@@ -97,6 +97,7 @@ function ProductionForm({ onSave, busy, onClose }: FormProps) {
   const [eggs, setEggs] = useState("");
   const [trays, setTrays] = useState("");
   const [photo, setPhoto] = useState("");
+  const [photoBusy, setPhotoBusy] = useState(false);
   const [location, setLocation] = useState("");
   const [locating, setLocating] = useState(false);
   const [locationError, setLocationError] = useState("");
@@ -107,9 +108,11 @@ function ProductionForm({ onSave, busy, onClose }: FormProps) {
     <FormShell
       busy={busy}
       onClose={onClose}
-      label="Simpan produksi"
+      label={photoBusy ? "Memproses foto…" : "Simpan produksi"}
+      disabled={photoBusy}
       onSubmit={(e) => {
         e.preventDefault();
+        if (photoBusy) return;
         const data = dataFrom(e.currentTarget);
         void onSave("production.create", {
           ...data,
@@ -163,7 +166,7 @@ function ProductionForm({ onSave, busy, onClose }: FormProps) {
             required
           />
         </Field>
-        <Field className="col-sm-4" label="Berat aktual (kg)">
+        <Field className="col-sm-4" label="Berat hasil timbangan (kg)">
           <input
             className="form-control"
             type="number"
@@ -191,22 +194,22 @@ function ProductionForm({ onSave, busy, onClose }: FormProps) {
       <div className="info-note mt-3">
         <Info size={17} />
         <span>
-          Estimasi {number(estimate)} kg dari {Number(trays) || 0} krat. Berat
-          aktual tetap menjadi dasar stok dan penjualan.
+          Perkiraan {number(estimate)} kg untuk {Number(trays) || 0} krat.
+          Gunakan berat hasil timbangan untuk menghitung stok dan penjualan.
         </span>
       </div>
       {difference && Number(kg) > 0 && (
         <div className="alert alert-warning mt-3 d-flex gap-2">
           <AlertTriangle size={18} />
           <small>
-            Berat aktual berbeda lebih dari 30% dari estimasi. Periksa kembali;
-            data tetap dapat disimpan.
+            Berat ini berbeda lebih dari 30% dari perkiraan. Periksa lagi hasil
+            timbangan. Jika sudah benar, data tetap bisa disimpan.
           </small>
         </div>
       )}
       <div className="form-summary mt-3">
         <Egg size={21} />
-        <span>Total pencatatan</span>
+        <span>Total telur</span>
         <strong>
           {number(Number(eggs))} butir · {number(Number(kg))} kg
         </strong>
@@ -220,7 +223,7 @@ function ProductionForm({ onSave, busy, onClose }: FormProps) {
           maxLength={2000}
         />
       </Field>
-      <Photo onChange={setPhoto} />
+      <Photo value={photo} onChange={setPhoto} onBusyChange={setPhotoBusy} disabled={busy} />
       <div className="mt-3">
         <button
           type="button"
@@ -329,7 +332,7 @@ function PickupForm({ onSave, busy, onClose }: FormProps) {
             required
           />
         </Field>
-        <Field className="col-sm-4" label="Berat aktual (kg)">
+        <Field className="col-sm-4" label="Berat hasil timbangan (kg)">
           <input
             name="kg"
             type="number"
@@ -402,6 +405,7 @@ function SaleForm({ onSave, busy, onClose }: FormProps) {
   const [isFull, setIsFull] = useState(true);
   const [paid, setPaid] = useState("");
   const [photo, setPhoto] = useState("");
+  const [photoBusy, setPhotoBusy] = useState(false);
   const linePrice = (line: SaleLine) => {
     const pickup = state.pickups.find((p) => p.id === line.pickup_id);
     if (
@@ -451,11 +455,12 @@ function SaleForm({ onSave, busy, onClose }: FormProps) {
   return (
     <FormShell
       busy={busy}
-      disabled={!price}
+      disabled={!price || photoBusy}
       onClose={onClose}
-      label="Simpan penjualan"
+      label={photoBusy ? "Memproses foto…" : "Simpan penjualan"}
       onSubmit={(e) => {
         e.preventDefault();
+        if (photoBusy) return;
         const data = dataFrom(e.currentTarget);
         void onSave("sale.create", {
           ...data,
@@ -650,8 +655,8 @@ function SaleForm({ onSave, busy, onClose }: FormProps) {
         <div className="info-note">
           <Info size={16} />
           <span>
-            Harga aktif ditetapkan atasan. Harga final tersimpan otomatis saat
-            transaksi dibuat dan tidak berubah mengikuti harga berikutnya.
+            Harga mengikuti ketetapan atasan saat penjualan disimpan.
+            Perubahan harga berikutnya tidak mengubah penjualan ini.
           </span>
         </div>
         {!price && (
@@ -733,7 +738,7 @@ function SaleForm({ onSave, busy, onClose }: FormProps) {
           maxLength={2000}
         />
       </Field>
-      <Photo label="Bukti pembayaran" onChange={setPhoto} />
+      <Photo label="Bukti pembayaran" value={photo} onChange={setPhoto} onBusyChange={setPhotoBusy} disabled={busy} />
     </FormShell>
   );
 }
@@ -1264,7 +1269,7 @@ const config: Record<
   { title: string; subtitle: string; form: (props: FormProps) => ReactNode }
 > = {
   production: {
-    title: "Catat produksi telur",
+    title: "Catat panen telur",
     subtitle: "Panen hari ini, tercatat dengan rapi.",
     form: ProductionForm,
   },
@@ -1285,7 +1290,7 @@ const config: Record<
   },
   user: {
     title: "Tambah karyawan",
-    subtitle: "Buat akses untuk anggota tim Anda.",
+    subtitle: "Buat akun untuk karyawan baru.",
     form: UserForm,
   },
   barn: {
@@ -1295,7 +1300,7 @@ const config: Record<
   },
   "feed.create": {
     title: "Jenis pakan baru",
-    subtitle: "Kelola katalog persediaan pakan ternak.",
+    subtitle: "Tambahkan jenis pakan yang digunakan.",
     form: FeedCreateForm,
   },
   "feed.purchase": {
@@ -1390,14 +1395,14 @@ export function EntryModal({
     setUnconfirmed(null);
   };
   const close = () => {
-    if (busy) return;
+    if (busy) return false;
     if (
       unconfirmed &&
       !window.confirm(
         "Penjualan belum dipastikan tersimpan. Data percobaan tetap disimpan di perangkat ini. Periksa riwayat, lalu buka Jual untuk mencoba data yang sama. Tutup sekarang?",
       )
     )
-      return;
+      return false;
     setError("");
     onClose();
   };
@@ -1517,7 +1522,7 @@ export function EntryModal({
           className="alert alert-warning m-3"
           role="alert"
         >
-          <strong>Belum ada kepastian penjualan tersimpan</strong>
+          <strong>Penjualan belum dipastikan tersimpan</strong>
           <p className="mt-2 mb-2">
             Coba lagi dengan data yang sama. Jumlah dan harga yang sudah dikirim
             tetap dipertahankan agar tidak tercatat dua kali.

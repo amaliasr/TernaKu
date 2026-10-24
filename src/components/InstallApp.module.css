@@ -21,7 +21,7 @@
 .install span {
   flex: 1;
   text-align: left;
-  font-size: 14px;
+  font-size: calc(14px * var(--font-scale, 1));
   font-weight: 600;
 }
 .install:hover {
@@ -37,12 +37,12 @@
 }
 .help {
   padding: 20px 24px 24px;
-  font-size: 16px;
+  font-size: calc(16px * var(--font-scale, 1));
   line-height: 1.8;
   color: #3a4f41;
 }
 .help h3 {
-  font-size: 18px;
+  font-size: calc(18px * var(--font-scale, 1));
   font-weight: 600;
 }
 .help ol {
@@ -61,11 +61,11 @@
 }
 .help button {
   min-height: 48px;
-  font-size: 16px;
+  font-size: calc(16px * var(--font-scale, 1));
 }
 .note,
 .message {
-  font-size: 13px;
+  font-size: calc(13px * var(--font-scale, 1));
   line-height: 1.7;
   color: #62715f;
 }

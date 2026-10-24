@@ -44,6 +44,9 @@ import EmployeeWorkspace from "./EmployeeWorkspace";
 import ThemeToggle from "./ThemeToggle";
 import InstallApp from "./InstallApp";
 import PushNotifications from "./PushNotifications";
+import ProfileSettings from "./ProfileSettings";
+import Avatar from "./Avatar";
+import { useBackLayer, usePageNavigation } from "@/lib/navigation";
 
 const navigation = [
   {
@@ -151,6 +154,7 @@ function Login() {
       setup_token: "",
     }));
   }
+  useBackLayer(screen === "register", backToLogin);
   async function signUp(event: React.FormEvent) {
     event.preventDefault();
     if (!status || statusBusy || busy) return;
@@ -219,13 +223,13 @@ function Login() {
         <div>
           <span className="eyebrow">SAHABAT USAHA PETERNAKAN ANDA</span>
           <h1>
-            Usaha terawat.
+            Catatan peternakan,
             <br />
-            Hasil meningkat.
+            lebih mudah.
           </h1>
           <p>
-            Dari telur pertama pagi ini, sampai penjualan terakhir hari ini.
-            Semuanya tercatat di TernaKu.
+            Catat panen, penjualan, dan pakan dalam satu tempat. Bisa langsung
+            dari HP.
           </p>
           <FarmArt />
         </div>
@@ -655,34 +659,45 @@ export function FarmArt() {
 }
 
 function Workspace() {
-  const { state, user, mode, loading, error, logout, command, refresh } =
-    useFarm();
+  const {
+    state,
+    user,
+    mode,
+    loading,
+    sessionRecovery,
+    priceSync,
+    error,
+    logout,
+    command,
+    refresh,
+  } = useFarm();
   const [bootstrapped, setBootstrapped] = useState(false);
-  const [page, setPage] = useState("dashboard");
+  const [page, navigate] = usePageNavigation(
+    navigation.map((item) => item.id),
+    "dashboard",
+    "",
+    user?.role === "admin",
+  );
+  const [profileOpen, setProfileOpen] = useState(false);
   const [mobile, setMobile] = useState(false);
   const [search, setSearch] = useState("");
   const [modal, setModal] = useState<string | null>(null);
   const [notifications, setNotifications] = useState(false);
   const [help, setHelp] = useState(false);
   const [notice, setNotice] = useState("");
+  useBackLayer(mobile && user?.role === "admin", () => setMobile(false));
+  useBackLayer(help && user?.role === "admin", () => setHelp(false));
+  useBackLayer(notifications && user?.role === "admin", () =>
+    setNotifications(false),
+  );
   const go = (id: string) => {
-    setPage(id);
-    window.location.hash = id;
+    navigate(id);
     setMobile(false);
     setSearch("");
   };
   useEffect(() => {
     if (!loading) setBootstrapped(true);
   }, [loading]);
-  useEffect(() => {
-    const read = () => {
-      const id = window.location.hash.slice(1);
-      if (navigation.some((n) => n.id === id)) setPage(id);
-    };
-    read();
-    window.addEventListener("hashchange", read);
-    return () => window.removeEventListener("hashchange", read);
-  }, []);
   useEffect(() => {
     if (!notice) return;
     const timer = setTimeout(() => setNotice(""), 5000);
@@ -695,6 +710,30 @@ function Workspace() {
         <strong>Menyiapkan TernaKu…</strong>
       </div>
     );
+  if (!user && sessionRecovery)
+    return (
+      <div className="app-loading session-recovery" role="status">
+        <Sprout size={36} />
+        <strong>Sambungkan kembali ke TernaKu</strong>
+        <p>
+          Akun Anda masih tersimpan. Periksa koneksi internet, lalu coba lagi.
+        </p>
+        <button
+          className="btn btn-primary"
+          disabled={priceSync.refreshing}
+          onClick={() => void refresh().catch(() => {})}
+        >
+          {priceSync.refreshing ? "Menyambungkan…" : "Coba lagi"}
+        </button>
+        <button
+          className="btn btn-link"
+          disabled={loading}
+          onClick={() => void logout()}
+        >
+          Masuk dengan akun lain
+        </button>
+      </div>
+    );
   if (!user || !state) return <Login />;
   if (user.role === "employee") return <EmployeeWorkspace />;
   const menu = navigation.filter((n) => !n.admin || user.role === "admin");
@@ -704,7 +743,6 @@ function Workspace() {
   );
   const price = activePrice(state);
   const isAdmin = user.role === "admin";
-  const firstName = user.name.split(" ")[0];
   return (
     <div className="app-shell">
       {mobile && (
@@ -717,7 +755,10 @@ function Workspace() {
       <aside className={`sidebar ${mobile ? "is-open" : ""}`}>
         <a
           href="#dashboard"
-          onClick={() => go("dashboard")}
+          onClick={(event) => {
+            event.preventDefault();
+            go("dashboard");
+          }}
           className="brand-link"
           aria-label="TernaKu beranda"
         >
@@ -744,7 +785,7 @@ function Workspace() {
                 <n.icon size={19} />
                 <span>{n.label}</span>
                 {n.soon ? (
-                  <span className="soon-badge">SOON</span>
+                  <span className="soon-badge">SEGERA</span>
                 ) : current.id === n.id ? (
                   <span className="nav-dot" />
                 ) : null}
@@ -764,21 +805,18 @@ function Workspace() {
           </div>
           <button
             className="user-switch"
-            onClick={logout}
-            title="Keluar dari akun"
+            onClick={() => {
+              setMobile(false);
+              setProfileOpen(true);
+            }}
+            title="Buka profil dan pengaturan"
           >
-            <span className="avatar">
-              {user.name
-                .split(" ")
-                .map((s) => s[0])
-                .slice(0, 2)
-                .join("")}
-            </span>
+            <Avatar user={user} />
             <span>
               <strong>{user.name}</strong>
               <small>{isAdmin ? "Administrator" : "Karyawan"}</small>
             </span>
-            <LogOut size={17} />
+            <Settings2 size={17} />
           </button>
         </div>
       </aside>
@@ -893,7 +931,13 @@ function Workspace() {
                 </section>
               )}
             </div>
-            <span className="avatar avatar-sm">{firstName[0]}</span>
+            <button
+              className="icon-button"
+              aria-label="Profil dan pengaturan"
+              onClick={() => setProfileOpen(true)}
+            >
+              <Avatar user={user} size="sm" />
+            </button>
           </div>
         </header>
         <main className="main-content" id="main-content">
@@ -909,7 +953,10 @@ function Workspace() {
             </div>
           )}
           {current.id === "dashboard" ? (
-            <><Dashboard go={go} open={setModal} /><PushNotifications /></>
+            <>
+              <Dashboard go={go} open={setModal} />
+              <PushNotifications />
+            </>
           ) : current.id === "reports" ? (
             <Reports />
           ) : ["cattle", "incentives"].includes(current.id) ? (
@@ -931,7 +978,7 @@ function Workspace() {
                   ? "Manajemen kandang sapi akan hadir untuk melengkapi pengelolaan peternakan Anda."
                   : "Fitur insentif karyawan sedang disiapkan. Untuk saat ini, Anda dapat memantau hasil penjualan melalui laporan."}
               </p>
-              <span className="status-pill neutral">Coming Soon</span>
+              <span className="status-pill neutral">Segera hadir</span>
               <button
                 className="btn btn-primary mt-4"
                 onClick={() => go("dashboard")}
@@ -952,12 +999,13 @@ function Workspace() {
               <span className="live-dot" />
               {mode === "demo"
                 ? "Data contoh · tersimpan di browser"
-                : "Data tersinkronisasi dengan API"}
+                : "Data tersimpan online"}
             </span>
           </footer>
         </main>
       </div>
       {modal && <EntryModal kind={modal} onClose={() => setModal(null)} />}{" "}
+      {profileOpen && <ProfileSettings onClose={() => setProfileOpen(false)} />}
       {notice && (
         <div className="app-toast" role="status">
           <Check size={18} />
@@ -1027,7 +1075,12 @@ function Workspace() {
               <div className="notice-box">
                 Harga aktif: bagus{" "}
                 {price ? money(price.good_price) : "belum diatur"}/kg · bentes{" "}
-                {price ? price.cracked_price === 0 ? "Gratis" : `${money(price.cracked_price)}/kg` : "belum diatur"}.
+                {price
+                  ? price.cracked_price === 0
+                    ? "Gratis"
+                    : `${money(price.cracked_price)}/kg`
+                  : "belum diatur"}
+                .
               </div>
               {mode === "demo" && (
                 <p className="small text-muted mt-3">
@@ -1052,10 +1105,15 @@ function Workspace() {
     </div>
   );
 }
+function AccountWorkspace() {
+  const { user } = useFarm();
+  return <Workspace key={user ? `${user.id}:${user.role}` : "signed-out"} />;
+}
+
 export default function App() {
   return (
     <FarmProvider>
-      <Workspace />
+      <AccountWorkspace />
     </FarmProvider>
   );
 }

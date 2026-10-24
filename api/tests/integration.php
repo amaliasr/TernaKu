@@ -6,6 +6,8 @@ $dbName=getenv('DB_NAME') ?: '';
 if(getenv('ALLOW_TEST_RESET')!=='1' || !preg_match('/^[a-zA-Z0-9_]+_test$/D',$dbName)) { fwrite(STDERR,"Use dedicated DB_NAME ending _test and ALLOW_TEST_RESET=1. Never run against production.\n"); exit(1); }
 $base=getenv('TEST_API_URL') ?: 'http://127.0.0.1:8081';
 $db=new PDO('mysql:host='.(getenv('DB_HOST')?:'127.0.0.1').';port='.(getenv('DB_PORT')?:'3306').';dbname='.$dbName.';charset=utf8mb4',getenv('DB_USER'),getenv('DB_PASSWORD'),[PDO::ATTR_ERRMODE=>PDO::ERRMODE_EXCEPTION]);
+// DATETIME fixtures and NOW() assertions must use the same session timezone as FarmService, even on UTC CI hosts.
+$db->exec("SET time_zone = '+07:00'");
 function resetTestDatabase(bool $schema=true): void {
     global $db;
     $db->exec('SET FOREIGN_KEY_CHECKS=0'); foreach(['records','tokens','login_attempts','command_requests','users','stock','command_mutex'] as $table) $db->exec('DROP TABLE IF EXISTS '.$table); $db->exec('SET FOREIGN_KEY_CHECKS=1');
@@ -108,11 +110,37 @@ try {
     req('/auth/login',['email'=>'admin@test.local','password'=>'wrong'], '', 'POST',401);
     $admin=req('/auth/login',['email'=>'admin@test.local','password'=>'SecureTestPassword42']); $a=$admin['token']; check(strlen($a)===64,'secure login token');
     check($db->query('SELECT token_hash FROM tokens')->fetchColumn()!==$a,'only token hash stored');
+    $days=(int)$db->query('SELECT TIMESTAMPDIFF(HOUR,NOW(),expires_at) FROM tokens')->fetchColumn(); check($days>=719 && $days<=720,'new login persists for thirty days');
+    $expiryToken=req('/auth/login',['email'=>'admin@test.local','password'=>'SecureTestPassword42'])['token']; $expiryHash=hash('sha256',$expiryToken);
+    $expiry=$db->prepare('UPDATE tokens SET created_at=DATE_SUB(NOW(),INTERVAL ? DAY),expires_at=DATE_ADD(NOW(),INTERVAL 1 HOUR) WHERE token_hash=?');
+    $expiry->execute([20,$expiryHash]); req('/bootstrap',[],$expiryToken,'GET');
+    $expiryHours=$db->prepare('SELECT TIMESTAMPDIFF(HOUR,NOW(),expires_at) FROM tokens WHERE token_hash=?'); $expiryHours->execute([$expiryHash]); check((int)$expiryHours->fetchColumn()>=719,'authenticated activity extends the idle window to thirty days');
+    $expiry->execute([89,$expiryHash]); req('/bootstrap',[],$expiryToken,'GET'); $expiryHours->execute([$expiryHash]); $hours=(int)$expiryHours->fetchColumn(); check($hours>=23 && $hours<=24,'sliding expiry never exceeds ninety days from login');
+    $expiry->execute([91,$expiryHash]); req('/bootstrap',[],$expiryToken,'GET',401); check(true,'absolute session cap rejects even a future expires_at');
+    $db->prepare('UPDATE tokens SET created_at=NOW(),expires_at=DATE_SUB(NOW(),INTERVAL 1 SECOND) WHERE token_hash=?')->execute([$expiryHash]); req('/bootstrap',[],$expiryToken,'GET',401); check(true,'expired idle session cannot be renewed');
     req('/health',[],'','POST',405); check(true,'HTTP method validation');
     $s=cmd('user.create',['name'=>'Sari','email'=>'sari@test.local','password'=>'PasswordSari42','role'=>'employee','target'=>5000000],$a);
     $sari=first($s,'users',fn($u)=>$u['email']==='sari@test.local');
     cmd('user.create',['name'=>'Budi','email'=>'budi@test.local','password'=>'PasswordBudi42','role'=>'employee','target'=>1000000],$a);
     $e=req('/auth/login',['email'=>'sari@test.local','password'=>'PasswordSari42'])['token']; $other=req('/auth/login',['email'=>'budi@test.local','password'=>'PasswordBudi42'])['token'];
+    $profilePhoto='data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aC9sAAAAASUVORK5CYII=';
+    $s=cmd('profile.update',['name'=>'Sari Profil','photo'=>$profilePhoto],$e); $profile=first($s,'users',fn($u)=>$u['id']===$sari['id']);
+    check($profile['name']==='Sari Profil' && $profile['photo']===$profilePhoto && $profile['role']==='employee','employee can update own name and photo without changing role');
+    $s=cmd('profile.update',['name'=>'Sari'],$e); check($s['users'][0]['photo']===$profilePhoto,'name-only profile update retains photo');
+    $s=cmd('profile.update',['name'=>'Admin Test','photo'=>$profilePhoto],$a); check(first($s,'users',fn($u)=>$u['id']==='admin_test')['photo']===$profilePhoto,'admin can update own profile');
+    foreach(['id','role','active','email','password','target','registration_status'] as $field) cmd('profile.update',['name'=>'Sari',$field=>'admin'],$e,422); check(true,'profile rejects all identity and privilege changes');
+    foreach(['',str_repeat('a',121)] as $name) cmd('profile.update',['name'=>$name],$e,422); check(true,'profile name is required and bounded');
+    foreach(['data:image/png;base64,aGVsbG8=',str_replace('image/png','image/jpeg',$profilePhoto),'https://example.com/photo.png','data:image/svg+xml;base64,PHN2Zz4='] as $photo) cmd('profile.update',['name'=>'Sari','photo'=>$photo],$e,422); check(true,'new photos validate actual image format and prohibit external URLs');
+    $png=base64_decode(explode(',',$profilePhoto,2)[1]);
+    $atLimit='data:image/png;base64,'.base64_encode(str_pad($png,1048576,"\0"));
+    $s=cmd('profile.update',['name'=>'Sari','photo'=>$atLimit],$e); check($s['users'][0]['photo']===$atLimit,'photo accepts exactly one MiB decoded without truncation');
+    cmd('profile.update',['name'=>'Sari','photo'=>'data:image/png;base64,'.base64_encode(str_pad($png,1048577,"\0"))],$e,422); check(true,'photo rejects one byte above one MiB');
+    $legacyPhoto='data:image/png;base64,'.base64_encode(str_pad($png,1048577,"\0"));
+    $db->prepare("UPDATE records SET data=? WHERE kind='user_profile' AND user_id=?")->execute([json_encode(['photo'=>$legacyPhoto]),$sari['id']]);
+    $s=req('/bootstrap',[],$e,'GET'); check($s['users'][0]['photo']===$legacyPhoto,'legacy oversized photos remain readable');
+    $s=cmd('profile.update',['name'=>'Sari'],$e); check($s['users'][0]['photo']===$legacyPhoto,'name-only change preserves a legacy photo without revalidation');
+    $s=cmd('profile.update',['name'=>'Sari','photo'=>''],$e); check($s['users'][0]['photo']==='','profile photo can be removed');
+    $s=req('/bootstrap',[],$other,'GET'); check(count($s['users'])===1 && $s['users'][0]['name']==='Budi' && $s['users'][0]['photo']==='','profile update does not change or expose another employee');
     cmd('price.create',['good_price'=>28000,'cracked_price'=>18000,'effective_at'=>'2026-01-01T00:00:00+07:00'],$e,403); check(true,'employee cannot change prices');
     $s=cmd('price.create',['good_price'=>28000,'cracked_price'=>18000,'effective_at'=>'2026-01-01T00:00:00+07:00'],$a);
     $s=cmd('barn.create',['name'=>'Kandang A','type'=>'ayam','capacity'=>1000,'notes'=>''],$a); $barn=$s['barns'][0]['id'];
