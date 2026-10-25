@@ -1,5 +1,19 @@
 import type { FeedPurchase, Sale, State } from "./types";
-import { dateLabel, isFreeSaleItem, money, number } from "./domain";
+import {
+  dateLabel,
+  isFreeSaleItem,
+  money,
+  normalizeDateTime,
+  number,
+} from "./domain";
+
+export const REPORT_TIME_NOTE =
+  "Jam ditampilkan dalam WIB jika tersedia. Tanggal mengikuti catatan kegiatan, sedangkan waktu input menunjukkan kapan catatan disimpan.";
+const isDateColumn = (column: string) => /^(Tanggal|Waktu)/i.test(column);
+const hasRecordedTime = (value: string) =>
+  /^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}/.test(value);
+const includesTime = (column: string, value: string) =>
+  /\b(WIB|jam|waktu)\b/i.test(column) && hasRecordedTime(value);
 
 export type ReportTable = {
   name: string;
@@ -11,12 +25,17 @@ export function formatReportCell(
   column: string,
 ): string {
   if (typeof value === "number") return number(value, 3);
-  if (/^(Tanggal|Waktu)/i.test(column) && /^\d{4}-\d{2}-\d{2}/.test(value))
-    return dateLabel(value, column.includes("WIB"));
+  if (isDateColumn(column) && /^\d{4}-\d{2}-\d{2}/.test(value))
+    return dateLabel(value, includesTime(column, value));
   return value;
 }
-function excelDate(value: string): Date {
-  if (value.length === 10) return new Date(value + "T00:00:00Z");
+function excelDate(value: string): Date | null {
+  if (value.length === 10) {
+    const date = new Date(value + "T00:00:00Z");
+    return Number.isFinite(date.getTime()) ? date : null;
+  }
+  const timestamp = new Date(normalizeDateTime(value));
+  if (!Number.isFinite(timestamp.getTime())) return null;
   const local = new Intl.DateTimeFormat("sv-SE", {
     timeZone: "Asia/Jakarta",
     year: "numeric",
@@ -26,7 +45,7 @@ function excelDate(value: string): Date {
     minute: "2-digit",
     second: "2-digit",
     hourCycle: "h23",
-  }).format(new Date(value));
+  }).format(timestamp);
   return new Date(local.replace(" ", "T") + "Z");
 }
 function downloadBlob(blob: Blob, filename: string) {
@@ -39,7 +58,7 @@ function downloadBlob(blob: Blob, filename: string) {
   a.remove();
   setTimeout(() => URL.revokeObjectURL(url), 15000);
 }
-export async function exportExcel(tables: ReportTable[], filename: string) {
+export async function createReportWorkbook(tables: ReportTable[]) {
   const { default: ExcelJS } = await import("exceljs");
   const workbook = new ExcelJS.Workbook();
   workbook.creator = "TernaKu";
@@ -53,9 +72,9 @@ export async function exportExcel(tables: ReportTable[], filename: string) {
       sheet.addRow(
         row.map((value, i) =>
           typeof value === "string" &&
-          /^(Tanggal|Waktu)/i.test(table.columns[i]) &&
+          isDateColumn(table.columns[i]) &&
           /^\d{4}-\d{2}-\d{2}/.test(value)
-            ? excelDate(value)
+            ? excelDate(value) || value
             : value,
         ),
       ),
@@ -80,6 +99,7 @@ export async function exportExcel(tables: ReportTable[], filename: string) {
       };
       cell.font = { name: "Calibri", bold: true, color: { argb: "FFFFFFFF" } };
       cell.alignment = { vertical: "middle" };
+      if (isDateColumn(String(cell.value))) cell.note = REPORT_TIME_NOTE;
     });
     sheet.eachRow((row, index) => {
       if (index === 1) return;
@@ -93,10 +113,13 @@ export async function exportExcel(tables: ReportTable[], filename: string) {
             fgColor: { argb: "FFF1F6ED" },
           };
         if (typeof cell.value === "number") cell.numFmt = "#,##0.###";
-        if (cell.value instanceof Date)
-          cell.numFmt = table.columns[col - 1].includes("WIB")
+        if (cell.value instanceof Date) {
+          const source = table.rows[index - 2]?.[col - 1];
+          cell.numFmt = typeof source === "string" &&
+            includesTime(table.columns[col - 1], source)
             ? "dd mmm yyyy hh:mm"
             : "dd mmm yyyy";
+        }
       });
     });
     sheet.autoFilter = {
@@ -107,6 +130,10 @@ export async function exportExcel(tables: ReportTable[], filename: string) {
       },
     };
   }
+  return workbook;
+}
+export async function exportExcel(tables: ReportTable[], filename: string) {
+  const workbook = await createReportWorkbook(tables);
   const buffer = await workbook.xlsx.writeBuffer();
   downloadBlob(
     new Blob([new Uint8Array(buffer)], {
@@ -137,12 +164,15 @@ export async function exportReportPDF(
     doc.setFont("helvetica", "normal");
     doc.setFontSize(9);
     doc.text(`Periode: ${period}`, 15, 36);
+    doc.setFontSize(8);
+    const timeNote = doc.splitTextToSize(REPORT_TIME_NOTE, 267);
+    doc.text(timeNote, 15, 42);
     autoTable(doc, {
       head: [table.columns],
       body: table.rows.map((row) =>
         row.map((cell, i) => formatReportCell(cell, table.columns[i])),
       ),
-      startY: 43,
+      startY: 46 + timeNote.length * 3.5,
       styles: { font: "helvetica", fontSize: 8, cellPadding: 3 },
       headStyles: { fillColor: [40, 107, 72] },
       alternateRowStyles: { fillColor: [246, 249, 241] },
@@ -188,6 +218,7 @@ async function receiptDocument(
   balance: number,
   notes: string,
   method?: string,
+  createdAt?: string,
 ) {
   const [{ jsPDF }, { default: autoTable }] = await Promise.all([
     import("jspdf"),
@@ -209,16 +240,18 @@ async function receiptDocument(
   doc.text(id, 193, 31, { align: "right" });
   doc.setTextColor(62, 80, 55);
   doc.setFontSize(10);
-  doc.text(`Tanggal: ${dateLabel(date)}`, 17, 63);
-  doc.text(`Dicatat oleh: ${employee}`, 17, 71);
+  const dates = receiptDateLines(date, createdAt);
+  const dateExtraHeight = (dates.length - 1) * 6;
+  doc.text(dates, 17, 63, { lineHeightFactor: 1.7 });
+  doc.text(`Dicatat oleh: ${employee}`, 17, 71 + dateExtraHeight);
   const partyLines = doc.splitTextToSize(party, 175);
-  doc.text(partyLines, 17, 80);
+  doc.text(partyLines, 17, 80 + dateExtraHeight);
   autoTable(doc, {
     head: [
       ["Keterangan", "Butir", "Berat (kg)", "Krat", "Harga / kg", "Jumlah"],
     ],
     body: rows,
-    startY: 88 + (partyLines.length - 1) * 5,
+    startY: 88 + dateExtraHeight + (partyLines.length - 1) * 5,
     styles: { fontSize: 9, cellPadding: 4 },
     headStyles: { fillColor: [40, 107, 72] },
     alternateRowStyles: { fillColor: [246, 249, 241] },
@@ -269,6 +302,15 @@ async function receiptDocument(
   });
   doc.save(id + ".pdf");
 }
+export function receiptDateLines(date: string, createdAt?: string): string[] {
+  const timed = hasRecordedTime(date);
+  const lines = [
+    `${timed ? "Tanggal & jam (WIB)" : "Tanggal"}: ${dateLabel(date, timed)}`,
+  ];
+  if (!timed && createdAt && hasRecordedTime(createdAt))
+    lines.push(`Waktu input (WIB): ${dateLabel(createdAt, true)}`);
+  return lines;
+}
 export async function printReceipt(sale: Sale, state: State) {
   return receiptDocument(
     "NOTA PENJUALAN",
@@ -300,6 +342,7 @@ export async function printReceipt(sale: Sale, state: State) {
           qris: "QRIS",
           credit: "Piutang",
         }[sale.payment_method],
+    sale.created_at,
   );
 }
 export async function printPurchase(purchase: FeedPurchase, state: State) {
@@ -321,5 +364,7 @@ export async function printPurchase(purchase: FeedPurchase, state: State) {
     purchase.paid,
     purchase.balance,
     purchase.notes,
+    undefined,
+    purchase.created_at,
   );
 }

@@ -30,6 +30,7 @@ import {
   exportExcel,
   exportReportPDF,
   formatReportCell,
+  REPORT_TIME_NOTE,
   type ReportTable,
 } from "@/lib/export";
 import { categoryLabel, methodLabel } from "./ModuleUI";
@@ -54,7 +55,8 @@ export default function Reports() {
       name: "Penjualan",
       columns: [
         "Nomor",
-        "Tanggal",
+        "Tanggal & jam (WIB)",
+        "Waktu input (WIB)",
         "Karyawan",
         "Pelanggan",
         "Berat (kg)",
@@ -67,6 +69,7 @@ export default function Reports() {
       rows: sales.map((s) => [
         s.number,
         s.date,
+        s.created_at,
         employee(s.user_id),
         s.customer || "Umum",
         s.items.reduce((a, i) => a + i.kg, 0),
@@ -80,7 +83,8 @@ export default function Reports() {
     {
       name: "Produksi",
       columns: [
-        "Tanggal",
+        "Tanggal panen",
+        "Waktu input (WIB)",
         "Karyawan",
         "Kandang",
         "Kategori",
@@ -91,6 +95,7 @@ export default function Reports() {
       ],
       rows: production.map((p) => [
         p.date,
+        p.created_at,
         employee(p.user_id),
         state.barns.find((b) => b.id === p.barn_id)?.name || "-",
         categoryLabel(p.category),
@@ -134,7 +139,8 @@ export default function Reports() {
             name: "Pembelian pakan",
             columns: [
               "Nomor",
-              "Tanggal",
+              "Tanggal & jam (WIB)",
+              "Waktu input (WIB)",
               "Pemasok",
               "Total (Rp)",
               "Dibayar (Rp)",
@@ -143,6 +149,7 @@ export default function Reports() {
             rows: purchases.map((p) => [
               p.number,
               p.date,
+              p.created_at,
               p.supplier,
               p.total,
               p.paid,
@@ -154,7 +161,8 @@ export default function Reports() {
     {
       name: "Pemakaian pakan",
       columns: [
-        "Tanggal",
+        "Tanggal pemakaian",
+        "Waktu input (WIB)",
         "Karyawan",
         "Pakan",
         "Kandang",
@@ -163,6 +171,7 @@ export default function Reports() {
       ],
       rows: usages.map((u) => [
         u.date,
+        u.created_at,
         employee(u.user_id),
         state.feeds.find((f) => f.id === u.feed_id)?.name || "-",
         state.barns.find((b) => b.id === u.barn_id)?.name || "-",
@@ -173,7 +182,8 @@ export default function Reports() {
     {
       name: "Mutasi stok",
       columns: [
-        "Tanggal WIB",
+        "Tanggal & jam (WIB)",
+        "Waktu input (WIB)",
         "Pencatat",
         "Kategori",
         "Pergerakan",
@@ -186,6 +196,7 @@ export default function Reports() {
         .filter((m) => inRange(m.date))
         .map((m) => [
           m.date,
+          m.created_at,
           employee(m.user_id),
           categoryLabel(m.category),
           {
@@ -319,6 +330,7 @@ export default function Reports() {
         {user?.role === "admin" ? "Seluruh peternakan" : "Data milik Anda"} ·
         Target dibandingkan dengan omzet pada periode yang dipilih.
       </p>
+      <p className="report-caption">{REPORT_TIME_NOTE}</p>
       <div className="report-stats">
         <div className="metric-card">
           <p>Omzet penjualan</p>

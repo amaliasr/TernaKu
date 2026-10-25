@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { ArrowDownToLine, Info } from "lucide-react";
 import { useFarm } from "@/lib/store";
 import {
@@ -12,6 +12,7 @@ import {
 } from "@/lib/domain";
 import { printReceipt } from "@/lib/export";
 import ImagePreview from "./ImagePreview";
+import PhotoUpload from "./PhotoUpload";
 import type { Pickup, Production, RecordEntity, Sale, User } from "@/lib/types";
 import {
   categoryLabel,
@@ -509,32 +510,64 @@ export function PaymentDialog({
 export function EmployeeDialog({
   employee,
   onClose,
+  onSaved,
 }: {
   employee: User;
   onClose: () => void;
+  onSaved?: (name: string) => void;
 }) {
   const { command } = useFarm();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [photo, setPhoto] = useState(employee.photo || "");
+  const [photoChanged, setPhotoChanged] = useState(false);
+  const [photoBusy, setPhotoBusy] = useState(false);
+  const savingRef = useRef(false);
+  const photoBusyRef = useRef(false);
+  const isEmployee = employee.role === "employee";
+  const close = () => {
+    if (savingRef.current || photoBusyRef.current) return false;
+    onClose();
+  };
   return (
-    <Dialog title="Kelola karyawan" subtitle={employee.email} onClose={onClose}>
+    <Dialog
+      title={isEmployee ? "Edit akun karyawan" : "Edit nama dan target atasan"}
+      subtitle={employee.name}
+      onClose={close}
+    >
       <form
         onSubmit={async (e) => {
           e.preventDefault();
+          if (savingRef.current || photoBusyRef.current) return;
           const data = dataFrom(e.currentTarget);
+          savingRef.current = true;
           setBusy(true);
           setError("");
+          let savedName: string | null = null;
           try {
-            await command("user.update", {
+            const confirmed = await command("user.update", {
               id: employee.id,
               name: data.name,
-              target: Number(data.target),
+              target: Number(data.target || 0),
+              ...(isEmployee
+                ? {
+                    email: data.email,
+                    ...(photoChanged ? { photo } : {}),
+                  }
+                : {}),
             });
-            onClose();
+            savedName =
+              confirmed.users.find((row) => row.id === employee.id)?.name ||
+              String(data.name).trim();
           } catch (error) {
             setError(errorMessage(error));
           } finally {
+            savingRef.current = false;
             setBusy(false);
+          }
+          if (savedName !== null) {
+            onSaved?.(savedName);
+            onClose();
           }
         }}
       >
@@ -544,31 +577,89 @@ export function EmployeeDialog({
               {error}
             </div>
           )}
-          <Field className="d-block" label="Nama lengkap">
-            <input
-              className="form-control"
-              name="name"
-              defaultValue={employee.name}
-              minLength={2}
-              maxLength={100}
-              required
-            />
-          </Field>
-          <Field className="d-block mt-3" label="Target omzet bulanan (Rp)">
-            <input
-              className="form-control"
-              name="target"
-              type="number"
-              min="0"
-              step="1"
-              defaultValue={employee.target}
-              required
-            />
-          </Field>
+          {isEmployee && employee.registration_status === "pending" && (
+            <p className="text-muted">
+              Akun ini masih menunggu persetujuan. Setelah datanya benar,
+              setujui pendaftaran lewat daftar karyawan.
+            </p>
+          )}
+          {isEmployee && employee.registration_status === "rejected" && (
+            <p className="text-muted">
+              Pendaftaran akun ini pernah ditolak. Anda bisa memperbaiki
+              datanya, lalu memilih Setujui ulang di daftar karyawan.
+            </p>
+          )}
+          <fieldset disabled={busy}>
+            <Field className="d-block" label="Nama lengkap">
+              <input
+                className="form-control"
+                name="name"
+                defaultValue={employee.name}
+                autoComplete="off"
+                minLength={2}
+                maxLength={120}
+                required
+              />
+            </Field>
+            {isEmployee && (
+              <>
+                <Field
+                  className="d-block mt-3"
+                  label="Alamat email"
+                  hint="Email ini digunakan karyawan untuk masuk ke TernaKu."
+                >
+                  <input
+                    className="form-control"
+                    name="email"
+                    type="email"
+                    defaultValue={employee.email}
+                    autoComplete="off"
+                    autoCapitalize="none"
+                    spellCheck={false}
+                    maxLength={190}
+                    required
+                  />
+                </Field>
+                <div className="mt-3">
+                  <PhotoUpload
+                    value={photo}
+                    photoRef={photoChanged ? undefined : employee.photo_ref}
+                    onChange={(value) => {
+                      setPhoto(value);
+                      setPhotoChanged(true);
+                    }}
+                    onBusyChange={(value) => {
+                      photoBusyRef.current = value;
+                      setPhotoBusy(value);
+                    }}
+                    label="Foto profil karyawan"
+                    capture="user"
+                    disabled={busy}
+                  />
+                </div>
+              </>
+            )}
+            <Field
+              className="d-block mt-3"
+              label="Target omzet bulanan (Rp)"
+              hint="Boleh dikosongkan jika belum ada target."
+            >
+              <input
+                className="form-control"
+                name="target"
+                type="number"
+                min="0"
+                step="1"
+                defaultValue={employee.target}
+              />
+            </Field>
+          </fieldset>
         </div>
         <div className="modal-footer-custom">
-          <Cancel onClose={onClose} disabled={busy} />
-          <LoadingButton busy={busy}>Simpan perubahan</LoadingButton>
+          <Cancel onClose={close} disabled={busy || photoBusy} />
+          <LoadingButton busy={busy} disabled={photoBusy}>
+            {photoBusy ? "Memproses foto…" : "Simpan perubahan"}
+          </LoadingButton>
         </div>
       </form>
     </Dialog>
@@ -680,7 +771,7 @@ export function SaleDetail({
           <ImagePreview
             src={sale.photo}
             photoRef={sale.photo_ref}
-            alt="Bukti pembayaran"
+            alt="Foto dokumentasi penjualan"
             className="mt-3"
           />
         )}

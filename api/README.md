@@ -87,11 +87,11 @@ Nama kolom dan struktur respons mengikuti `../src/lib/types.ts` dan `../CONTRACT
 | `settings.update` | harvest_auto_stock:boolean | Admin |
 | `pickup.create` | date, category, eggs, kg, trays, area, notes | Semua, pengambil otomatis |
 | `pickup.return` | id, eggs, kg, trays, notes | Pemilik/admin |
-| `sale.create` | date, customer, phone, items[{pickup_id,category,eggs,kg,trays}], payment_method, paid, notes, photo?, expected_price_id? | Pengambilan sendiri |
+| `sale.create` | date, customer, phone?, items[{pickup_id,category,eggs,kg,trays}], payment_method, paid, notes, photo, expected_price_id? | Pengambilan sendiri; nama pelanggan dan foto dokumentasi wajib |
 | `sale.payment` | id, amount | Pemilik/admin |
 | `price.create` | good_price, cracked_price, effective_at | Admin |
 | `user.create` | name, email, password, role, target | Admin |
-| `user.update` | id, name?, active?, target? | Admin |
+| `user.update` | id, name?, email?, photo?, active?, target? | Admin; perubahan email/foto hanya untuk akun karyawan |
 | `profile.update` | name, photo? | Akun sendiri, admin maupun karyawan |
 | `user.approve` | id | Admin, menyetujui pendaftaran karyawan |
 | `user.reject` | id | Admin, menolak pendaftaran yang menunggu |
@@ -122,6 +122,10 @@ Setiap command menggunakan transaksi dan kunci baris. Kunci command global yang 
 Admin menerima semua transaksi dan audit; karyawan hanya menerima produksi, pickup, penjualan, koreksi, pemakaian pakan, dan notifikasinya sendiri. `stock_movements` mencatat produksi, pengambilan, setiap pengembalian, dan delta koreksi dengan tanggal, referensi, serta jumlah bertanda positif/negatif; karyawan hanya menerima ledger miliknya. Saldo stok telur/pakan tetap berasal dari agregat seluruh peternakan, bukan data karyawan yang disaring. Karyawan tidak menerima hash password, token pengguna lain, audit admin, biaya pembelian pakan, atau email karyawan lain. Laporan, grafik, PDF/Excel, dan nota dirender frontend dari state ini.
 
 `profile.update` menerima nama 1–120 karakter dan foto opsional. Foto yang tidak dikirim dipertahankan; `photo: ""` menghapusnya. Untuk perubahan nama saja, jangan mengirim ulang foto lama agar batas unggahan baru tidak diterapkan pada foto tersebut. Identitas pengguna selalu berasal dari token; kolom lain seperti `id`, `role`, `active`, `email`, dan `password` ditolak. Profil disimpan memakai `users` dan record privat `user_profile`, tanpa migrasi skema.
+
+Admin dapat mengedit nama, email login, target, dan foto karyawan melalui `user.update`. Email dinormalisasi dan harus unik. Foto yang tidak dikirim tetap dipertahankan; `photo: ""` menghapus foto. Perubahan ini tidak mengubah kata sandi, peran, maupun status persetujuan pendaftaran. Akun yang masih menunggu persetujuan tetap harus disetujui melalui `user.approve`. Log perubahan menyimpan metadata tanpa isi gambar.
+
+Setiap penjualan baru, termasuk telur gratis, wajib memuat nama pelanggan/penerima yang tidak kosong dan foto dokumentasi penjualan yang valid, maksimal 1 MB setelah kompresi. Nomor HP tetap opsional. Aturan ini berlaku untuk admin maupun karyawan. Transaksi lama tetap dapat dibaca dan dibayar tanpa harus menambahkan foto, tetapi koreksi nama pelanggan tidak boleh mengosongkannya.
 
 Notifikasi harga tersimpan di database dan muncul saat frontend menyegarkan state/polling. Web Push juga tersedia ketika aplikasi ditutup setelah pengguna mengaktifkannya; lihat [panduan Web Push](PUSH.md). Tidak ada layanan WhatsApp/SMS.
 

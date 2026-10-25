@@ -464,10 +464,10 @@ function SaleEntry({ onSave, busy, onClose, onSwitchKind }: Props) {
       busy={busy}
       onClose={onClose}
       label={photoBusy ? "Memproses foto…" : "Simpan penjualan"}
-      disabled={!price || photoBusy}
+      disabled={!price || photoBusy || !photo}
       onSubmit={(event) => {
         event.preventDefault();
-        if (photoBusy) return;
+        if (photoBusy || !photo) return;
         if (priceChanged) {
           setReviewMessage(true);
           priceReviewRef.current?.focus();
@@ -686,10 +686,9 @@ function SaleEntry({ onSave, busy, onClose, onSwitchKind }: Props) {
           <Plus size={20} /> Tambah baris telur
         </button>
       )}
-      {hasFree && (
-        <Field
-          label="Nama penerima telur gratis"
-          hint="Tetap dicatat agar pembagian telur jelas."
+      <Field
+          label={hasFree ? "Nama penerima telur gratis (wajib)" : "Nama pelanggan (wajib)"}
+          hint="Isi nama orang atau usaha yang menerima telur."
         >
           <input
             className="form-control"
@@ -697,10 +696,11 @@ function SaleEntry({ onSave, busy, onClose, onSwitchKind }: Props) {
             onChange={(event) => setCustomer(event.target.value)}
             maxLength={150}
             placeholder="Contoh: Pak Budi"
+            pattern={".*\\S.*"}
+            title="Isi nama pelanggan, bukan hanya spasi."
             required
           />
         </Field>
-      )}
       {hasFree && total === 0 ? (
         <p className={styles.hint}>
           Pemberian gratis. Stok tetap berkurang, tanpa pembayaran atau piutang.
@@ -758,20 +758,10 @@ function SaleEntry({ onSave, busy, onClose, onSwitchKind }: Props) {
           )}
         </Optional>
       )}
-      <Optional label="Pelanggan, foto, dan catatan (boleh kosong)">
-        {!hasFree && (
-          <Field label="Nama pelanggan">
-            <input
-              name="customer"
-              className="form-control"
-              maxLength={150}
-              autoComplete="off"
-              value={customer}
-              onChange={(event) => setCustomer(event.target.value)}
-            />
-          </Field>
-        )}
-        <Field label="Nomor HP pelanggan">
+      <Photo value={photo} onChange={setPhoto} onBusyChange={setPhotoBusy} label="Foto dokumentasi penjualan" optional={false} disabled={busy} />
+      <p className={styles.hint}>Foto wajib untuk setiap penjualan, termasuk telur gratis. Ambil langsung atau pilih dari galeri.</p>
+      <Optional label="Nomor HP dan catatan (boleh kosong)">
+        <Field label="Nomor HP pelanggan (opsional)">
           <input
             name="phone"
             className="form-control"
@@ -800,7 +790,6 @@ function SaleEntry({ onSave, busy, onClose, onSwitchKind }: Props) {
             maxLength={2000}
           />
         </Field>
-        <Photo value={photo} onChange={setPhoto} onBusyChange={setPhotoBusy} label="Bukti pembayaran" disabled={busy} />
       </Optional>
       <div className={styles.summary} aria-live="polite">
         <span>Total penjualan</span>

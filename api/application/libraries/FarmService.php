@@ -349,7 +349,7 @@ class FarmService {
                 }
                 continue;
             }
-            $out[$key]=in_array($key,['eggs','kg','trays'],true)?$this->number([$key=>$value],$key,$key==='trays'?0:($key==='kg'?0.001:1),$key!=='kg'):$this->text([$key=>$value],$key,$key==='notes'?2000:190);
+            $out[$key]=in_array($key,['eggs','kg','trays'],true)?$this->number([$key=>$value],$key,$key==='trays'?0:($key==='kg'?0.001:1),$key!=='kg'):$this->text([$key=>$value],$key,$key==='notes'?2000:190,$key==='customer');
         } return $out;
     }
     private function applyCorrection(string $entity,string $id,string $reason,array $changes,bool $review=false): void {
@@ -512,6 +512,8 @@ class FarmService {
         }
     }
     private function createSale(array $p): void {
+        $customer=$this->text($p,'customer',190,true);
+        $photo=$this->photo($p); if($photo==='') throw new ApiProblem('Foto dokumentasi penjualan wajib diisi.');
         $items=$p['items']??null; if(!is_array($items) || count($items)<1 || count($items)>100) throw new ApiProblem('Transaksi harus berisi 1–100 item.');
         $price=$this->currentPrice();
         if(isset($p['expected_price_id']) && $this->text($p,'expected_price_id',40,true)!==$price['id']) throw new ApiProblem('Harga telur berubah. Periksa harga terbaru lalu simpan kembali.',409);
@@ -530,10 +532,8 @@ class FarmService {
             if(!is_finite($total) || $total>1000000000000) throw new ApiProblem('Total transaksi maksimal Rp1.000.000.000.000.');
         }
         $paid=$this->number($p,'paid',0,true); if($paid>$total) throw new ApiProblem('Nominal pembayaran melebihi total transaksi.');
-        $hasFree=(bool)array_filter($out,fn($item)=>$item['is_free']);
-        $customer=$this->text($p,'customer',190); if($hasFree && $customer==='') throw new ApiProblem('Nama penerima telur gratis wajib diisi.');
         $method=$this->enum($p,'payment_method',['cash','transfer','qris','credit']);
-        $r=$this->insert('sale',['number'=>'TK-'.date('Ymd').'-'.strtoupper(bin2hex(random_bytes(4))),'date'=>$this->date($p),'user_id'=>$this->actor['id'],'customer'=>$customer,'phone'=>$this->text($p,'phone',40),'items'=>$out,'total'=>$total,'paid'=>$paid,'balance'=>$total-$paid,'payment_method'=>$total==0?'cash':$method,'payment_status'=>$paid==$total?'paid':($paid>0?'partial':'unpaid'),'notes'=>$this->text($p,'notes'),'photo'=>$this->photo($p),'created_at'=>$this->now(),'locked'=>true]);
+        $r=$this->insert('sale',['number'=>'TK-'.date('Ymd').'-'.strtoupper(bin2hex(random_bytes(4))),'date'=>$this->date($p),'user_id'=>$this->actor['id'],'customer'=>$customer,'phone'=>$this->text($p,'phone',40),'items'=>$out,'total'=>$total,'paid'=>$paid,'balance'=>$total-$paid,'payment_method'=>$total==0?'cash':$method,'payment_status'=>$paid==$total?'paid':($paid>0?'partial':'unpaid'),'notes'=>$this->text($p,'notes'),'photo'=>$photo,'created_at'=>$this->now(),'locked'=>true]);
         $this->commandResult=['action'=>'sale.create','record_id'=>$r['id'],'request_id'=>''];
         $this->audit('sale.create','Mencatat penjualan '.$r['number'],null,$r);
     }
@@ -559,16 +559,31 @@ class FarmService {
         $this->audit('profile.update','Memperbarui profil sendiri',['name'=>$before],['name'=>$name,'photo_changed'=>array_key_exists('photo',$p)]);
     }
     private function updateUser(array $p): void {
-        if(array_diff(array_keys($p),['id','name','target','active'])) throw new ApiProblem('Kolom perubahan akun tidak didukung.');
+        if(array_diff(array_keys($p),['id','name','email','photo','target','active'])) throw new ApiProblem('Kolom perubahan akun tidak didukung.');
         $this->admin(); $id=$this->text($p,'id',40,true); $u=$this->query('SELECT * FROM users WHERE id=? FOR UPDATE',[$id])->fetch(PDO::FETCH_ASSOC); if(!$u) throw new ApiProblem('Pengguna tidak ditemukan.',404);
-        $before=$this->publicUser($u); $name=isset($p['name'])?$this->text($p,'name',120,true):$u['name']; $target=isset($p['target'])?$this->number($p,'target',0,true):(float)$u['target']; $active=isset($p['active'])?$p['active']:(bool)$u['active'];
+        if($u['role']!=='employee' && (array_key_exists('email',$p) || array_key_exists('photo',$p))) throw new ApiProblem('Email dan foto pada menu karyawan hanya dapat mengubah akun karyawan.');
+        $before=$this->publicUser($u,false); $name=array_key_exists('name',$p)?$this->text($p,'name',120,true):$u['name']; $target=array_key_exists('target',$p)?$this->number($p,'target',0,true):(float)$u['target']; $active=array_key_exists('active',$p)?$p['active']:(bool)$u['active'];
+        $email=$u['email'];
+        if(array_key_exists('email',$p)) {
+            $email=strtolower($this->text($p,'email',190,true));
+            if(!filter_var($email,FILTER_VALIDATE_EMAIL)) throw new ApiProblem('Format email tidak valid.');
+            if($this->query('SELECT id FROM users WHERE LOWER(email)=? AND id<>?',[$email,$id])->fetchColumn()) throw new ApiProblem('Email sudah digunakan.');
+        }
+        $photoChanged=array_key_exists('photo',$p);
+        if($photoChanged && !is_string($p['photo'])) throw new ApiProblem('Kolom photo harus berupa teks.');
+        $photo=$photoChanged?$this->photo($p):null;
         if(!is_bool($active)) throw new ApiProblem('Status aktif tidak valid.');
         if($active && in_array($before['registration_status'],['pending','rejected'],true)) throw new ApiProblem('Pendaftaran harus disetujui melalui tindakan Setujui pendaftaran.');
         if(!$active && $id===$this->actor['id']) throw new ApiProblem('Anda tidak dapat menonaktifkan akun sendiri.');
         if(!$active && $u['role']==='admin' && (int)$this->query("SELECT COUNT(*) FROM users WHERE role='admin' AND active=1")->fetchColumn()<=1) throw new ApiProblem('Minimal satu admin harus aktif.');
-        $this->query('UPDATE users SET name=?,target=?,active=? WHERE id=?',[$name,$target,(int)$active,$id]);
+        try { $this->query('UPDATE users SET name=?,email=?,target=?,active=? WHERE id=?',[$name,$email,$target,(int)$active,$id]); }
+        catch(PDOException $e) { if(($e->errorInfo[1]??null)===1062) throw new ApiProblem('Email sudah digunakan.'); throw $e; }
+        if($photoChanged) {
+            $profileId='profile_'.substr(hash('sha256',$id),0,32);
+            $this->query("INSERT INTO records(id,kind,user_id,occurred_at,data) VALUES(?,'user_profile',?,NOW(),?) ON DUPLICATE KEY UPDATE data=VALUES(data)",[$profileId,$id,$this->json(['photo'=>$photo])]);
+        }
         if(!$active) $this->query('DELETE FROM tokens WHERE user_id=?',[$id]);
-        $this->audit('user.update','Memperbarui akun karyawan',$before,array_replace($before,['name'=>$name,'target'=>$target,'active'=>$active]));
+        $this->audit('user.update','Memperbarui akun karyawan',$before,array_replace($before,['name'=>$name,'email'=>$email,'target'=>$target,'active'=>$active,'photo_changed'=>$photoChanged]));
     }
     private function reviewRegistration(array $p,bool $approved): void {
         if(array_diff(array_keys($p),['id'])) throw new ApiProblem('Kolom persetujuan pendaftaran tidak didukung.');
@@ -577,7 +592,7 @@ class FarmService {
         if(!$u) throw new ApiProblem('Pengguna tidak ditemukan.',404);
         $r=$this->registrationRecord($id);
         if($u['role']!=='employee' || !$r || !in_array($r['status'],$approved?['pending','rejected']:['pending'],true)) throw new ApiProblem('Pendaftaran ini sudah diproses atau tidak dapat ditinjau.',409);
-        $before=$this->publicUser($u); $r['status']=$approved?'approved':'rejected'; $r['reviewed_at']=$this->now(); $r['reviewed_by']=$this->actor['id'];
+        $before=$this->publicUser($u,false); $r['status']=$approved?'approved':'rejected'; $r['reviewed_at']=$this->now(); $r['reviewed_by']=$this->actor['id'];
         $this->save('registration',$r); $this->query('UPDATE users SET active=? WHERE id=?',[$approved?1:0,$id]);
         $this->query('DELETE FROM tokens WHERE user_id=?',[$id]);
         $this->audit($approved?'user.approve':'user.reject',($approved?'Menyetujui':'Menolak').' pendaftaran '.$u['name'],$before,array_replace($before,['active'=>$approved,'registration_status'=>$r['status']]));

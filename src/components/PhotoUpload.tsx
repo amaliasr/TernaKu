@@ -52,7 +52,7 @@ export default function PhotoUpload({ onChange, value, defaultValue = "", photoR
     }
   }
   return <div className={styles.upload} role="group" aria-labelledby={`${id}-label`} aria-busy={busy}>
-    <span id={`${id}-label`} className="form-label">{label} {optional && <small>(opsional)</small>}</span>
+    <span id={`${id}-label`} className="form-label">{label} <small>({optional ? "opsional" : "wajib"})</small></span>
     <div className={styles.buttons}>
       <button type="button" className="btn btn-primary" disabled={busy || disabled} onClick={() => camera.current?.click()}><Camera size={20} /> Ambil foto</button>
       <button type="button" className="btn btn-light" disabled={busy || disabled} onClick={() => gallery.current?.click()}><ImagePlus size={20} /> Pilih dari galeri</button>

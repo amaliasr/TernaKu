@@ -341,6 +341,11 @@ function requiredText(value: unknown, name: string): string {
   assert(valueText, `${name} wajib diisi.`);
   return valueText;
 }
+function boundedName(value: unknown, label: string, maximum: number): string {
+  const name = requiredText(value, label);
+  assert(Array.from(name).length <= maximum, `${label} maksimal ${maximum} karakter.`);
+  return name;
+}
 function photo(value: unknown): string {
   if (value === undefined || value === "") return "";
   assert(
@@ -558,13 +563,13 @@ function correct(
       sale.balance = total - sale.paid;
       sale.payment_status =
         sale.balance === 0 ? "paid" : sale.paid > 0 ? "partial" : "unpaid";
+    } else if (payload.entity === "sale" && key === "customer") {
+      (row as Sale).customer = boundedName(value, (row as Sale).items.some(isFreeSaleItem) ? "Nama penerima telur gratis" : "Nama pelanggan", 190);
     } else (row as unknown as CommandPayload)[key] = text(value);
   }
   if (payload.entity === "pickup") checkPickup(state, row as Pickup);
   if (payload.entity === "sale") {
     const sale = row as Sale;
-    if (sale.items.some(isFreeSaleItem))
-      requiredText(sale.customer, "Nama penerima telur gratis");
     for (const pickupId of new Set(sale.items.map((item) => item.pickup_id))) {
       const pickup = find(state.pickups, pickupId, "Pengambilan");
       assert(
@@ -766,9 +771,9 @@ export function executeCommand(
           method === "credit",
         "Metode pembayaran tidak valid.",
       );
-      const customer = items.some(isFreeSaleItem)
-        ? requiredText(payload.customer, "Nama penerima telur gratis")
-        : text(payload.customer);
+      const customer = boundedName(payload.customer, items.some(isFreeSaleItem) ? "Nama penerima telur gratis" : "Nama pelanggan", 190);
+      const documentation = photo(payload.photo);
+      assert(documentation !== "", "Foto dokumentasi penjualan wajib diisi.");
       state.sales.push({
         id: id("sale"),
         number: invoice("TRX", state.sales.length),
@@ -784,7 +789,7 @@ export function executeCommand(
         payment_status:
           paid === total ? "paid" : paid > 0 ? "partial" : "unpaid",
         notes: text(payload.notes),
-        photo: photo(payload.photo),
+        photo: documentation,
         created_at: stamp,
         locked: true,
       });
@@ -907,10 +912,14 @@ export function executeCommand(
       admin(user);
       const u = find(state.users, payload.id, "Karyawan");
       assert(
-        payload.role === undefined && payload.registration_status === undefined,
-        "Peran dan status pendaftaran tidak dapat diubah lewat pengaturan akun.",
+        Object.keys(payload).every((key) => ["id", "name", "email", "photo", "target", "active"].includes(key)),
+        "Kolom akun tidak diizinkan. Peran, status pendaftaran, dan kata sandi tidak dapat diubah lewat pengaturan akun.",
       );
-      if (payload.active !== undefined) {
+      const safeIdentity = ({ id, name, email, role, active, target, registration_status }: User) => ({ id, name, email, role, active, target, registration_status });
+      detail.before = safeIdentity(u);
+      if (Object.hasOwn(payload, "email") || Object.hasOwn(payload, "photo"))
+        assert(u.role === "employee", "Email dan foto melalui menu ini hanya dapat diubah untuk karyawan.");
+      if (Object.hasOwn(payload, "active")) {
         assert(typeof payload.active === "boolean", "Status akun tidak valid.");
         assert(
           !payload.active ||
@@ -931,10 +940,22 @@ export function executeCommand(
         );
         u.active = payload.active;
       }
-      if (payload.name !== undefined)
-        u.name = requiredText(payload.name, "Nama");
-      if (payload.target !== undefined)
+      if (Object.hasOwn(payload, "name"))
+        u.name = boundedName(payload.name, "Nama", 120);
+      if (Object.hasOwn(payload, "email")) {
+        const email = requiredText(payload.email, "Email").toLowerCase();
+        assert(email.length <= 190 && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email), "Format email tidak valid.");
+        assert(!state.users.some((member) => member.id !== u.id && member.email.toLowerCase() === email), "Email sudah digunakan.");
+        u.email = email;
+      }
+      if (Object.hasOwn(payload, "photo")) {
+        assert(typeof payload.photo === "string", "Foto harus berupa gambar JPEG, PNG, atau WebP.");
+        u.photo = photo(payload.photo);
+        delete u.photo_ref;
+      }
+      if (Object.hasOwn(payload, "target"))
         u.target = numeric(payload.target, "Target penjualan");
+      detail.after = { ...safeIdentity(u), photo_changed: Object.hasOwn(payload, "photo") };
       break;
     }
     case "user.approve":

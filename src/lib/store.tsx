@@ -26,6 +26,7 @@ import { isPriceSyncResponse, mergePriceSync, refreshKind } from "./price-sync";
 import { MediaCache, mediaPath } from "./media-cache";
 import { readPendingRequestIds } from "./request-retries";
 import { detachBrowserPush } from "./push-client";
+import { demoPasswordMatches, parseDemoCredentials, persistDemoData, renameDemoCredential, type DemoCredentials } from "./demo-credentials";
 import {
   AUTH_SESSION_KEY,
   clearSession,
@@ -490,26 +491,16 @@ export function FarmProvider({ children }: { children: ReactNode }) {
         return request<RegistrationResult>("/auth/register", null, input);
 
       const email = input.email.trim().toLowerCase();
+      const registrationEpoch = authEpoch.current;
       const hashedPassword = await passwordHash(email, input.password);
+      if (authEpoch.current !== registrationEpoch) throw new Error("Sesi berubah. Silakan buka kembali pendaftaran.");
       // Read after hashing so simultaneous submissions in this tab see the latest registered email.
       const stored = localStorage.getItem(STORAGE_KEY);
       const source = stored ? (JSON.parse(stored) as State) : stateRef.current;
       const registration = registerDemoEmployee(source, input);
-      const previousCredentials = localStorage.getItem(DEMO_AUTH_KEY);
-      const credentials = JSON.parse(previousCredentials || "{}") as Record<
-        string,
-        string
-      >;
+      const credentials = parseDemoCredentials(localStorage.getItem(DEMO_AUTH_KEY));
       credentials[email] = hashedPassword;
-      localStorage.setItem(DEMO_AUTH_KEY, JSON.stringify(credentials));
-      try {
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(registration.state));
-      } catch (cause) {
-        if (previousCredentials === null)
-          localStorage.removeItem(DEMO_AUTH_KEY);
-        else localStorage.setItem(DEMO_AUTH_KEY, previousCredentials);
-        throw cause;
-      }
+      persistDemoData(localStorage, STORAGE_KEY, registration.state, DEMO_AUTH_KEY, credentials);
       commit(registration.state);
       return registration.result;
     },
@@ -532,14 +523,15 @@ export function FarmProvider({ children }: { children: ReactNode }) {
           const found = source.users.find(
             (u) => u.email.toLowerCase() === normalizedEmail,
           );
-          const credentials = JSON.parse(
-            localStorage.getItem(DEMO_AUTH_KEY) || "{}",
-          ) as Record<string, string>;
-          const validPassword = credentials[normalizedEmail]
-            ? credentials[normalizedEmail] ===
-              (await passwordHash(normalizedEmail, password))
-            : ["admin", "emp-1", "emp-2", "emp-3"].includes(found?.id || "") &&
-              password === DEMO_PASSWORD;
+          const credentialJson = localStorage.getItem(DEMO_AUTH_KEY);
+          const validPassword = await demoPasswordMatches(
+            parseDemoCredentials(credentialJson), normalizedEmail, password,
+            ["admin", "emp-1", "emp-2", "emp-3"].includes(found?.id || "") ? DEMO_PASSWORD : null,
+            passwordHash,
+          );
+          if (authEpoch.current !== loginEpoch) return;
+          if (localStorage.getItem(STORAGE_KEY) !== stored || localStorage.getItem(DEMO_AUTH_KEY) !== credentialJson || (!stored && stateRef.current !== source))
+            throw new Error("Data akun berubah. Silakan masuk kembali.");
           if (!found || !validPassword)
             throw new Error("Email atau kata sandi tidak sesuai.");
           const accessError = accountAccessError(found);
@@ -644,11 +636,16 @@ export function FarmProvider({ children }: { children: ReactNode }) {
       const currentUser = userRef.current;
       if (!currentUser) throw new Error("Silakan masuk terlebih dahulu.");
       const sessionToken = tokenRef.current;
+      const commandEpoch = authEpoch.current;
+      const sessionUnchanged = () => tokenRef.current === sessionToken && userRef.current?.id === currentUser.id && authEpoch.current === commandEpoch;
       const finishMutation = sync.current.beginMutation();
       try {
         let next: State;
         let commandResult: State["command_result"];
         if (mode === "demo") {
+          // Hash before reading state so another completed command cannot be overwritten while hashing.
+          const createdPassword = action === "user.create" ? await passwordHash(String(payload.email).trim().toLowerCase(), String(payload.password)) : undefined;
+          if (!sessionUnchanged()) throw new Error("Sesi berubah. Silakan masuk kembali.");
           // Always calculate on complete demo data, then expose only the signed-in user's permitted rows.
           const stored = localStorage.getItem(STORAGE_KEY);
           const source = stored
@@ -659,18 +656,18 @@ export function FarmProvider({ children }: { children: ReactNode }) {
             const added = next.sales.find((sale) => !source.sales.some((previous) => previous.id === sale.id));
             if (added) commandResult = { action, record_id: added.id, request_id: requestId ?? "" };
           }
-          if (action === "user.create") {
-            const credentials = JSON.parse(
-              localStorage.getItem(DEMO_AUTH_KEY) || "{}",
-            ) as Record<string, string>;
+          let credentials: DemoCredentials | undefined;
+          if (createdPassword !== undefined) {
+            credentials = parseDemoCredentials(localStorage.getItem(DEMO_AUTH_KEY));
             const email = String(payload.email).trim().toLowerCase();
-            credentials[email] = await passwordHash(
-              email,
-              String(payload.password),
-            );
-            localStorage.setItem(DEMO_AUTH_KEY, JSON.stringify(credentials));
+            credentials[email] = createdPassword;
+          } else if (action === "user.update" && Object.hasOwn(payload, "email")) {
+            const previous = source.users.find((member) => member.id === payload.id)!;
+            const updated = next.users.find((member) => member.id === previous.id)!;
+            credentials = renameDemoCredential(parseDemoCredentials(localStorage.getItem(DEMO_AUTH_KEY)), previous.email, updated.email);
           }
-          localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
+          if (!sessionUnchanged()) throw new Error("Sesi berubah. Silakan masuk kembali.");
+          persistDemoData(localStorage, STORAGE_KEY, next, DEMO_AUTH_KEY, credentials);
         } else {
           if (
             requestId !== undefined &&
@@ -693,10 +690,7 @@ export function FarmProvider({ children }: { children: ReactNode }) {
             retries[fingerprint] = request_id;
             sessionStorage.setItem(RETRY_KEY, JSON.stringify(retries));
           }
-          if (
-            tokenRef.current !== sessionToken ||
-            userRef.current?.id !== currentUser.id
-          )
+          if (!sessionUnchanged())
             throw new Error("Sesi berubah. Silakan masuk kembali.");
           next = await request<State>("/commands", sessionToken, {
             action,
@@ -720,7 +714,7 @@ export function FarmProvider({ children }: { children: ReactNode }) {
           }
           commandResult = next.command_result;
         }
-        if (tokenRef.current !== sessionToken || userRef.current?.id !== currentUser.id)
+        if (!sessionUnchanged())
           throw new Error("Sesi berubah. Buka kembali riwayat setelah masuk untuk melihat hasil penyimpanan.");
         // Receipts consume the confirmed response directly. Do not keep a last
         // command result in general state where a later poll could make it stale.
@@ -732,10 +726,7 @@ export function FarmProvider({ children }: { children: ReactNode }) {
         const confirmed = mode === "demo" ? visibleState(state, currentUser) : state;
         return commandResult ? { ...confirmed, command_result: commandResult } : confirmed;
       } catch (cause) {
-        if (
-          tokenRef.current === sessionToken &&
-          userRef.current?.id === currentUser.id
-        ) {
+        if (sessionUnchanged()) {
           if (isExpiredSession(cause)) invalidateSession();
           setError(
             cause instanceof Error ? cause.message : "Data gagal disimpan.",
