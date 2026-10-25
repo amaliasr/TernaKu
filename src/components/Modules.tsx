@@ -33,6 +33,7 @@ import {
   eggStock,
   feedStock,
   isFreeSaleItem,
+  isProductionStocked,
   money,
   number as formatNumber,
   pickupBalance,
@@ -49,6 +50,7 @@ import type {
 } from "@/lib/types";
 import EntryModal from "./EntryModal";
 import ImagePreview from "./ImagePreview";
+import PendingHarvest from "./PendingHarvest";
 import {
   businessDate,
   categoryLabel,
@@ -340,7 +342,7 @@ function ProductionPage({ open }: { open: OpenForm }) {
       <Heading
         eyebrow="OPERASIONAL HARIAN"
         title="Produksi telur"
-        description="Setiap hasil panen, tercatat dan terpantau."
+        description={state.settings?.harvest_auto_stock !== false ? "Catat hasil telur dari kandang. Panen baru otomatis menambah stok gudang." : "Catat hasil telur dari kandang. Stok bertambah setelah panen diterima di menu Gudang."}
       >
         {user?.role === "admin" && (
           <AddButton secondary onClick={() => open("barn")}>
@@ -401,6 +403,7 @@ function ProductionPage({ open }: { open: OpenForm }) {
                   <th className="text-end">Butir</th>
                   <th className="text-end">Berat</th>
                   <th className="text-end">Krat</th>
+                  <th>Masuk gudang</th>
                   <th>Aksi</th>
                 </tr>
               </thead>
@@ -434,6 +437,7 @@ function ProductionPage({ open }: { open: OpenForm }) {
                     <td className="text-end">{number(p.eggs)}</td>
                     <td className="text-end fw-semibold">{number(p.kg)} kg</td>
                     <td className="text-end">{number(p.trays)}</td>
+                    <td><Pill tone={isProductionStocked(p) ? "success" : "warning"}>{isProductionStocked(p) ? "Sudah masuk" : "Belum masuk"}</Pill></td>
                     <td>
                       <RecordButtons
                         entity="production"
@@ -500,10 +504,12 @@ function ProductionPage({ open }: { open: OpenForm }) {
               </div>
             </div>
             {opened.notes && <p className="text-muted mt-3">{opened.notes}</p>}
-            {opened.photo && (
+            <p className="mt-3"><strong>Status gudang:</strong> {isProductionStocked(opened) ? "Panen sudah menambah stok gudang." : "Belum menambah stok. Terima panen melalui menu Gudang."}</p>
+            {(opened.photo || opened.photo_ref) && (
               <ImagePreview
                 className="mt-3"
                 src={opened.photo}
+                photoRef={opened.photo_ref}
                 alt="Dokumentasi panen"
               />
             )}
@@ -768,7 +774,7 @@ function StockPage({ open }: { open: OpenForm }) {
           incoming: m.kg >= 0,
         }))
       : [
-          ...state.productions.map((p) => ({
+          ...state.productions.filter(isProductionStocked).map((p) => ({
             key: `p-${p.id}`,
             date: p.date,
             category: p.category,
@@ -818,11 +824,12 @@ function StockPage({ open }: { open: OpenForm }) {
       <Heading
         eyebrow="PERSEDIAAN TELUR"
         title="Stok & pengambilan"
-        description="Pantau telur di gudang dan yang sedang dibawa tim."
+        description="Stok gudang adalah telur yang sudah diterima dan siap diambil untuk dijual. Panen yang belum diterima ditampilkan terpisah."
       >
         <AddButton onClick={() => open("pickup")}>Ambil telur</AddButton>
       </Heading>
       {action.feedback}
+      <PendingHarvest />
       <Stats
         items={[
           {

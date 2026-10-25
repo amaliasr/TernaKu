@@ -5,6 +5,7 @@ import type {
   Pickup,
   PickupBalance,
   Price,
+  Production,
   Quantity,
   RecordEntity,
   RegistrationInput,
@@ -79,6 +80,9 @@ export function activePrice(
 }
 const round = (n: number) => Math.round((n + Number.EPSILON) * 1000) / 1000;
 const emptyQuantity = (): Quantity => ({ eggs: 0, kg: 0, trays: 0 });
+export function isProductionStocked(production: Pick<Production, "stocked_at">): boolean {
+  return production.stocked_at !== null;
+}
 export function eggStock(state: State, category?: Category): Quantity {
   if (state.inventory) {
     if (category) return { ...state.inventory[category] };
@@ -90,7 +94,7 @@ export function eggStock(state: State, category?: Category): Quantity {
   }
   const stock = emptyQuantity();
   for (const p of state.productions)
-    if (!category || p.category === category) {
+    if (isProductionStocked(p) && (!category || p.category === category)) {
       stock.eggs += p.eggs;
       stock.kg += p.kg;
       stock.trays += p.trays;
@@ -153,6 +157,7 @@ export function feedStock(state: State, feedId: string): number {
 }
 export function emptyState(): State {
   return {
+    settings: { harvest_auto_stock: true },
     users: [],
     barns: [],
     productions: [],
@@ -589,6 +594,7 @@ export function executeCommand(
   now = new Date(),
 ): State {
   const state: State = structuredClone(input);
+  delete state.command_result;
   delete state.inventory;
   delete state.feed_inventory;
   const user = find(state.users, userId, "Pengguna");
@@ -621,7 +627,27 @@ export function executeCommand(
         location: text(payload.location),
         created_at: stamp,
         locked: false,
+        stocked_at: state.settings?.harvest_auto_stock === false ? null : stamp,
+        ...(state.settings?.harvest_auto_stock === false ? {} : { stocked_by: user.id }),
       });
+      break;
+    }
+    case "production.receive": {
+      assert(Object.keys(payload).every((key) => key === "id"), "Penerimaan hanya membutuhkan ID panen.");
+      const production = find(state.productions, payload.id, "Panen");
+      own(user, production);
+      assert(!isProductionStocked(production), "Panen ini sudah masuk stok gudang.");
+      production.stocked_at = stamp;
+      production.stocked_by = user.id;
+      detail = { after: { production_id: production.id, stocked_at: stamp, stocked_by: user.id } };
+      break;
+    }
+    case "settings.update": {
+      admin(user);
+      assert(Object.keys(payload).every((key) => key === "harvest_auto_stock") && typeof payload.harvest_auto_stock === "boolean", "Pilihan stok otomatis harus berupa aktif atau nonaktif.");
+      detail.before = { harvest_auto_stock: state.settings?.harvest_auto_stock !== false };
+      state.settings = { harvest_auto_stock: payload.harvest_auto_stock };
+      detail.after = { ...state.settings };
       break;
     }
     case "pickup.create": {
@@ -1087,24 +1113,26 @@ export function executeCommand(
   state.stock_movements ??= [];
   for (const p of state.productions) {
     const before = input.productions.find((row) => row.id === p.id);
+    const stocked = isProductionStocked(p);
+    const wasStocked = !!before && isProductionStocked(before);
     const q = {
-      eggs: p.eggs - (before?.eggs || 0),
-      kg: round(p.kg - (before?.kg || 0)),
-      trays: p.trays - (before?.trays || 0),
+      eggs: (stocked ? p.eggs : 0) - (wasStocked ? before.eggs : 0),
+      kg: round((stocked ? p.kg : 0) - (wasStocked ? before.kg : 0)),
+      trays: (stocked ? p.trays : 0) - (wasStocked ? before.trays : 0),
     };
-    if (!before || q.eggs || q.kg || q.trays)
+    if (q.eggs || q.kg || q.trays)
       state.stock_movements.push({
         id: id("movement"),
         date: before ? stamp : p.date,
         created_at: stamp,
         user_id: p.user_id,
         category: p.category,
-        kind: before ? "correction" : "production",
+        kind: wasStocked ? "correction" : "production",
         reference_id: p.id,
         ...q,
-        notes: before
+        notes: wasStocked
           ? `Koreksi oleh ${user.name}: ${text(payload.reason, state.corrections.find((c) => c.id === payload.id)?.reason || "Koreksi produksi")}`
-          : p.notes,
+          : before ? `Panen diterima di gudang oleh ${user.name}.` : p.notes,
       });
   }
   for (const p of state.pickups) {

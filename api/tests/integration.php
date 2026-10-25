@@ -22,6 +22,11 @@ function req(string $path,array $body=[],string $token='',string $method='POST',
     $r=json_decode($raw,true); if($status!==$expected || !is_array($r)) throw new RuntimeException("$method $path expected $expected received $status: ".substr($raw,0,800)); return $r['data']??$r;
 }
 function cmd(string $action,array $payload,string $token,int $expected=200): array { return req('/commands',['action'=>$action,'payload'=>$payload],$token,'POST',$expected); }
+function mediaReq(string $path,string $token,int $expected=200): array {
+    global $base; $c=curl_init($base.$path); curl_setopt_array($c,[CURLOPT_RETURNTRANSFER=>true,CURLOPT_HEADER=>true,CURLOPT_HTTPHEADER=>['Authorization: Bearer '.$token],CURLOPT_TIMEOUT=>15]);
+    $raw=curl_exec($c); if($raw===false) throw new RuntimeException(curl_error($c)); $status=curl_getinfo($c,CURLINFO_RESPONSE_CODE); $length=curl_getinfo($c,CURLINFO_HEADER_SIZE); $type=curl_getinfo($c,CURLINFO_CONTENT_TYPE); curl_close($c);
+    if($status!==$expected) throw new RuntimeException("GET $path expected $expected, received $status"); return ['body'=>substr($raw,$length),'headers'=>substr($raw,0,$length),'type'=>$type];
+}
 function first(array $state,string $collection,callable $predicate): array { foreach($state[$collection] as $r) if($predicate($r)) return $r; throw new RuntimeException('Missing '.$collection); }
 function registrationWorkers(array $jobs): array {
     $workers=[]; foreach($jobs as $job) {
@@ -248,7 +253,67 @@ try {
     $s=cmd('correction.apply',['entity'=>'sale','id'=>$free['id'],'reason'=>'Jumlah pemberian diperiksa','changes'=>['items'=>[['id'=>$free['items'][0]['id'],'eggs'=>25,'kg'=>1.5,'trays'=>0]]]],$a);
     $s=cmd('price.create',['good_price'=>32000,'cracked_price'=>22000,'effective_at'=>'2026-03-01T00:00:00+07:00'],$a); $unchanged=first($s,'sales',fn($sale)=>$sale['id']===$free['id']);
     check($unchanged['customer']!=='' && $unchanged['items'][0]['is_free'] && $unchanged['items'][0]['unit_price']===0 && $unchanged['total']===0 && $unchanged['balance']===0,'free snapshot and recipient are immutable through price and permitted quantity corrections');
-    cmd('user.update',['id'=>$sari['id'],'active'=>false],$a); req('/bootstrap',[],$e,'GET',401); check(true,'deactivation revokes existing tokens');
+    // Lightweight sync, compact media, explicit harvest receipt, and exact sale confirmation.
+    req('/sync/prices',[],'','GET',401); check(true,'lightweight price sync requires authentication');
+    $s=req('/bootstrap',[],$a,'GET'); check($s['settings']===['harvest_auto_stock'=>true],'missing settings preserves automatic harvest stock default');
+    $legacy=first($s,'productions',fn($r)=>$r['id']===$prod); unset($legacy['stocked_at'],$legacy['stocked_by']);
+    $db->prepare('UPDATE records SET data=? WHERE id=?')->execute([json_encode($legacy),$prod]);
+    cmd('production.receive',['id'=>$prod],$a,409); check(true,'legacy harvest without stocked marker cannot be received a second time');
+    cmd('settings.update',['harvest_auto_stock'=>false],$e,403);
+    cmd('settings.update',['harvest_auto_stock'=>'false'],$a,422);
+    cmd('settings.update',['harvest_auto_stock'=>false,'incentive_rate'=>5],$a,422); check(true,'harvest stock setting is strictly boolean and admin-only');
+    $s=cmd('settings.update',['harvest_auto_stock'=>false],$a); $stockBefore=$s['inventory']; $movementsBefore=count($s['stock_movements']);
+    $pendingPayload=array_replace($baseProd,['eggs'=>50,'kg'=>3,'trays'=>0,'notes'=>'Pending harvest fixture','photo'=>$atLimit,'stocked_at'=>date('c')]);
+    $s=cmd('production.create',$pendingPayload,$e); $pendingHarvest=first($s,'productions',fn($r)=>$r['notes']==='Pending harvest fixture');
+    check($pendingHarvest['stocked_at']===null && $s['inventory']===$stockBefore,'disabled auto-stock records pending harvest without trusting client stocked marker');
+    $s=cmd('correction.apply',['entity'=>'production','id'=>$pendingHarvest['id'],'reason'=>'Timbang ulang sebelum diterima','changes'=>['eggs'=>60,'kg'=>3.6]],$e);
+    check($s['inventory']===$stockBefore && count(array_filter($s['stock_movements'],fn($m)=>$m['reference_id']===$pendingHarvest['id']))===0,'correction of pending harvest does not alter warehouse or ledger');
+    cmd('production.receive',['id'=>$pendingHarvest['id']],$other,403);
+    cmd('production.receive',['id'=>$pendingHarvest['id'],'kg'=>1],$e,422); check(true,'harvest receive enforces ownership and whole-batch semantics');
+    $s=cmd('settings.update',['harvest_auto_stock'=>true],$a);
+    check(first($s,'productions',fn($r)=>$r['id']===$pendingHarvest['id'])['stocked_at']===null && $s['inventory']===$stockBefore,'enabling automatic stock does not retroactively receive pending harvests');
+    $receive=['action'=>'production.receive','payload'=>['id'=>$pendingHarvest['id']],'request_id'=>'receive-'.bin2hex(random_bytes(10)),'response_mode'=>'compact'];
+    $received=req('/commands',$receive,$e); $again=req('/commands',$receive,$e);
+    check($again['inventory']['good']['eggs']===$stockBefore['good']['eggs']+60 && $again['inventory']['good']['kg']==$stockBefore['good']['kg']+3.6 && count(array_filter($again['stock_movements'],fn($m)=>$m['reference_id']===$pendingHarvest['id']))===1,'receipt and idempotent replay increase corrected quantities exactly once');
+    cmd('production.receive',['id'=>$pendingHarvest['id']],$a,409); check(true,'new request cannot receive an already-stocked harvest');
+    $s=cmd('settings.update',['harvest_auto_stock'=>false],$a);
+    $s=cmd('production.create',array_replace($baseProd,['eggs'=>10,'kg'=>0.6,'trays'=>0,'notes'=>'Concurrent receive fixture']),$e); $raceHarvest=first($s,'productions',fn($r)=>$r['notes']==='Concurrent receive fixture');
+    $racePayload=['token'=>$e,'action'=>'production.receive','payload'=>['id'=>$raceHarvest['id']]]; $workers=[];
+    for($i=0;$i<2;$i++){ $pipes=[]; $process=proc_open([PHP_BINARY,__DIR__.'/command-worker.php'],[0=>['pipe','r'],1=>['pipe','w'],2=>['pipe','w']],$pipes); fwrite($pipes[0],json_encode($racePayload)); fclose($pipes[0]); $workers[]=[$process,$pipes]; }
+    $results=[]; foreach($workers as [$process,$pipes]){ $results[]=trim(stream_get_contents($pipes[1])); $err=stream_get_contents($pipes[2]); fclose($pipes[1]);fclose($pipes[2]); if(proc_close($process)!==0) throw new RuntimeException($err); } sort($results);
+    check($results===['200','409'],'concurrent whole-harvest receipt allows exactly one mutation');
+    cmd('settings.update',['harvest_auto_stock'=>true],$a);
+    $s=cmd('profile.update',['name'=>'Sari','photo'=>$atLimit],$e);
+    $compactLogin=req('/auth/login',['email'=>'sari@test.local','password'=>'PasswordSari42','response_mode'=>'compact']);
+    check($compactLogin['user']['photo']==='' && $compactLogin['user']['photo_ref']['version']===hash('sha256',$atLimit) && strlen(json_encode($compactLogin))<1000,'compact login sends only versioned profile metadata and a token');
+    $full=req('/bootstrap',[],$a,'GET'); $compact=req('/bootstrap?compact=1',[],$a,'GET'); $compactTrue=req('/bootstrap?compact=true',[],$e,'GET');
+    $compactHarvest=first($compact,'productions',fn($r)=>$r['id']===$pendingHarvest['id']); $profileRef=first($compactTrue,'users',fn($u)=>$u['id']===$sari['id'])['photo_ref'];
+    check($compactHarvest['photo']==='' && $compactHarvest['photo_ref']===['kind'=>'production','id'=>$pendingHarvest['id'],'version'=>hash('sha256',$atLimit)] && $profileRef===['kind'=>'profile','id'=>$sari['id'],'version'=>hash('sha256',$atLimit)],'compact bootstrap returns versioned photo references instead of image bytes');
+    $legacyBytes=strlen(json_encode($full)); $compactBytes=strlen(json_encode($compact));
+    check(!str_contains(json_encode($compact),'data:image/') && $compactBytes<$legacyBytes/10,'compact bootstrap removes legacy audit photos and substantially reduces payload');
+    echo 'MEASURE compact bootstrap '.$compactBytes.' bytes vs legacy '.$legacyBytes.' bytes ('.round(100*(1-$compactBytes/$legacyBytes),2)."% reduction)\n";
+    $media=mediaReq('/media/production/'.$pendingHarvest['id'].'?v='.hash('sha256',$atLimit),$e);
+    check($media['body']===base64_decode(explode(',',$atLimit,2)[1]) && $media['type']==='image/png' && str_contains(strtolower($media['headers']),'cache-control: private, no-store'),'authenticated media returns original image bytes with private no-store response');
+    mediaReq('/media/production/'.$pendingHarvest['id'],$other,403); mediaReq('/media/profile/'.$sari['id'],$other,403); mediaReq('/media/profile/'.$sari['id'],$a); mediaReq('/media/production/'.$pendingHarvest['id'],'',401); mediaReq('/media/notification/'.$pendingHarvest['id'],$a,404); check(true,'media enforces session, kind allowlist, owner/admin access');
+    $sync=req('/sync/prices',[],$e,'GET'); $syncKeys=array_keys($sync); sort($syncKeys);
+    check($syncKeys===['notifications','prices','settings','user'] && !array_key_exists('photo',$sync['user']) && !array_key_exists('photo_ref',$sync['user']) && !str_contains(json_encode($sync),'data:image/') && strlen(json_encode($sync))<50000,'five-second sync only includes prices, own notifications, safe user, settings');
+    echo 'MEASURE price sync '.strlen(json_encode($sync))." bytes\n";
+    $budiId=first($full,'users',fn($u)=>$u['email']==='budi@test.local')['id'];
+    $broken=$db->prepare('INSERT INTO records(id,kind,user_id,occurred_at,data) VALUES(?,?,?,NOW(),?)');
+    $broken->execute(['fixture_hidden_production','production',$budiId,'invalid JSON']); $broken->execute(['fixture_hidden_purchase','feed_purchase','admin_test','invalid JSON']); $broken->execute(['fixture_hidden_audit','activity','admin_test','invalid JSON']);
+    req('/bootstrap?compact=1',[],$e,'GET'); check(true,'employee bootstrap filters foreign rows in SQL and skips restricted collections before parsing');
+    $broken->execute(['fixture_own_history','production',$sari['id'],'invalid JSON']); req('/sync/prices',[],$e,'GET'); check(true,'price-only sync does not read transaction history');
+    $db->exec("DELETE FROM records WHERE id IN ('fixture_hidden_production','fixture_hidden_purchase','fixture_hidden_audit','fixture_own_history')");
+    $receiptPayload=['date'=>date('Y-m-d'),'customer'=>'Exact receipt fixture','items'=>[['pickup_id'=>$goodPickups['employee'],'category'=>'good','eggs'=>5,'kg'=>0.3,'trays'=>0]],'payment_method'=>'cash','paid'=>9600,'photo'=>$profilePhoto];
+    $receiptRequest=['action'=>'sale.create','payload'=>$receiptPayload,'request_id'=>'receipt-'.bin2hex(random_bytes(10)),'response_mode'=>'compact'];
+    $confirmed=req('/commands',$receiptRequest,$e); $confirmation=$confirmed['command_result'];
+    $confirmedSale=first($confirmed,'sales',fn($sale)=>$sale['id']===$confirmation['record_id']);
+    check($confirmation['action']==='sale.create' && $confirmation['request_id']===$receiptRequest['request_id'] && $confirmedSale['customer']==='Exact receipt fixture' && $confirmedSale['total']===9600 && $confirmedSale['photo']==='' && $confirmedSale['photo_ref']['kind']==='sale','first sale response contains exact committed sale ID and compact media ref');
+    $another=cmd('sale.create',array_replace($receiptPayload,['customer'=>'Later sale fixture']),$e);
+    $replayed=req('/commands',array_replace($receiptRequest,['response_mode'=>'full']),$e);
+    check($replayed['command_result']===$confirmation && count($replayed['sales'])===count($another['sales']) && first($replayed,'sales',fn($sale)=>$sale['id']===$confirmation['record_id'])['photo']===$profilePhoto,'idempotent retry returns original sale confirmation even after another sale and response mode change');
+    mediaReq('/media/sale/'.$confirmation['record_id'],$e); mediaReq('/media/sale/'.$confirmation['record_id'],$other,403); check(true,'sale receipt photos use the same owner-scoped media endpoint');
+    cmd('user.update',['id'=>$sari['id'],'active'=>false],$a); req('/bootstrap',[],$e,'GET',401); req('/sync/prices',[],$e,'GET',401); mediaReq('/media/production/'.$pendingHarvest['id'],$e,401); check(true,'deactivation immediately revokes bootstrap, five-second sync, and media access');
     req('/auth/logout',[],$other); req('/bootstrap',[],$other,'GET',401); check(true,'logout invalidates token');
     req('/application/config/config.php',[],'','GET',404); check(true,'internal files not exposed by dev router');
     echo "\n$checks integration checks passed.\n";

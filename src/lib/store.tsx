@@ -22,6 +22,8 @@ import { refreshInterval, SessionSync } from "./session-sync";
 import { ApiError } from "./request-errors";
 import { readApiResponse } from "./api-response";
 import { requestTimeout } from "./request-timeout";
+import { isPriceSyncResponse, mergePriceSync, refreshKind } from "./price-sync";
+import { MediaCache, mediaPath } from "./media-cache";
 import { readPendingRequestIds } from "./request-retries";
 import { detachBrowserPush } from "./push-client";
 import {
@@ -38,6 +40,8 @@ export {
 } from "./request-errors";
 import type {
   CommandPayload,
+  MediaReference,
+  PriceSyncResponse,
   RegistrationAvailability,
   RegistrationInput,
   RegistrationResult,
@@ -72,7 +76,8 @@ interface FarmContextValue {
     action: string,
     payload: CommandPayload,
     requestId?: string,
-  ) => Promise<void>;
+  ) => Promise<State>;
+  loadMedia: (reference: MediaReference) => Promise<Blob>;
   refresh: () => Promise<void>;
   pushRequest: <T>(
     action: "status" | "subscribe" | "unsubscribe" | "test",
@@ -158,6 +163,36 @@ async function request<T>(
   }
 }
 
+async function requestMedia(reference: MediaReference, token: string): Promise<Blob> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 60_000);
+  try {
+    const response = await fetch(`${API_URL}${mediaPath(reference)}`, {
+      headers: { Accept: "image/jpeg, image/png, image/webp", Authorization: `Bearer ${token}` },
+      signal: controller.signal,
+      cache: "no-store",
+    });
+    if (!response.ok) {
+      await readApiResponse(response);
+      throw new ApiError(`Foto belum dapat dimuat (HTTP ${response.status}).`, response.status);
+    }
+    const mime = response.headers.get("Content-Type")?.split(";")[0].trim().toLowerCase();
+    if (!mime || !["image/jpeg", "image/png", "image/webp"].includes(mime))
+      throw new Error("Server belum mengirim foto yang dapat dibaca.");
+    const blob = await response.blob();
+    if (!blob.size) throw new Error("Foto masih kosong. Coba muat kembali.");
+    return blob;
+  } catch (cause) {
+    if (cause instanceof DOMException && cause.name === "AbortError")
+      throw new Error("Foto terlalu lama dimuat. Periksa koneksi internet, lalu coba kembali.");
+    if (cause instanceof TypeError)
+      throw new Error("Foto belum dapat dimuat. Periksa koneksi internet, lalu coba kembali.");
+    throw cause;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
 export function FarmProvider({ children }: { children: ReactNode }) {
   const [allState, setAllState] = useState<State>(emptyState);
   const [user, setUser] = useState<User | null>(null);
@@ -171,6 +206,8 @@ export function FarmProvider({ children }: { children: ReactNode }) {
   const tokenRef = useRef<string | null>(null);
   const sessionUserId = useRef<string | null>(null);
   const authEpoch = useRef(0);
+  const lastFullRefresh = useRef(0);
+  const mediaCache = useRef(new MediaCache());
   const commit = useCallback((next: State) => {
     stateRef.current = next;
     setAllState(next);
@@ -193,7 +230,11 @@ export function FarmProvider({ children }: { children: ReactNode }) {
     }
   }, []);
   const setSessionUser = useCallback((next: User | null) => {
-    if (userRef.current?.id !== next?.id) sync.current.invalidate();
+    if (userRef.current?.id !== next?.id || userRef.current?.role !== next?.role) {
+      sync.current.invalidate();
+      mediaCache.current.clear();
+      lastFullRefresh.current = 0;
+    }
     userRef.current = next;
     setUser(next);
   }, []);
@@ -201,6 +242,8 @@ export function FarmProvider({ children }: { children: ReactNode }) {
     const previousToken = tokenRef.current;
     ++authEpoch.current;
     sync.current.invalidate();
+    mediaCache.current.clear();
+    lastFullRefresh.current = 0;
     tokenRef.current = null;
     sessionUserId.current = null;
     try {
@@ -218,11 +261,13 @@ export function FarmProvider({ children }: { children: ReactNode }) {
       const refreshToken = tokenRef.current;
       const refreshEpoch = authEpoch.current;
       if (mode === "live" && !refreshToken) return Promise.resolve();
+      const kind = mode === "live" ? refreshKind(background, userRef.current?.role, lastFullRefresh.current) : "full";
       return sync.current.refresh(async ({ canApply, sessionActive }) => {
         if (!canApply()) return;
         setPriceSync((previous) => ({ ...previous, refreshing: true }));
         try {
           let next: State;
+          let full = kind === "full";
           if (mode === "demo") {
             const stored = localStorage.getItem(STORAGE_KEY);
             const parsed: unknown = stored
@@ -230,8 +275,22 @@ export function FarmProvider({ children }: { children: ReactNode }) {
               : stateRef.current;
             if (!isState(parsed)) throw new Error("Data demo tidak valid.");
             next = parsed;
+          } else if (kind === "prices") {
+            const snapshot = await request<PriceSyncResponse>("/sync/prices", refreshToken);
+            if (!isPriceSyncResponse(snapshot)) throw new Error("Data harga belum dapat dibaca. Coba muat kembali.");
+            if (!canApply() || tokenRef.current !== refreshToken || authEpoch.current !== refreshEpoch) return;
+            if (snapshot.user.id !== sessionUserId.current) throw new Error("Data akun tidak sesuai. Silakan muat ulang aplikasi.");
+            const accessError = accountAccessError(snapshot.user);
+            if (accessError) throw new ApiError(accessError, 401);
+            if (snapshot.user.role !== userRef.current?.role) {
+              next = await request<State>("/bootstrap?compact=1", refreshToken);
+              full = true;
+              if (!isState(next)) throw new Error("Struktur data API tidak sesuai.");
+            } else {
+              next = mergePriceSync(stateRef.current, snapshot, sessionUserId.current!);
+            }
           } else {
-            next = await request<State>("/bootstrap", refreshToken);
+            next = await request<State>("/bootstrap?compact=1", refreshToken);
             if (!isState(next))
               throw new Error("Struktur data API tidak sesuai.");
           }
@@ -254,6 +313,7 @@ export function FarmProvider({ children }: { children: ReactNode }) {
             setPriceSync((previous) => ({ ...previous, refreshing: false }));
           }
           commit(next);
+          if (full) lastFullRefresh.current = Date.now();
           if (!background) setError(null);
         } catch (cause) {
           if (
@@ -276,7 +336,7 @@ export function FarmProvider({ children }: { children: ReactNode }) {
           if (sessionActive())
             setPriceSync((previous) => ({ ...previous, refreshing: false }));
         }
-      });
+      }, kind);
     },
     [commit, invalidateSession, setSessionUser],
   );
@@ -346,6 +406,8 @@ export function FarmProvider({ children }: { children: ReactNode }) {
       ) {
         ++authEpoch.current;
         sync.current.invalidate();
+        mediaCache.current.clear();
+        lastFullRefresh.current = 0;
         const id = localStorage.getItem(DEMO_USER_KEY);
         setSessionUser(
           stateRef.current.users.find(
@@ -362,6 +424,8 @@ export function FarmProvider({ children }: { children: ReactNode }) {
         if (saved && saved.token === tokenRef.current) return;
         ++authEpoch.current;
         sync.current.invalidate();
+        mediaCache.current.clear();
+        lastFullRefresh.current = 0;
         tokenRef.current = saved?.token ?? null;
         sessionUserId.current = saved?.userId ?? null;
         setSessionUser(null);
@@ -489,7 +553,7 @@ export function FarmProvider({ children }: { children: ReactNode }) {
           const result = await request<{ token: string; user: User }>(
             "/auth/login",
             null,
-            { email: email.trim(), password },
+            { email: email.trim(), password, response_mode: "compact" },
           );
           if (authEpoch.current !== loginEpoch) {
             void request("/auth/logout", result.token, {}).catch(() => {});
@@ -504,6 +568,8 @@ export function FarmProvider({ children }: { children: ReactNode }) {
             void request("/auth/logout", result.token, {}).catch(() => {});
             throw cause;
           }
+          mediaCache.current.clear();
+          lastFullRefresh.current = 0;
           tokenRef.current = result.token;
           sessionUserId.current = result.user.id;
           setSessionRecovery(true);
@@ -574,13 +640,14 @@ export function FarmProvider({ children }: { children: ReactNode }) {
     [invalidateSession],
   );
   const command = useCallback(
-    async (action: string, payload: CommandPayload, requestId?: string) => {
+    async (action: string, payload: CommandPayload, requestId?: string): Promise<State> => {
       const currentUser = userRef.current;
       if (!currentUser) throw new Error("Silakan masuk terlebih dahulu.");
       const sessionToken = tokenRef.current;
       const finishMutation = sync.current.beginMutation();
       try {
         let next: State;
+        let commandResult: State["command_result"];
         if (mode === "demo") {
           // Always calculate on complete demo data, then expose only the signed-in user's permitted rows.
           const stored = localStorage.getItem(STORAGE_KEY);
@@ -588,6 +655,10 @@ export function FarmProvider({ children }: { children: ReactNode }) {
             ? (JSON.parse(stored) as State)
             : stateRef.current;
           next = executeCommand(source, currentUser.id, action, payload);
+          if (action === "sale.create") {
+            const added = next.sales.find((sale) => !source.sales.some((previous) => previous.id === sale.id));
+            if (added) commandResult = { action, record_id: added.id, request_id: requestId ?? "" };
+          }
           if (action === "user.create") {
             const credentials = JSON.parse(
               localStorage.getItem(DEMO_AUTH_KEY) || "{}",
@@ -631,6 +702,7 @@ export function FarmProvider({ children }: { children: ReactNode }) {
             action,
             payload,
             request_id,
+            response_mode: "compact",
           });
           if (!isState(next))
             throw new Error("Struktur data API tidak sesuai.");
@@ -646,14 +718,19 @@ export function FarmProvider({ children }: { children: ReactNode }) {
               // turn that confirmation into another uncertain save; keep the old ID.
             }
           }
-          if (
-            tokenRef.current !== sessionToken ||
-            userRef.current?.id !== currentUser.id
-          )
-            return;
+          commandResult = next.command_result;
         }
-        commit(next);
+        if (tokenRef.current !== sessionToken || userRef.current?.id !== currentUser.id)
+          throw new Error("Sesi berubah. Buka kembali riwayat setelah masuk untuk melihat hasil penyimpanan.");
+        // Receipts consume the confirmed response directly. Do not keep a last
+        // command result in general state where a later poll could make it stale.
+        const state = { ...next };
+        delete state.command_result;
+        commit(state);
+        lastFullRefresh.current = Date.now();
         setError(null);
+        const confirmed = mode === "demo" ? visibleState(state, currentUser) : state;
+        return commandResult ? { ...confirmed, command_result: commandResult } : confirmed;
       } catch (cause) {
         if (
           tokenRef.current === sessionToken &&
@@ -671,6 +748,25 @@ export function FarmProvider({ children }: { children: ReactNode }) {
     },
     [commit, invalidateSession],
   );
+  const loadMedia = useCallback(async (reference: MediaReference): Promise<Blob> => {
+    const token = tokenRef.current;
+    const epoch = authEpoch.current;
+    if (!token || mode !== "live") throw new Error("Masuk kembali untuk melihat foto ini.");
+    const currentSession = () => tokenRef.current === token && authEpoch.current === epoch;
+    const blob = await mediaCache.current.load(reference, async () => {
+      if (!currentSession()) throw new Error("Sesi berubah. Buka kembali foto setelah masuk.");
+      try {
+        const blob = await requestMedia(reference, token);
+        if (!currentSession()) throw new Error("Sesi berubah. Buka kembali foto setelah masuk.");
+        return blob;
+      } catch (cause) {
+        if (currentSession() && isExpiredSession(cause)) invalidateSession();
+        throw cause;
+      }
+    });
+    if (!currentSession()) throw new Error("Sesi berubah. Buka kembali foto setelah masuk.");
+    return blob;
+  }, [invalidateSession]);
   const state = useMemo(
     () => (mode === "demo" ? visibleState(allState, user) : allState),
     [allState, user],
@@ -691,6 +787,7 @@ export function FarmProvider({ children }: { children: ReactNode }) {
         register,
         logout,
         command,
+        loadMedia,
         refresh,
       }}
     >

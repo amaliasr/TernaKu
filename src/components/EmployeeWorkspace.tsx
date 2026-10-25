@@ -27,6 +27,7 @@ import {
   businessDate,
   dateLabel,
   eggStock,
+  isProductionStocked,
   money,
   number,
   pickupBalance,
@@ -40,6 +41,7 @@ import ThemeToggle from "./ThemeToggle";
 import ProfileSettings from "./ProfileSettings";
 import Avatar from "./Avatar";
 import ImagePreview from "./ImagePreview";
+import PendingHarvest from "./PendingHarvest";
 import { usePageNavigation } from "@/lib/navigation";
 import Modules from "./Modules";
 import Reports from "./Reports";
@@ -427,7 +429,7 @@ export default function EmployeeWorkspace() {
           <>
             <PageHeading
               title="Catatan panen"
-              description="Panen yang Anda catat tersimpan di sini."
+              description={state.settings?.harvest_auto_stock !== false ? "Catat hasil telur dari kandang. Panen baru langsung menambah stok gudang." : "Catat hasil telur dari kandang. Setelah disimpan, terima panen di menu Gudang agar stok bertambah."}
             />
             <button
               className={styles.primaryButton}
@@ -463,8 +465,9 @@ export default function EmployeeWorkspace() {
                       ?.name || "Kandang"}
                   </p>
                   {row.notes && <p className={styles.notes}>{row.notes}</p>}
-                  {row.photo && (
-                    <ImagePreview src={row.photo} alt="Foto panen" />
+                  <p className={isProductionStocked(row) ? "text-success" : "text-warning"}>{isProductionStocked(row) ? "Sudah masuk gudang" : "Belum masuk gudang"}</p>
+                  {(row.photo || row.photo_ref) && (
+                    <ImagePreview src={row.photo} photoRef={row.photo_ref} alt="Foto panen" />
                   )}
                   <button
                     className={styles.textButton}
@@ -586,8 +589,9 @@ export default function EmployeeWorkspace() {
           <>
             <PageHeading
               title="Telur di gudang"
-              description="Jumlah telur yang tersedia untuk diambil."
+              description="Hanya telur yang sudah diterima di gudang yang tersedia untuk diambil dan dijual."
             />
+            <PendingHarvest />
             <div className={styles.stockCards}>
               {[
                 { label: "Telur bagus", stock: goodStock, good: true },
@@ -618,7 +622,7 @@ export default function EmployeeWorkspace() {
               className={styles.secondaryButton}
               onClick={() => setModal("production")}
             >
-              <Plus size={20} /> Catat panen masuk gudang
+              <Plus size={20} /> Catat panen dari kandang
             </button>
             <section className={styles.section}>
               <div className={styles.sectionHeading}>

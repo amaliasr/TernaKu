@@ -3,17 +3,19 @@
 import { useState } from "react";
 import type { User } from "@/lib/types";
 import styles from "./Avatar.module.css";
+import { usePhoto } from "./usePhoto";
 
 export default function Avatar({
   user,
   size = "md",
   className = "",
 }: {
-  user: Pick<User, "name" | "photo">;
+  user: Pick<User, "name" | "photo" | "photo_ref">;
   size?: "sm" | "md" | "lg";
   className?: string;
 }) {
   const [failedPhoto, setFailedPhoto] = useState<string | null>(null);
+  const { src } = usePhoto(user.photo, user.photo_ref);
   const initials =
     user.name
       .trim()
@@ -28,12 +30,12 @@ export default function Avatar({
       role="img"
       aria-label={`Foto profil ${user.name}`}
     >
-      {user.photo && failedPhoto !== user.photo ? (
+      {src && failedPhoto !== src ? (
         <img
-          src={user.photo}
+          src={src}
           alt=""
           referrerPolicy="no-referrer"
-          onError={() => setFailedPhoto(user.photo || null)}
+          onError={() => setFailedPhoto(src)}
         />
       ) : (
         <span aria-hidden="true">{initials}</span>
