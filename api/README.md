@@ -63,6 +63,9 @@ Frontend production memakai `NEXT_PUBLIC_API_URL=https://api.buildmanagement.id/
 | POST | `/auth/login` | `{email,password}` → `{token,user}` |
 | POST | `/auth/logout` | Mencabut bearer token |
 | GET | `/bootstrap` | State sesuai hak pengguna |
+| GET | `/bootstrap?compact=1` | State yang sama dengan referensi foto, tanpa base64 dalam riwayat/audit |
+| GET | `/sync/prices` | Harga, notifikasi sendiri, pengguna aktif tanpa foto, dan pengaturan |
+| GET | `/media/{kind}/{id}` | Gambar biner privat; kind `production`, `sale`, atau `profile` |
 | POST | `/commands` | `{action,payload,request_id?}` → State terbaru |
 
 Semua respons berhasil dibungkus `{"data":...}` dan kesalahan `{"error":"pesan"}`. Permintaan tulis memakai `Content-Type: application/json`; setelah login gunakan `Authorization: Bearer <token>`. Token acak disimpan sebagai hash SHA-256. Setiap permintaan terautentikasi memperpanjang sesi hingga 30 hari sejak aktivitas terakhir, dengan batas mutlak 90 hari sejak login. Logout dan penonaktifan akun mencabut token. `TOKEN_TTL_HOURS` lama tidak digunakan lagi. Frontend menyimpan sesi di perangkat, memindahkan sesi tab versi lama secara otomatis, dan mempertahankannya saat koneksi terputus; respons 401 meminta login kembali. Percobaan login dibatasi 10 per pasangan IP/email per 15 menit. CORS hanya mengizinkan origin yang tercantum, tidak memakai `*` dan tidak bergantung pada cookie.
@@ -80,6 +83,8 @@ Nama kolom dan struktur respons mengikuti `../src/lib/types.ts` dan `../CONTRACT
 | Perintah | Payload utama | Hak |
 | --- | --- | --- |
 | `production.create` | date, barn_id, category, eggs, kg, trays, notes, photo?, location? | Semua, pencatat otomatis |
+| `production.receive` | id | Pemilik panen/admin; seluruh panen satu kali |
+| `settings.update` | harvest_auto_stock:boolean | Admin |
 | `pickup.create` | date, category, eggs, kg, trays, area, notes | Semua, pengambil otomatis |
 | `pickup.return` | id, eggs, kg, trays, notes | Pemilik/admin |
 | `sale.create` | date, customer, phone, items[{pickup_id,category,eggs,kg,trays}], payment_method, paid, notes, photo?, expected_price_id? | Pengambilan sendiri |
@@ -123,6 +128,22 @@ Notifikasi harga tersimpan di database dan muncul saat frontend menyegarkan stat
 ## Pembaruan 24 Oktober 2026
 
 Untuk instalasi yang sudah memakai versi Web Push sebelumnya, cadangkan lalu ganti hanya `application/libraries/FarmService.php` di folder API `public_html/ternaku/`. Paket `ternaku-api-update-2026-10-24.zip` berisi path relatif tersebut; ekstrak langsung di `ternaku/`, bukan di `public_html/` atau `ternaku/api/`. Pertahankan `.env`, kunci setup/push, `vendor/`, dan database. Tidak perlu menjalankan installer atau migrasi SQL. Sesi lama yang sudah kedaluwarsa perlu login sekali lagi; sesi yang masih aktif diperpanjang saat digunakan. Deploy frontend terbaru agar profil dan penyimpanan sesi tersedia.
+
+## Pembaruan 25 Oktober 2026: stok panen dan respons ringan
+
+Pembaruan API ini mengganti **tiga file**: `application/libraries/FarmService.php`, `application/controllers/Api.php`, dan `application/config/routes.php`. Deploy API terlebih dahulu, kemudian frontend. Pertahankan `.env`, kunci setup/push, `vendor/`, serta data. Tidak ada migrasi SQL atau pemindahan foto: pengaturan dan konfirmasi command menggunakan tabel `records` yang sudah ada. Client lama tetap mendapat respons lengkap tanpa harus diubah bersamaan.
+
+`settings.harvest_auto_stock` bernilai `true` jika belum diatur, mempertahankan perilaku sebelumnya. Admin dapat menggantinya melalui `settings.update`. Ketika nonaktif, `production.create` menyimpan panen dengan `stocked_at: null` dan `stocked_by: null`, tanpa menambah stok atau ledger. Pemilik/admin menerima seluruh batch melalui `production.receive`; waktu/penerima ditentukan server, saldo bertambah satu kali, dan satu pergerakan `production` dicatat pada waktu penerimaan. Pengulangan dengan request ID yang sama bersifat idempoten; permintaan baru setelah diterima ditolak 409. Mengaktifkan kembali pengaturan tidak otomatis menerima panen yang masih menunggu. Koreksi kuantitas panen yang menunggu tidak menyentuh stok; setelah diterima koreksi kembali menyesuaikan saldo dan ledger. Data produksi lama yang **tidak mempunyai kolom** `stocked_at` dianggap sudah diterima, sehingga tidak terjadi penggandaan stok setelah upgrade.
+
+Untuk klien baru, ambil state lengkap melalui `/bootstrap?compact=1` (atau `compact=true`), dan tambahkan `response_mode: "compact"` di luar `payload` pada `/commands`. State ringkas mengganti foto produksi, bukti penjualan, dan profil dengan `photo: ""` serta `photo_ref: {kind,id,version}` jika gambar ada. `version` adalah SHA-256, 64 karakter heksadesimal kecil. Foto dalam snapshot audit juga dikeluarkan dari respons ringkas, sementara data asli tetap tersimpan. Tanpa parameter ini respons lama tetap berisi foto untuk kompatibilitas. Kolom milik karyawan disaring dalam SQL sebelum JSON dibaca; koleksi pembelian dan audit admin tidak diambil sama sekali untuk karyawan. Metadata profil/pendaftaran pengguna dibaca secara kelompok untuk menghindari query berulang per pengguna.
+
+`POST /auth/login` juga menerima `response_mode: "compact"` bersama email/password. Respons login tetap `{token,user}`, dengan foto profil berupa referensi yang sama. Tanpa parameter tersebut respons login lama tetap berlaku.
+
+Frontend dapat memanggil `/sync/prices` setiap **5 detik** tanpa mengunduh transaksi/foto. Hasilnya `{prices,notifications,user,settings}`; `user` sengaja tidak berisi `photo` atau `photo_ref`, sehingga client mempertahankan foto yang sudah dimilikinya. Endpoint ini tetap memeriksa token, status pendaftaran, dan aktivasi akun pada setiap permintaan. State lengkap dapat disegarkan lebih jarang, setelah penulisan, atau saat pengguna meminta refresh. Harga terjadwal tetap disertakan agar tampilan dapat mengaktifkannya pada waktu yang tepat.
+
+Ambil foto hanya ketika diperlukan menggunakan bearer token pada `GET /media/{kind}/{id}?v={version}`. Untuk profil, `id` adalah ID pengguna. Respons adalah byte gambar asli dengan MIME tervalidasi, `ETag`, dan `Cache-Control: private, no-store`. Karyawan hanya dapat membaca foto catatan/profilnya; admin dapat membaca semuanya. Parameter `v` adalah identitas cache client, bukan pengganti autentikasi. Tidak ada token dalam URL, redirect ke URL eksternal, atau perubahan penyimpanan gambar. Cache Blob di memori client harus dibatasi dan dibersihkan ketika sesi berganti.
+
+Respons `sale.create` kini menyertakan `state.command_result: {action:"sale.create",record_id,request_id}`. Gunakan `record_id` tersebut untuk menampilkan/mencetak nota dari state yang dikembalikan, bukan menebak penjualan terbaru atau menunggu render state React. Saat request ID disertakan, ID transaksi hasil commit disimpan secara atomik dalam record privat `command_result`; retry setelah respons hilang mengembalikan ID penjualan yang sama meskipun ada transaksi lain sesudahnya. `response_mode` tidak termasuk fingerprint penulisan, sehingga retry dapat berganti format respons tanpa menggandakan penjualan.
 
 ## Pengujian nyata
 

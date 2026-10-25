@@ -22,9 +22,11 @@ import {
   pickupBalance,
   today,
 } from "@/lib/domain";
-import type { Category, CommandPayload } from "@/lib/types";
+import type { Category, CommandPayload, Sale } from "@/lib/types";
+import { findSavedSale } from "@/lib/sale-receipt";
 import EmployeeEntry from "./EmployeeEntry";
 import Photo from "./PhotoUpload";
+import { SaleDetail } from "./RecordDialogs";
 import {
   categoryLabel,
   dataFrom,
@@ -124,6 +126,11 @@ function ProductionForm({ onSave, busy, onClose }: FormProps) {
         });
       }}
     >
+      <p className="text-muted">
+        Catat hasil panen dari kandang. {state.settings?.harvest_auto_stock !== false
+          ? "Setelah disimpan, panen langsung menambah stok gudang."
+          : "Setelah disimpan, panen menunggu diterima di menu Gudang."}
+      </p>
       <div className="row g-3">
         <Field className="col-sm-6" label="Tanggal produksi">
           <input
@@ -1320,6 +1327,7 @@ type UnconfirmedSale = {
   action: "sale.create";
   payload: CommandPayload;
   total: number | null;
+  previous_sale_ids?: string[];
 };
 const unconfirmedSaleKey = (userId: string) =>
   `ternaku.sale.unconfirmed.v1.${userId}`;
@@ -1355,6 +1363,8 @@ export function EntryModal({
   const { command, user, refresh, mode, state } = useFarm();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [savedSale, setSavedSale] = useState<{ sale: Sale | null } | null>(null);
+  const savingRef = useRef(false);
   const [employeeKind, setEmployeeKind] = useState<"pickup" | null>(null);
   const [unconfirmed, setUnconfirmed] = useState<UnconfirmedSale | null>(() =>
     mode === "live" && user && kind === "sale"
@@ -1366,6 +1376,7 @@ export function EntryModal({
   useEffect(() => {
     setEmployeeKind(null);
     setError("");
+    setSavedSale(null);
   }, [kind]);
   useEffect(() => {
     if (unconfirmed) retryRef.current?.focus();
@@ -1410,12 +1421,21 @@ export function EntryModal({
     requestedAction: string,
     requestedPayload: CommandPayload,
   ) => {
-    if (busy) return;
+    if (savingRef.current || savedSale) return;
     const action = unconfirmed?.action || requestedAction;
     const payload = unconfirmed?.payload || requestedPayload;
     let attempt = unconfirmed;
     let succeeded = false;
     let sending = false;
+    let confirmedSale: Sale | null = null;
+    const previousSaleIds = Array.isArray(attempt?.previous_sale_ids)
+      ? attempt.previous_sale_ids.filter((id) => typeof id === "string")
+      : attempt
+        ? undefined
+        : state.sales
+            .filter((sale) => sale.user_id === user?.id)
+            .map((sale) => sale.id);
+    savingRef.current = true;
     setBusy(true);
     setError("");
     try {
@@ -1434,6 +1454,7 @@ export function EntryModal({
           user_id: user.id,
           request_id: crypto.randomUUID(),
           action: "sale.create",
+          previous_sale_ids: previousSaleIds,
           payload: JSON.parse(JSON.stringify(payload)) as CommandPayload,
           total: snapshot
             ? lines.reduce(
@@ -1461,8 +1482,19 @@ export function EntryModal({
         );
       }
       sending = true;
-      await command(action, payload, attempt?.request_id);
-      if (action === "sale.create") clearUnconfirmed();
+      const confirmed = await command(action, payload, attempt?.request_id);
+      if (action === "sale.create") {
+        confirmedSale = user
+          ? findSavedSale(
+              confirmed,
+              user.id,
+              payload,
+              attempt?.request_id,
+              previousSaleIds,
+            )
+          : null;
+        clearUnconfirmed();
+      }
       succeeded = true;
     } catch (e) {
       setError(
@@ -1491,13 +1523,37 @@ export function EntryModal({
         }
       }
     } finally {
+      savingRef.current = false;
       setBusy(false);
     }
     if (succeeded) {
       onSaved?.(action);
+      if (action === "sale.create") {
+        setSavedSale({ sale: confirmedSale });
+        return;
+      }
       onClose();
     }
   };
+  if (savedSale) {
+    if (savedSale.sale)
+      return <SaleDetail sale={savedSale.sale} saved onClose={onClose} />;
+    return (
+      <Dialog title="Penjualan sudah tersimpan" onClose={onClose}>
+        <div className="modal-body-custom" role="status">
+          <p>Penjualan berhasil disimpan. Anda tidak perlu menyimpannya lagi.</p>
+          <p className="mb-0">
+            Buka catatan penjualan untuk melihat dan mengunduh nota.
+          </p>
+        </div>
+        <div className="modal-footer-custom">
+          <button type="button" className="btn btn-primary" onClick={onClose}>
+            Selesai
+          </button>
+        </div>
+      </Dialog>
+    );
+  }
   return (
     <Dialog
       title={

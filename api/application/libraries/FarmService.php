@@ -8,6 +8,7 @@ class ApiProblem extends RuntimeException {
 class FarmService {
     private PDO $db;
     private array $actor = [];
+    private ?array $commandResult = null;
     private const COLLECTIONS = ['barn'=>'barns','production'=>'productions','pickup'=>'pickups','sale'=>'sales','price'=>'prices','feed'=>'feeds','feed_purchase'=>'feed_purchases','feed_usage'=>'feed_usages','notification'=>'notifications','activity'=>'activity','correction'=>'corrections','stock_movement'=>'stock_movements'];
     public function __construct(?PDO $db = null) {
         $this->db = $db ?: new PDO('mysql:host='.(getenv('DB_HOST') ?: '127.0.0.1').';port='.(getenv('DB_PORT') ?: '3306').';dbname='.(getenv('DB_NAME') ?: 'ternaku').';charset=utf8mb4', getenv('DB_USER') ?: 'ternaku', getenv('DB_PASSWORD') ?: '', [PDO::ATTR_ERRMODE=>PDO::ERRMODE_EXCEPTION, PDO::ATTR_EMULATE_PREPARES=>false]);
@@ -22,10 +23,16 @@ class FarmService {
         $data=$this->query("SELECT data FROM records WHERE kind='registration' AND user_id=? LIMIT 1",[$userId])->fetchColumn();
         return $data?json_decode($data,true,512,JSON_THROW_ON_ERROR):null;
     }
-    private function publicUser(array $u): array {
+    private function publicUser(array $u,bool $includePhoto = true,bool $compact = false): array {
+        $user=['id'=>$u['id'],'name'=>$u['name'],'email'=>$u['email'],'role'=>$u['role'],'active'=>(bool)$u['active'],'target'=>(float)$u['target'],'registration_status'=>$this->registrationRecord($u['id'])['status']??'approved'];
+        if(!$includePhoto) return $user;
+        if($compact) {
+            $version=$this->query("SELECT SHA2(NULLIF(JSON_UNQUOTE(JSON_EXTRACT(data,'$.photo')),''),256) FROM records WHERE kind='user_profile' AND user_id=? LIMIT 1",[$u['id']])->fetchColumn();
+            $user['photo']=''; if($version) $user['photo_ref']=['kind'=>'profile','id'=>$u['id'],'version'=>$version]; return $user;
+        }
         $profile=$this->query("SELECT data FROM records WHERE kind='user_profile' AND user_id=? LIMIT 1",[$u['id']])->fetchColumn();
         $photo=$profile ? (json_decode($profile,true,512,JSON_THROW_ON_ERROR)['photo']??'') : '';
-        return ['id'=>$u['id'],'name'=>$u['name'],'email'=>$u['email'],'role'=>$u['role'],'active'=>(bool)$u['active'],'target'=>(float)$u['target'],'registration_status'=>$this->registrationRecord($u['id'])['status']??'approved','photo'=>$photo];
+        return $user+['photo'=>$photo];
     }
     private function text(array $p, string $key, int $max = 2000, bool $required = false): string {
         $v = $p[$key] ?? '';
@@ -74,7 +81,44 @@ class FarmService {
         if (!$r) throw new ApiProblem('Data tidak ditemukan.',404);
         return json_decode($r,true,512,JSON_THROW_ON_ERROR);
     }
-    private function records(string $kind): array { return array_map(fn($r)=>json_decode($r,true,512,JSON_THROW_ON_ERROR),$this->query('SELECT data FROM records WHERE kind=? ORDER BY occurred_at DESC,sequence DESC',[$kind])->fetchAll(PDO::FETCH_COLUMN)); }
+    private function records(string $kind,?string $owner = null,bool $withoutPhotos = false,bool $mediaReferences = false): array {
+        $projection='data';
+        if($withoutPhotos) {
+            // MariaDB may return SQL NULL for a missing nested path. Only remove paths
+            // that exist, preserving every JSON document on both supported databases.
+            foreach(['$.photo','$.before.photo','$.after.photo'] as $path) $projection="IF(JSON_CONTAINS_PATH(data,'one','$path'),JSON_REMOVE($projection,'$path'),$projection)";
+        }
+        $withMedia=$mediaReferences && in_array($kind,['production','sale'],true);
+        if($withMedia) $projection.=", SHA2(NULLIF(JSON_UNQUOTE(JSON_EXTRACT(data,'$.photo')),''),256) AS photo_version";
+        $values=[$kind]; if($owner!==null) $values[]=$owner;
+        $rows=$this->query('SELECT '.$projection.' FROM records WHERE kind=?'.($owner!==null?' AND user_id=?':'').' ORDER BY occurred_at DESC,sequence DESC',$values)->fetchAll(PDO::FETCH_NUM);
+        return array_map(function($row) use($kind,$withMedia): array {
+            $record=json_decode($row[0],true,512,JSON_THROW_ON_ERROR);
+            if($withMedia) { $record['photo']=''; if($row[1]!==null) $record['photo_ref']=['kind'=>$kind,'id'=>$record['id'],'version'=>$row[1]]; }
+            return $record;
+        },$rows);
+    }
+    private function publicUsers(bool $admin,bool $compact): array {
+        $owner=$admin?null:$this->actor['id']; $params=$owner===null?[]:[$owner];
+        $users=$this->query('SELECT id,name,email,role,active,target FROM users'.($owner===null?'':' WHERE id=?').' ORDER BY name',$params)->fetchAll(PDO::FETCH_ASSOC);
+        $registrations=[]; foreach($this->records('registration',$owner) as $r) $registrations[$r['user_id']]=$r['status'];
+        $projection=$compact?"SHA2(NULLIF(JSON_UNQUOTE(JSON_EXTRACT(data,'$.photo')),''),256)":"JSON_UNQUOTE(JSON_EXTRACT(data,'$.photo'))";
+        $profiles=$this->query("SELECT user_id,$projection FROM records WHERE kind='user_profile'".($owner===null?'':' AND user_id=?'),$params)->fetchAll(PDO::FETCH_KEY_PAIR);
+        return array_map(function($u) use($registrations,$profiles,$compact): array {
+            $user=['id'=>$u['id'],'name'=>$u['name'],'email'=>$u['email'],'role'=>$u['role'],'active'=>(bool)$u['active'],'target'=>(float)$u['target'],'registration_status'=>$registrations[$u['id']]??'approved','photo'=>$compact?'':($profiles[$u['id']]??'')];
+            if($compact && !empty($profiles[$u['id']])) $user['photo_ref']=['kind'=>'profile','id'=>$u['id'],'version'=>$profiles[$u['id']]];
+            return $user;
+        },$users);
+    }
+    private function settings(): array {
+        $raw=$this->query("SELECT data FROM records WHERE kind='settings' AND id='settings_global'")->fetchColumn();
+        $settings=$raw?json_decode($raw,true,512,JSON_THROW_ON_ERROR):[];
+        return ['harvest_auto_stock'=>$settings['harvest_auto_stock']??true];
+    }
+    private function productionStocked(array $production): bool {
+        // Before this setting existed every saved harvest was already added to stock.
+        return !array_key_exists('stocked_at',$production) || $production['stocked_at']!==null;
+    }
     private function save(string $kind, array $r): void { $this->query('UPDATE records SET data=? WHERE id=? AND kind=?',[$this->json($r),$r['id'],$kind]); }
     private function audit(string $action, string $description, $before = null, $after = null): void {
         $this->insert('activity',['user_id'=>$this->actor['id'],'action'=>$action,'description'=>$description,'created_at'=>$this->now(),'before'=>$before,'after'=>$after]);
@@ -98,7 +142,7 @@ class FarmService {
         if (!$u || ($this->registrationRecord($u['id'])['status']??'approved')!=='approved') throw new ApiProblem('Sesi berakhir atau akun belum disetujui/nonaktif. Silakan masuk kembali.',401);
         // Activity renews the idle window, but never beyond 90 days from login.
         $this->query('UPDATE tokens SET expires_at=LEAST(DATE_ADD(NOW(),INTERVAL 30 DAY),DATE_ADD(created_at,INTERVAL 90 DAY)) WHERE token_hash=? AND expires_at>NOW() AND created_at>DATE_SUB(NOW(),INTERVAL 90 DAY)',[$hash]);
-        return $this->actor=$this->publicUser($u);
+        return $this->actor=$this->publicUser($u,false);
     }
     private function setupToken(): string {
         $token=getenv('SETUP_TOKEN') ?: '';
@@ -196,11 +240,11 @@ class FarmService {
             return ['status'=>$first?'active':'pending','message'=>$first?'Admin pertama berhasil dibuat. Silakan masuk.':'Pendaftaran berhasil. Akun Anda menunggu persetujuan admin.'];
         } catch(Throwable $e) { if($this->db->inTransaction()) $this->db->rollBack(); throw $e; }
     }
-    public function login(array $p, string $ip): array {
+    public function login(array $p, string $ip,bool $compact = false): array {
         $email=strtolower($this->text($p,'email',190,true)); $password=$p['password']??'';
         if(!is_string($password) || strlen($password)>200 || $password==='') throw new ApiProblem('Kata sandi wajib diisi.');
         $key=hash('sha256',$ip.'|'.$email);
-        return $this->authTransaction(function() use($email,$password,$key): array {
+        return $this->authTransaction(function() use($email,$password,$key,$compact): array {
             $a=$this->lockedAttempts($key);
             if ((int)$a>=10) { $this->db->commit(); throw new ApiProblem('Terlalu banyak percobaan. Coba kembali dalam 15 menit.',429); }
             $this->query('UPDATE login_attempts SET attempts=attempts+1 WHERE attempt_key=?',[$key]);
@@ -218,7 +262,7 @@ class FarmService {
             $this->query('DELETE FROM tokens WHERE expires_at<=NOW() OR created_at<=DATE_SUB(NOW(),INTERVAL 90 DAY)');
             $token=bin2hex(random_bytes(32));
             $this->query('INSERT INTO tokens(token_hash,user_id,expires_at) VALUES(?,?,DATE_ADD(NOW(),INTERVAL 30 DAY))',[hash('sha256',$token),$u['id']]);
-            $this->actor=$this->publicUser($u); $this->audit('auth.login','Masuk ke aplikasi');
+            $this->actor=$this->publicUser($u,true,$compact); $this->audit('auth.login','Masuk ke aplikasi');
             $this->db->commit(); return ['token'=>$token,'user'=>$this->actor];
         });
     }
@@ -227,23 +271,47 @@ class FarmService {
         try { $this->query('DELETE FROM tokens WHERE token_hash=?',[hash('sha256',$token)]); $this->audit('auth.logout','Keluar dari aplikasi'); $this->db->commit(); }
         catch (Throwable $e) { $this->db->rollBack(); throw $e; }
     }
-    public function bootstrap(): array {
+    public function bootstrap(bool $compact = false): array {
         $this->db->beginTransaction();
-        try { $state = $this->readState(); $this->db->commit(); return $state; }
+        try { $state = $this->readState($compact); $this->db->commit(); return $state; }
         catch (Throwable $e) { $this->db->rollBack(); throw $e; }
     }
-    private function readState(): array {
+    public function syncPrices(): array {
+        $this->db->beginTransaction();
+        try {
+            $data=['prices'=>$this->records('price'),'notifications'=>$this->records('notification',$this->actor['id']),'user'=>$this->actor,'settings'=>$this->settings()];
+            // Authentication provides a safe user without profile image bytes on this path.
+            unset($data['user']['photo'],$data['user']['photo_ref']);
+            $this->db->commit(); return $data;
+        } catch(Throwable $e) { $this->db->rollBack(); throw $e; }
+    }
+    public function media(string $kind,string $id): array {
+        if(!in_array($kind,['production','sale','profile'],true) || !preg_match('/^[A-Za-z0-9_-]{1,40}$/D',$id)) throw new ApiProblem('Media tidak ditemukan.',404);
+        if($kind==='profile') {
+            if($this->actor['role']!=='admin' && $id!==$this->actor['id']) throw new ApiProblem('Foto profil bukan milik Anda.',403);
+            $raw=$this->query("SELECT JSON_UNQUOTE(JSON_EXTRACT(data,'$.photo')) FROM records WHERE kind='user_profile' AND user_id=? LIMIT 1",[$id])->fetchColumn();
+        } else {
+            // Authorize metadata before loading potentially large image bytes.
+            $owner=$this->query('SELECT user_id FROM records WHERE kind=? AND id=?',[$kind,$id])->fetchColumn();
+            if($owner===false) throw new ApiProblem('Media tidak ditemukan.',404);
+            $this->owned(['user_id'=>$owner]);
+            $raw=$this->query("SELECT JSON_UNQUOTE(JSON_EXTRACT(data,'$.photo')) FROM records WHERE kind=? AND id=?",[$kind,$id])->fetchColumn();
+        }
+        if(!is_string($raw) || !preg_match('~^data:(image/(?:jpeg|png|webp));base64,([A-Za-z0-9+/]+={0,2})$~D',$raw,$match)) throw new ApiProblem('Media tidak ditemukan.',404);
+        $bytes=base64_decode($match[2],true); $image=$bytes===false?false:@getimagesizefromstring($bytes);
+        if(!$image || ($image['mime']??'')!==$match[1]) throw new ApiProblem('Media tidak valid.',404);
+        return ['content_type'=>$match[1],'bytes'=>$bytes,'version'=>hash('sha256',$raw)];
+    }
+    private function readState(bool $compact = false): array {
         $admin=$this->actor['role']==='admin'; $state=[];
         foreach (self::COLLECTIONS as $kind=>$collection) {
-            $r=$this->records($kind);
-            if ($kind==='notification' || (!$admin && in_array($kind,['production','pickup','sale','correction','stock_movement'],true))) $r=array_values(array_filter($r,fn($i)=>($i['user_id']??'')===$this->actor['id']));
-            if (!$admin && $kind==='activity') $r=[];
-            // Feed purchasing costs/suppliers are management data; stock remains shared below.
-            if (!$admin && $kind==='feed_purchase') $r=[];
-            if (!$admin && $kind==='feed_usage') $r=array_values(array_filter($r,fn($i)=>$i['user_id']===$this->actor['id']));
-            $state[$collection]=$r;
+            // Skip restricted tables entirely, and scope ownership in SQL before reading JSON.
+            if(!$admin && in_array($kind,['activity','feed_purchase'],true)) { $state[$collection]=[]; continue; }
+            $own=$kind==='notification' || (!$admin && in_array($kind,['production','pickup','sale','correction','stock_movement','feed_usage'],true));
+            $state[$collection]=$this->records($kind,$own?$this->actor['id']:null,$compact,$compact);
         }
-        $state['users']=array_map(fn($u)=>$this->publicUser($u),$this->query('SELECT * FROM users'.($admin?'':' WHERE id='.$this->db->quote($this->actor['id'])).' ORDER BY name')->fetchAll(PDO::FETCH_ASSOC));
+        $state['settings']=$this->settings();
+        $state['users']=$this->publicUsers($admin,$compact);
         $state['inventory']=[]; $state['feed_inventory']=[];
         foreach($this->query('SELECT * FROM stock')->fetchAll(PDO::FETCH_ASSOC) as $s) {
             if (strpos($s['stock_key'],'egg:')===0) $state['inventory'][substr($s['stock_key'],4)]=['eggs'=>(int)$s['eggs'],'kg'=>(float)$s['kg'],'trays'=>(int)$s['trays']];
@@ -253,7 +321,7 @@ class FarmService {
     }
     private function pickupBalance(array $p,?string $excludeSale = null): array {
         $q=['eggs'=>$p['eggs']-$p['returned_eggs'],'kg'=>round($p['kg']-$p['returned_kg'],3),'trays'=>$p['trays']-$p['returned_trays']];
-        foreach($this->records('sale') as $sale) if($sale['id']!==$excludeSale) foreach($sale['items'] as $i) if($i['pickup_id']===$p['id']) foreach(['eggs','kg','trays'] as $k) $q[$k]=round($q[$k]-$i[$k],3);
+        foreach($this->records('sale',$p['user_id'],true) as $sale) if($sale['id']!==$excludeSale) foreach($sale['items'] as $i) if($i['pickup_id']===$p['id']) foreach(['eggs','kg','trays'] as $k) $q[$k]=round($q[$k]-$i[$k],3);
         return $q;
     }
     private function checkBalance(array $q,array $b): void {
@@ -288,7 +356,7 @@ class FarmService {
         $r=$this->record($entity,$id,true); $this->owned($r);
         if($this->actor['role']!=='admin' && ($entity!=='production' || $r['locked'])) throw new ApiProblem('Data ini harus dikoreksi melalui persetujuan admin.',403);
         $changes=$this->changes($entity,$changes); $updated=array_replace($r,$changes);
-        if($entity==='production') {
+        if($entity==='production' && $this->productionStocked($r)) {
             $delta=['eggs'=>(int)($updated['eggs']-$r['eggs']),'kg'=>round($updated['kg']-$r['kg'],3),'trays'=>(int)($updated['trays']-$r['trays'])];
             $this->stock('egg:'.$r['category'],$delta['eggs'],$delta['kg'],$delta['trays']);
             if($delta['eggs']!==0 || $delta['kg']!=0 || $delta['trays']!==0) $this->movement('correction',$r,$delta,'Koreksi oleh '.$this->actor['name'].': '.$reason,$this->now());
@@ -318,8 +386,10 @@ class FarmService {
         if($entity==='sale' && array_filter($updated['items'],fn($item)=>$item['category']==='cracked' && $item['unit_price']==0)) $this->text($updated,'customer',190,true);
         $this->save($entity,$updated); $this->audit('correction.apply',$reason,$r,$updated);
     }
-    public function command(string $action,array $p,string $requestId = ''): array {
+    public function command(string $action,array $p,string $requestId = '',bool $compact = false): array {
         if($requestId !== '' && !preg_match('/^[A-Za-z0-9_-]{8,80}$/D',$requestId)) throw new ApiProblem('ID permintaan tidak valid.');
+        $this->commandResult=null;
+        $resultId='cmd_'.substr(hash('sha256',$this->actor['id'].'|'.$requestId),0,36);
         $fingerprint=hash('sha256',$this->json([$action,$p]));
         $this->db->beginTransaction();
         try {
@@ -333,22 +403,50 @@ class FarmService {
                 $old=$this->query('SELECT fingerprint FROM command_requests WHERE user_id=? AND request_id=?',[$this->actor['id'],$requestId])->fetchColumn();
                 if($old) {
                     if(!hash_equals($old,$fingerprint)) throw new ApiProblem('ID permintaan sudah digunakan untuk perubahan berbeda.',409);
-                    $this->db->commit(); return $this->bootstrap();
+                    $saved=$this->query("SELECT data FROM records WHERE kind='command_result' AND id=? AND user_id=?",[$resultId,$this->actor['id']])->fetchColumn();
+                    $result=$saved?json_decode($saved,true,512,JSON_THROW_ON_ERROR):null;
+                    $this->db->commit(); return $this->commandState($compact,$result);
                 }
             }
             $this->dispatch($action,$p);
+            if($this->commandResult!==null) {
+                $this->commandResult['request_id']=$requestId;
+                if($requestId!=='') $this->insert('command_result',$this->commandResult+['id'=>$resultId,'user_id'=>$this->actor['id'],'created_at'=>$this->now()]);
+            }
             if($requestId!=='') $this->query('INSERT INTO command_requests(user_id,request_id,fingerprint) VALUES(?,?,?)',[$this->actor['id'],$requestId,$fingerprint]);
             $this->query('UPDATE command_mutex SET version=version+1 WHERE id=1');
-            $this->db->commit(); return $this->bootstrap();
+            $this->db->commit(); return $this->commandState($compact,$this->commandResult);
         } catch(Throwable $e) { if($this->db->inTransaction()) $this->db->rollBack(); throw $e; }
+    }
+    private function commandState(bool $compact,?array $result): array {
+        $state=$this->bootstrap($compact);
+        if($result!==null) $state['command_result']=['action'=>$result['action'],'record_id'=>$result['record_id'],'request_id'=>$result['request_id']];
+        return $state;
     }
     private function dispatch(string $action,array $p): void {
         switch($action) {
+            case 'settings.update':
+                $this->admin();
+                if(array_diff(array_keys($p),['harvest_auto_stock']) || !is_bool($p['harvest_auto_stock']??null)) throw new ApiProblem('Pengaturan stok panen harus berupa aktif atau nonaktif.');
+                $before=$this->settings(); $after=['harvest_auto_stock'=>$p['harvest_auto_stock']];
+                $this->query("INSERT INTO records(id,kind,occurred_at,data) VALUES('settings_global','settings',NOW(),?) ON DUPLICATE KEY UPDATE data=VALUES(data)",[$this->json($after)]);
+                $this->audit($action,'Mengubah pengaturan stok panen otomatis',$before,$after); break;
             case 'production.create':
                 $q=$this->quantity($p); $category=$this->enum($p,'category',['good','cracked']);
                 $barn=$this->text($p,'barn_id',40); if($barn!=='') $this->record('barn',$barn);
-                $r=$this->insert('production',$q+['date'=>$this->date($p),'user_id'=>$this->actor['id'],'barn_id'=>$barn,'category'=>$category,'notes'=>$this->text($p,'notes'),'photo'=>$this->photo($p),'location'=>$this->text($p,'location',190),'created_at'=>$this->now(),'locked'=>false]);
-                $this->stock('egg:'.$category,$q['eggs'],$q['kg'],$q['trays']); $this->movement('production',$r,$q,$r['notes']); $this->audit($action,'Mencatat produksi telur',null,$r); break;
+                $automatic=$this->settings()['harvest_auto_stock']; $now=$this->now();
+                $r=$this->insert('production',$q+['date'=>$this->date($p),'user_id'=>$this->actor['id'],'barn_id'=>$barn,'category'=>$category,'notes'=>$this->text($p,'notes'),'photo'=>$this->photo($p),'location'=>$this->text($p,'location',190),'created_at'=>$now,'locked'=>false,'stocked_at'=>$automatic?$now:null,'stocked_by'=>$automatic?$this->actor['id']:null]);
+                if($automatic) { $this->stock('egg:'.$category,$q['eggs'],$q['kg'],$q['trays']); $this->movement('production',$r,$q,$r['notes']); }
+                $this->audit($action,$automatic?'Mencatat produksi telur dan menambah stok':'Mencatat panen yang menunggu penerimaan stok',null,$r); break;
+            case 'production.receive':
+                if(array_diff(array_keys($p),['id'])) throw new ApiProblem('Penerimaan stok harus mencakup seluruh panen.');
+                $r=$this->record('production',$this->text($p,'id',40,true),true); $this->owned($r);
+                if($this->productionStocked($r)) throw new ApiProblem('Panen ini sudah diterima ke stok.',409);
+                $before=$r; $r['stocked_at']=$this->now(); $r['stocked_by']=$this->actor['id'];
+                $q=['eggs'=>$r['eggs'],'kg'=>$r['kg'],'trays'=>$r['trays']];
+                $this->stock('egg:'.$r['category'],$q['eggs'],$q['kg'],$q['trays']); $this->save('production',$r);
+                $this->movement('production',$r,$q,'Penerimaan panen: '.$r['notes'],$r['stocked_at']);
+                $this->audit($action,'Menerima seluruh panen ke stok',$before,$r); break;
             case 'pickup.create':
                 $q=$this->quantity($p); $category=$this->enum($p,'category',['good','cracked']);
                 $this->stock('egg:'.$category,-$q['eggs'],-$q['kg'],-$q['trays']);
@@ -436,6 +534,7 @@ class FarmService {
         $customer=$this->text($p,'customer',190); if($hasFree && $customer==='') throw new ApiProblem('Nama penerima telur gratis wajib diisi.');
         $method=$this->enum($p,'payment_method',['cash','transfer','qris','credit']);
         $r=$this->insert('sale',['number'=>'TK-'.date('Ymd').'-'.strtoupper(bin2hex(random_bytes(4))),'date'=>$this->date($p),'user_id'=>$this->actor['id'],'customer'=>$customer,'phone'=>$this->text($p,'phone',40),'items'=>$out,'total'=>$total,'paid'=>$paid,'balance'=>$total-$paid,'payment_method'=>$total==0?'cash':$method,'payment_status'=>$paid==$total?'paid':($paid>0?'partial':'unpaid'),'notes'=>$this->text($p,'notes'),'photo'=>$this->photo($p),'created_at'=>$this->now(),'locked'=>true]);
+        $this->commandResult=['action'=>'sale.create','record_id'=>$r['id'],'request_id'=>''];
         $this->audit('sale.create','Mencatat penjualan '.$r['number'],null,$r);
     }
     private function createUser(array $p): void {

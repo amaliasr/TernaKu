@@ -129,6 +129,8 @@ export function createDemoState(now = new Date()): State {
             : "Dipisahkan saat sortir.",
         created_at: stamp(offset, "07:15"),
         locked: offset < -1,
+        stocked_at: stamp(offset, "07:15"),
+        stocked_by: `emp-${(idx % 3) + 1}`,
       });
     }
     for (let worker = 1; worker <= 3; worker++) {

@@ -119,3 +119,61 @@ test("a failed refresh does not prevent the next interval from retrying", async 
   });
   assert.equal(applied, true);
 });
+
+test("manual full refresh waits behind a lightweight poll and is never swallowed", async () => {
+  const sync = new SessionSync();
+  const response = deferred();
+  const reads: string[] = [];
+  const light = sync.refresh(async () => { reads.push("prices"); await response.promise; }, "prices");
+  await Promise.resolve();
+  const full = sync.refresh(async () => { reads.push("full"); }, "full");
+  const duplicate = sync.refresh(async () => { reads.push("duplicate"); }, "full");
+  assert.equal(full, duplicate);
+  assert.deepEqual(reads, ["prices"]);
+  response.resolve();
+  await Promise.all([light, full]);
+  assert.deepEqual(reads, ["prices", "full"]);
+});
+
+test("a failed lightweight poll still permits the queued full refresh", async () => {
+  const sync = new SessionSync();
+  const response = deferred();
+  const light = sync.refresh(async () => { await response.promise; throw new Error("offline"); }, "prices");
+  let fullRead = false;
+  const full = sync.refresh(async ({ canApply }) => { fullRead = canApply(); }, "full");
+  response.resolve();
+  await assert.rejects(light, /offline/);
+  await full;
+  assert.equal(fullRead, true);
+});
+
+test("logout discards a queued full read and permits the next user's lightweight poll", async () => {
+  const sync = new SessionSync();
+  const response = deferred();
+  const light = sync.refresh(async () => { await response.promise; }, "prices");
+  let oldFullRead = false;
+  const full = sync.refresh(async () => { oldFullRead = true; }, "full");
+  sync.invalidate();
+  let newRead = false;
+  await sync.refresh(async ({ canApply }) => { newRead = canApply(); }, "prices");
+  response.resolve();
+  await Promise.all([light, full]);
+  assert.equal(oldFullRead, false);
+  assert.equal(newRead, true);
+});
+
+test("a new mutation prevents a queued full read until the confirmed command finishes", async () => {
+  const sync = new SessionSync();
+  const response = deferred();
+  const light = sync.refresh(async () => { await response.promise; }, "prices");
+  let fullReads = 0;
+  const read = async () => { fullReads += 1; };
+  const full = sync.refresh(read, "full");
+  const finish = sync.beginMutation();
+  response.resolve();
+  await Promise.all([light, full]);
+  assert.equal(fullReads, 0);
+  finish();
+  await sync.refresh(read, "full");
+  assert.equal(fullReads, 1);
+});

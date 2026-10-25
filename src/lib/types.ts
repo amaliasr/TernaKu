@@ -1,6 +1,14 @@
 export type Category = "good" | "cracked";
 export type Role = "admin" | "employee";
 export type RegistrationStatus = "pending" | "approved" | "rejected";
+export interface MediaReference {
+  kind: "production" | "sale" | "profile";
+  id: string;
+  version: string;
+}
+export interface FarmSettings {
+  harvest_auto_stock: boolean;
+}
 export interface RegistrationAvailability {
   first_admin_required: boolean;
   setup_enabled: boolean;
@@ -27,6 +35,7 @@ export interface User {
   target: number;
   avatar?: string;
   photo?: string;
+  photo_ref?: MediaReference;
 }
 export interface Barn {
   id: string;
@@ -46,9 +55,13 @@ export interface Production {
   trays: number;
   notes: string;
   photo?: string;
+  photo_ref?: MediaReference;
   location?: string;
   created_at: string;
   locked: boolean;
+  /** Explicit null awaits warehouse receipt; missing means legacy received stock. */
+  stocked_at?: string | null;
+  stocked_by?: string | null;
 }
 export interface Pickup {
   id: string;
@@ -93,6 +106,7 @@ export interface Sale {
   payment_status: "paid" | "partial" | "unpaid";
   notes: string;
   photo?: string;
+  photo_ref?: MediaReference;
   created_at: string;
   locked: boolean;
 }
@@ -183,6 +197,8 @@ export interface Correction {
   reviewed_by?: string;
 }
 export interface State {
+  settings?: FarmSettings;
+  command_result?: { action: string; record_id: string; request_id: string };
   users: User[];
   barns: Barn[];
   productions: Production[];
@@ -198,6 +214,12 @@ export interface State {
   stock_movements?: StockMovement[];
   inventory?: Record<Category, Quantity>;
   feed_inventory?: Record<string, number>;
+}
+export interface PriceSyncResponse {
+  prices: Price[];
+  notifications: Notification[];
+  user: Omit<User, "photo" | "photo_ref">;
+  settings: FarmSettings;
 }
 export interface Quantity {
   eggs: number;

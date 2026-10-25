@@ -5,11 +5,13 @@ import { Camera, ImagePlus, X } from "lucide-react";
 import { preparePhoto } from "@/lib/photos";
 import ImagePreview from "./ImagePreview";
 import styles from "./PhotoUpload.module.css";
+import type { MediaReference } from "@/lib/types";
 
 type PhotoUploadProps = {
   onChange: (value: string) => void;
   value?: string;
   defaultValue?: string;
+  photoRef?: MediaReference;
   label?: string;
   disabled?: boolean;
   optional?: boolean;
@@ -17,7 +19,7 @@ type PhotoUploadProps = {
   onBusyChange?: (busy: boolean) => void;
 };
 
-export default function PhotoUpload({ onChange, value, defaultValue = "", label = "Foto dokumentasi", disabled = false, optional = true, capture = "environment", onBusyChange }: PhotoUploadProps) {
+export default function PhotoUpload({ onChange, value, defaultValue = "", photoRef, label = "Foto dokumentasi", disabled = false, optional = true, capture = "environment", onBusyChange }: PhotoUploadProps) {
   const id = useId();
   const camera = useRef<HTMLInputElement>(null);
   const gallery = useRef<HTMLInputElement>(null);
@@ -60,6 +62,6 @@ export default function PhotoUpload({ onChange, value, defaultValue = "", label 
     <small id={`${id}-help`} className="text-muted">Foto besar disesuaikan otomatis hingga maksimal 1 MB. Foto yang sudah kecil dipertahankan bila sesuai. Foto sumber maksimal 25 MB.</small>
     {busy && <p role="status">Memproses foto…</p>}
     {error && <p role="alert" className="text-danger">{error}</p>}
-    {preview && <div className={styles.preview}><ImagePreview src={preview} alt={label} /><button type="button" className="btn btn-light" disabled={busy || disabled} onClick={() => { change(""); setError(""); }}><X size={18} /> Hapus foto</button></div>}
+    {(preview || photoRef) && <div className={styles.preview}><ImagePreview src={preview} photoRef={photoRef} alt={label} /><button type="button" className="btn btn-light" disabled={busy || disabled} onClick={() => { change(""); setError(""); }}><X size={18} /> Hapus foto</button></div>}
   </div>;
 }

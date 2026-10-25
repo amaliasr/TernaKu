@@ -251,7 +251,9 @@ function QuantityEntry({
         {dateLabel(date || initialDate)} · {user?.name}.{" "}
         {isPickup
           ? "Telur diambil dari stok gudang."
-          : "Panen masuk ke stok gudang."}
+          : state.settings?.harvest_auto_stock !== false
+            ? "Setelah disimpan, panen langsung menambah stok gudang."
+            : "Setelah disimpan, panen belum menambah stok. Terima panen lewat menu Gudang."}
       </p>
       <CategoryButtons
         value={category}
@@ -261,7 +263,7 @@ function QuantityEntry({
       {isPickup && (!available?.kg || !available.eggs) && (
         <p className={styles.warning}>
           Stok {categoryLabel(category).toLowerCase()} belum tersedia. Pilih
-          jenis lain atau catat panen terlebih dahulu.
+          jenis lain atau pastikan panen sudah diterima di gudang.
         </p>
       )}
       <Numbers

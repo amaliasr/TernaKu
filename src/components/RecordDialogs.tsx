@@ -577,9 +577,11 @@ export function EmployeeDialog({
 export function SaleDetail({
   sale,
   onClose,
+  saved = false,
 }: {
   sale: Sale;
   onClose: () => void;
+  saved?: boolean;
 }) {
   const { state } = useFarm();
   const [error, setError] = useState("");
@@ -592,6 +594,11 @@ export function SaleDetail({
       wide
     >
       <div className="modal-body-custom">
+        {saved && (
+          <div className="alert alert-success" role="status">
+            Penjualan sudah tersimpan. Anda bisa mengunduh nota di bawah.
+          </div>
+        )}
         {error && (
           <div className="alert alert-danger" role="alert">
             {error}
@@ -669,9 +676,10 @@ export function SaleDetail({
           </div>
         </div>
         {sale.notes && <p className="mt-3 mb-0 text-muted">{sale.notes}</p>}
-        {sale.photo && (
+        {(sale.photo || sale.photo_ref) && (
           <ImagePreview
             src={sale.photo}
+            photoRef={sale.photo_ref}
             alt="Bukti pembayaran"
             className="mt-3"
           />
