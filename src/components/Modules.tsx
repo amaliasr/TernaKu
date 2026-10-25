@@ -50,6 +50,7 @@ import type {
 } from "@/lib/types";
 import EntryModal from "./EntryModal";
 import ImagePreview from "./ImagePreview";
+import Avatar from "./Avatar";
 import PendingHarvest from "./PendingHarvest";
 import {
   businessDate,
@@ -1534,6 +1535,7 @@ function EmployeesPage({ open }: { open: OpenForm }) {
   const [search, setSearch] = useState("");
   const [status, setStatus] = useState("");
   const [edit, setEdit] = useState<User | null>(null);
+  const [editNotice, setEditNotice] = useState("");
   const [decision, setDecision] = useState<{
     employee: User;
     approve: boolean;
@@ -1609,6 +1611,11 @@ function EmployeesPage({ open }: { open: OpenForm }) {
         <AddButton onClick={() => open("user")}>Tambah karyawan</AddButton>
       </Heading>
       {action.feedback}
+      {editNotice && (
+        <div className="alert alert-success" role="status">
+          {editNotice}
+        </div>
+      )}
       {decisionNotice && (
         <div className="alert alert-success" role="status">
           {decisionNotice}
@@ -1715,7 +1722,13 @@ function EmployeesPage({ open }: { open: OpenForm }) {
                   return (
                     <tr key={u.id}>
                       <td>
-                        <Person name={u.name} small={u.email} />
+                        <div className="table-person">
+                          <Avatar user={u} size="sm" />
+                          <div>
+                            <strong>{u.name}</strong>
+                            <small>{u.email}</small>
+                          </div>
+                        </div>
                       </td>
                       <td>
                         <Pill tone={u.role === "admin" ? "blue" : "neutral"}>
@@ -1773,6 +1786,18 @@ function EmployeesPage({ open }: { open: OpenForm }) {
                       </td>
                       <td>
                         <div className="table-actions">
+                          <button
+                            type="button"
+                            className="btn btn-sm btn-outline-primary"
+                            aria-label={`Edit akun ${u.name}`}
+                            disabled={decisionBusy || action.busy}
+                            onClick={() => {
+                              setEditNotice("");
+                              setEdit(u);
+                            }}
+                          >
+                            <Pencil size={16} /> Edit akun
+                          </button>
                           {registrationState(u) !== "approved" ? (
                             <>
                               <button
@@ -1797,14 +1822,6 @@ function EmployeesPage({ open }: { open: OpenForm }) {
                             </>
                           ) : (
                             <>
-                              <button
-                                className="icon-btn"
-                                aria-label={`Edit ${u.name}`}
-                                title="Edit nama dan target"
-                                onClick={() => setEdit(u)}
-                              >
-                                <Pencil size={16} />
-                              </button>
                               <button
                                 className="btn btn-sm btn-light"
                                 disabled={action.busy || u.id === user.id}
@@ -1838,7 +1855,14 @@ function EmployeesPage({ open }: { open: OpenForm }) {
         )}
         <TableEnd count={rows.length} label="anggota tim" />
       </section>
-      {edit && <EmployeeDialog employee={edit} onClose={() => setEdit(null)} />}
+      {edit && (
+        <EmployeeDialog
+          key={edit.id}
+          employee={edit}
+          onClose={() => setEdit(null)}
+          onSaved={(name) => setEditNotice(`Akun ${name} berhasil diperbarui.`)}
+        />
+      )}
       {decision && (
         <Dialog
           title={

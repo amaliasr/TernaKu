@@ -23,6 +23,7 @@ import type {
 
 const NOW = new Date("2026-10-13T09:00:00Z");
 const DATE = "2026-10-13";
+const DOCUMENTATION = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aC9sAAAAASUVORK5CYII=";
 function fixture(): State {
   const s = emptyState();
   s.users = [
@@ -94,6 +95,8 @@ const sale = (
 ) =>
   cmd(s, "a", "sale.create", {
     date: DATE,
+    customer: "Pelanggan uji",
+    photo: DOCUMENTATION,
     items: [{ pickup_id: id, category: "good", eggs, kg, trays: 1 }],
     payment_method: "cash",
     paid: 0,
@@ -124,6 +127,7 @@ function gift(s: State, user: string, extra: CommandPayload = {}): State {
   return cmd(s, user, "sale.create", {
     date: DATE,
     customer: "Pak Budi",
+    photo: DOCUMENTATION,
     items: [
       {
         pickup_id: pickup.id,

@@ -462,12 +462,12 @@ function SaleForm({ onSave, busy, onClose }: FormProps) {
   return (
     <FormShell
       busy={busy}
-      disabled={!price || photoBusy}
+      disabled={!price || photoBusy || !photo}
       onClose={onClose}
       label={photoBusy ? "Memproses foto…" : "Simpan penjualan"}
       onSubmit={(e) => {
         e.preventDefault();
-        if (photoBusy) return;
+        if (photoBusy || !photo) return;
         const data = dataFrom(e.currentTarget);
         void onSave("sale.create", {
           ...data,
@@ -505,7 +505,7 @@ function SaleForm({ onSave, busy, onClose }: FormProps) {
         <Field
           className="col-sm-6"
           label={
-            hasFree ? "Nama penerima telur gratis" : "Pelanggan (opsional)"
+            hasFree ? "Nama penerima telur gratis (wajib)" : "Nama pelanggan (wajib)"
           }
         >
           <input
@@ -513,7 +513,9 @@ function SaleForm({ onSave, busy, onClose }: FormProps) {
             className="form-control"
             placeholder="Nama pelanggan"
             maxLength={150}
-            required={hasFree}
+            pattern={".*\\S.*"}
+            title="Isi nama pelanggan, bukan hanya spasi."
+            required
           />
         </Field>
         <Field className="col-sm-6" label="Telepon pelanggan (opsional)">
@@ -745,7 +747,8 @@ function SaleForm({ onSave, busy, onClose }: FormProps) {
           maxLength={2000}
         />
       </Field>
-      <Photo label="Bukti pembayaran" value={photo} onChange={setPhoto} onBusyChange={setPhotoBusy} disabled={busy} />
+      <Photo label="Foto dokumentasi penjualan" optional={false} value={photo} onChange={setPhoto} onBusyChange={setPhotoBusy} disabled={busy} />
+      <p className="small text-muted mt-2">Nama pelanggan dan foto dokumentasi wajib diisi, termasuk untuk telur gratis. Ambil foto langsung atau pilih dari galeri.</p>
     </FormShell>
   );
 }

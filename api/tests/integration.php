@@ -14,6 +14,7 @@ function resetTestDatabase(bool $schema=true): void {
     if($schema) foreach(explode(';',preg_replace('/^--.*$/m','',file_get_contents(dirname(__DIR__).'/schema.sql'))) as $sql) if(trim($sql)!=='') $db->exec($sql);
 }
 $checks=0;
+$profilePhoto='data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aC9sAAAAASUVORK5CYII=';
 function check(bool $ok,string $label): void { global $checks; if(!$ok) throw new RuntimeException('FAIL: '.$label); ++$checks; echo "PASS $label\n"; }
 function req(string $path,array $body=[],string $token='',string $method='POST',int $expected=200,?string $origin=null): array {
     global $base; $c=curl_init($base.$path); $headers=['Content-Type: application/json']; if($token!=='') $headers[]='Authorization: Bearer '.$token; if($origin) $headers[]='Origin: '.$origin;
@@ -28,6 +29,11 @@ function mediaReq(string $path,string $token,int $expected=200): array {
     if($status!==$expected) throw new RuntimeException("GET $path expected $expected, received $status"); return ['body'=>substr($raw,$length),'headers'=>substr($raw,0,$length),'type'=>$type];
 }
 function first(array $state,string $collection,callable $predicate): array { foreach($state[$collection] as $r) if($predicate($r)) return $r; throw new RuntimeException('Missing '.$collection); }
+function businessSnapshot(): string {
+    global $db; $rows=[];
+    foreach(['users'=>'id','records'=>'id','stock'=>'stock_key','command_requests'=>'request_id','command_mutex'=>'id'] as $table=>$order) $rows[$table]=$db->query('SELECT * FROM '.$table.' ORDER BY '.$order)->fetchAll(PDO::FETCH_ASSOC);
+    return hash('sha256',json_encode($rows));
+}
 function registrationWorkers(array $jobs): array {
     $workers=[]; foreach($jobs as $job) {
         $pipes=[]; $process=proc_open([PHP_BINARY,__DIR__.'/registration-worker.php'],[0=>['pipe','r'],1=>['pipe','w'],2=>['pipe','w']],$pipes);
@@ -70,6 +76,11 @@ try {
     check(true,'pending status fails closed even if active flag and token are inconsistent');
     $db->exec('UPDATE users SET active=0 WHERE id='.$db->quote($pendingUser['id']));
     cmd('user.update',['id'=>$pendingUser['id'],'active'=>true],$ownerToken,422); check(true,'generic user update cannot bypass pending approval');
+    $state=cmd('user.update',['id'=>$pendingUser['id'],'name'=>'Calon Diperbarui','email'=>' APPLICANT.EDITED@TEST.LOCAL ','photo'=>$profilePhoto,'target'=>2000000],$ownerToken);
+    $pendingEdited=first($state,'users',fn($u)=>$u['id']===$pendingUser['id']);
+    check($pendingEdited['email']==='applicant.edited@test.local' && $pendingEdited['photo']===$profilePhoto && !$pendingEdited['active'] && $pendingEdited['registration_status']==='pending' && $pendingEdited['role']==='employee','admin can edit pending employee identity without approving or activating account');
+    req('/auth/login',['email'=>$pendingEdited['email'],'password'=>$applicant['password']],'','POST',403);
+    cmd('user.update',['id'=>$pendingUser['id'],'email'=>$applicant['email']],$ownerToken);
     $state=cmd('user.approve',['id'=>$pendingUser['id']],$ownerToken); check(first($state,'users',fn($u)=>$u['id']===$pendingUser['id'])['registration_status']==='approved','admin approval activates employee and records approved status');
     $approvedToken=req('/auth/login',['email'=>$applicant['email'],'password'=>$applicant['password']])['token']; check(strlen($approvedToken)===64,'approved employee can log in');
     cmd('user.approve',['id'=>$pendingUser['id']],$ownerToken,409); check(true,'already-approved registration cannot be processed twice');
@@ -128,7 +139,6 @@ try {
     $sari=first($s,'users',fn($u)=>$u['email']==='sari@test.local');
     cmd('user.create',['name'=>'Budi','email'=>'budi@test.local','password'=>'PasswordBudi42','role'=>'employee','target'=>1000000],$a);
     $e=req('/auth/login',['email'=>'sari@test.local','password'=>'PasswordSari42'])['token']; $other=req('/auth/login',['email'=>'budi@test.local','password'=>'PasswordBudi42'])['token'];
-    $profilePhoto='data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aC9sAAAAASUVORK5CYII=';
     $s=cmd('profile.update',['name'=>'Sari Profil','photo'=>$profilePhoto],$e); $profile=first($s,'users',fn($u)=>$u['id']===$sari['id']);
     check($profile['name']==='Sari Profil' && $profile['photo']===$profilePhoto && $profile['role']==='employee','employee can update own name and photo without changing role');
     $s=cmd('profile.update',['name'=>'Sari'],$e); check($s['users'][0]['photo']===$profilePhoto,'name-only profile update retains photo');
@@ -146,6 +156,33 @@ try {
     $s=cmd('profile.update',['name'=>'Sari'],$e); check($s['users'][0]['photo']===$legacyPhoto,'name-only change preserves a legacy photo without revalidation');
     $s=cmd('profile.update',['name'=>'Sari','photo'=>''],$e); check($s['users'][0]['photo']==='','profile photo can be removed');
     $s=req('/bootstrap',[],$other,'GET'); check(count($s['users'])===1 && $s['users'][0]['name']==='Budi' && $s['users'][0]['photo']==='','profile update does not change or expose another employee');
+    $passwordBefore=$db->query('SELECT password_hash FROM users WHERE id='.$db->quote($sari['id']))->fetchColumn();
+    $s=cmd('user.update',['id'=>$sari['id'],'name'=>'Sari Edited','email'=>' SARI.EDITED@TEST.LOCAL ','photo'=>$profilePhoto,'target'=>6000000],$a);
+    $edited=first($s,'users',fn($u)=>$u['id']===$sari['id']);
+    check($edited['name']==='Sari Edited' && $edited['email']==='sari.edited@test.local' && $edited['photo']===$profilePhoto && $edited['target']==6000000 && $edited['active'] && $edited['registration_status']==='approved','admin employee editing persists name normalized email photo and target without privilege changes');
+    $audit=first($s,'activity',fn($r)=>$r['action']==='user.update' && $r['after']['id']===$sari['id']);
+    check(!isset($audit['before']['photo']) && !isset($audit['after']['photo']) && $audit['after']['photo_changed']===true && !str_contains(json_encode($audit),'data:image/'),'employee edits audit safe identity metadata and photo change without embedding images');
+    $self=req('/bootstrap?compact=1',[],$e,'GET')['users'][0];
+    check($self['email']===$edited['email'] && $self['photo']==='' && $self['photo_ref']['version']===hash('sha256',$profilePhoto) && mediaReq('/media/profile/'.$sari['id'],$e)['body']===$png,'existing employee session and private media reflect admin edits after reload');
+    req('/auth/login',['email'=>'sari@test.local','password'=>'PasswordSari42'],'','POST',401);
+    $loginEdited=req('/auth/login',['email'=>' SARI.EDITED@TEST.LOCAL ','password'=>'PasswordSari42']);
+    check($loginEdited['user']['id']===$sari['id'] && $db->query('SELECT password_hash FROM users WHERE id='.$db->quote($sari['id']))->fetchColumn()===$passwordBefore,'changed email becomes login identity while original password remains unchanged');
+    $snapshot=businessSnapshot();
+    foreach([' BUDI@TEST.LOCAL ',' ADMIN@TEST.LOCAL ','','  ','invalid-address',str_repeat('a',191).'@test.local',null] as $email) cmd('user.update',['id'=>$sari['id'],'name'=>'Must not persist','email'=>$email,'photo'=>''],$a,422);
+    foreach(['role','password','registration_status','unexpected'] as $field) cmd('user.update',['id'=>$sari['id'],$field=>'admin'],$a,422);
+    foreach(['name','target','active','photo'] as $field) cmd('user.update',['id'=>$sari['id'],$field=>null],$a,422);
+    foreach(['data:image/png;base64,aGVsbG8=',str_replace('image/png','image/jpeg',$profilePhoto),'https://example.com/photo.png',$legacyPhoto] as $photo) cmd('user.update',['id'=>$sari['id'],'name'=>'Must not persist','photo'=>$photo],$a,422);
+    cmd('user.update',['id'=>'missing_employee','email'=>'absent@test.local'],$a,404);
+    cmd('user.update',['id'=>$sari['id'],'email'=>'forbidden@test.local'],$e,403);
+    cmd('user.update',['id'=>'admin_test','email'=>'changed@test.local'],$a,422);
+    cmd('user.update',['id'=>'admin_test','photo'=>$profilePhoto],$a,422);
+    check(businessSnapshot()===$snapshot,'invalid employee edits, duplicate emails, missing accounts, privilege injection and wrong actors leave all business data unchanged');
+    $s=cmd('user.update',['id'=>$sari['id'],'email'=>'SARI.EDITED@TEST.LOCAL','target'=>6100000],$a);
+    check(first($s,'users',fn($u)=>$u['id']===$sari['id'])['photo']===$profilePhoto,'same normalized email is accepted and omitted employee photo is retained');
+    $db->prepare("UPDATE records SET data=? WHERE kind='user_profile' AND user_id=?")->execute([json_encode(['photo'=>$legacyPhoto]),$sari['id']]);
+    $s=cmd('user.update',['id'=>$sari['id'],'name'=>'Sari'],$a); check(first($s,'users',fn($u)=>$u['id']===$sari['id'])['photo']===$legacyPhoto,'admin name-only edit preserves oversized legacy profile without resubmitting image');
+    $s=cmd('user.update',['id'=>$sari['id'],'email'=>'sari@test.local','photo'=>'','target'=>5000000],$a);
+    check(first($s,'users',fn($u)=>$u['id']===$sari['id'])['photo']==='' && !isset(first(req('/bootstrap?compact=1',[],$a,'GET'),'users',fn($u)=>$u['id']===$sari['id'])['photo_ref']),'explicit empty employee photo removes image and compact reference');
     cmd('price.create',['good_price'=>28000,'cracked_price'=>18000,'effective_at'=>'2026-01-01T00:00:00+07:00'],$e,403); check(true,'employee cannot change prices');
     $s=cmd('price.create',['good_price'=>28000,'cracked_price'=>18000,'effective_at'=>'2026-01-01T00:00:00+07:00'],$a);
     $s=cmd('barn.create',['name'=>'Kandang A','type'=>'ayam','capacity'=>1000,'notes'=>''],$a); $barn=$s['barns'][0]['id'];
@@ -158,10 +195,28 @@ try {
     cmd('pickup.create',array_replace($pick,['eggs'=>1000,'kg'=>10]),$e,422); check(true,'pickup cannot strand a weight-only warehouse remainder');
     $s=cmd('pickup.create',$pick,$e); $pickup=$s['pickups'][0]['id'];
     cmd('pickup.create',$pick,$e,422); check(true,'over-pickup rejected in kg and eggs');
-    $salePayload=['date'=>date('Y-m-d'),'customer'=>'Toko A','phone'=>'','items'=>[['pickup_id'=>$pickup,'category'=>'good','eggs'=>300,'kg'=>18,'trays'=>1]],'payment_method'=>'credit','paid'=>100000,'notes'=>''];
+    $salePayload=['date'=>date('Y-m-d'),'customer'=>'Toko A','phone'=>'','photo'=>$profilePhoto,'items'=>[['pickup_id'=>$pickup,'category'=>'good','eggs'=>300,'kg'=>18,'trays'=>1]],'payment_method'=>'credit','paid'=>100000,'notes'=>''];
+    $snapshot=businessSnapshot();
+    foreach([''," \t\n ",str_repeat('a',191),null] as $customer) cmd('sale.create',array_replace($salePayload,['customer'=>$customer]),$e,422);
+    $missingCustomer=$salePayload; unset($missingCustomer['customer']); cmd('sale.create',$missingCustomer,$e,422);
+    foreach(['','  ','data:image/png;base64,aGVsbG8=',str_replace('image/png','image/jpeg',$profilePhoto),'https://example.com/photo.png',$legacyPhoto,null] as $photo) cmd('sale.create',array_replace($salePayload,['photo'=>$photo]),$e,422);
+    $missingPhoto=$salePayload; unset($missingPhoto['photo']); req('/commands',['action'=>'sale.create','payload'=>$missingPhoto,'request_id'=>'invalid-sale-doc-'.bin2hex(random_bytes(10))],$e,'POST',422);
+    check(businessSnapshot()===$snapshot,'missing blank invalid or oversized sale customer/documentation fails atomically without sale audit stock or request records');
     cmd('sale.create',array_replace($salePayload,['expected_price_id'=>'stale-price']),$e,409); check(true,'stale price displayed to client requires refresh before sale');
     cmd('sale.create',array_replace($salePayload,['items'=>[['pickup_id'=>$pickup,'category'=>'good','eggs'=>600,'kg'=>18,'trays'=>1]]]),$e,422); check(true,'sale cannot strand a weight-only pickup remainder');
     $s=cmd('sale.create',$salePayload,$e); $sale=$s['sales'][0]; check($sale['total']===504000 && $sale['balance']===404000,'server computes sale total and debt');
+    // Represent a historical transaction saved before customer/photo became mandatory.
+    $legacySale=array_replace($sale,['customer'=>'','photo'=>'']); $db->prepare("UPDATE records SET data=? WHERE id=? AND kind='sale'")->execute([json_encode($legacySale),$sale['id']]);
+    $legacyRead=first(req('/bootstrap',[],$e,'GET'),'sales',fn($r)=>$r['id']===$sale['id']);
+    check($legacyRead['customer']==='' && $legacyRead['photo']==='' && $legacyRead['total']===504000,'historical sales without customer/photo remain readable');
+    $snapshot=businessSnapshot();
+    foreach([''," \t\n "] as $customer) {
+        cmd('correction.apply',['entity'=>'sale','id'=>$sale['id'],'reason'=>'Nama pelanggan diperiksa','changes'=>['customer'=>$customer]],$a,422);
+        cmd('correction.request',['entity'=>'sale','id'=>$sale['id'],'reason'=>'Nama pelanggan diperiksa','changes'=>['customer'=>$customer]],$e,422);
+    }
+    check(businessSnapshot()===$snapshot,'sale corrections cannot clear customer names or create blank-name requests');
+    $s=cmd('correction.apply',['entity'=>'sale','id'=>$sale['id'],'reason'=>'Catatan penjualan lama diperbarui','changes'=>['notes'=>'Legacy sale note']],$a);
+    $legacyChanged=first($s,'sales',fn($r)=>$r['id']===$sale['id']); check($legacyChanged['notes']==='Legacy sale note' && $legacyChanged['photo']==='' && $legacyChanged['customer']==='','unrelated corrections do not require retroactive documentation on legacy sales');
     cmd('sale.create',$salePayload,$other,403); check(true,'other employee cannot sell owned pickup');
     cmd('sale.create',array_replace($salePayload,['items'=>[$salePayload['items'][0],$salePayload['items'][0]]]),$e,422); check(true,'duplicate pickup lines cannot oversell');
     $s=cmd('price.create',['good_price'=>31000,'cracked_price'=>20000,'effective_at'=>'2026-01-02T00:00:00+07:00'],$a);
@@ -172,7 +227,7 @@ try {
     $s=cmd('pickup.return',['id'=>$pickup,'eggs'=>200,'kg'=>12,'trays'=>1,'notes'=>'Tidak terjual'],$e); check($s['inventory']['good']['kg']==36 && $s['inventory']['good']['eggs']===600,'return restores only unsold stock');
     $returns=array_values(array_filter($s['stock_movements'],fn($m)=>$m['kind']==='return')); check(count($returns)===1 && $returns[0]['reference_id']===$pickup && $returns[0]['kg']==12 && substr($returns[0]['date'],0,10)===date('Y-m-d'),'returns have individually dated stock ledger entries');
     cmd('pickup.return',['id'=>$pickup,'eggs'=>1,'kg'=>0.1,'trays'=>0],$e,422); check(true,'repeat/excess return rejected');
-    $s=cmd('sale.payment',['id'=>$sale['id'],'amount'=>404000],$e); $paid=first($s,'sales',fn($r)=>$r['id']===$sale['id']); check($paid['payment_status']==='paid' && $paid['balance']===0,'debt repayment settles transaction');
+    $s=cmd('sale.payment',['id'=>$sale['id'],'amount'=>404000],$e); $paid=first($s,'sales',fn($r)=>$r['id']===$sale['id']); check($paid['payment_status']==='paid' && $paid['balance']===0 && $paid['photo']==='' && $paid['customer']==='','debt repayment settles legacy transaction without requiring new documentation');
     cmd('sale.payment',['id'=>$sale['id'],'amount'=>1],$e,422); check(true,'overpayment rejected');
     cmd('correction.apply',['entity'=>'production','id'=>$prod,'reason'=>'','changes'=>['kg'=>61]],$e,422); check(true,'mandatory correction reason');
     $s=cmd('correction.apply',['entity'=>'production','id'=>$prod,'reason'=>'Timbangan dikalibrasi','changes'=>['kg'=>61]],$e); check($s['inventory']['good']['kg']==37,'unlocked own production correction adjusts stock');
@@ -227,8 +282,13 @@ try {
         cmd('production.create',array_replace($baseProd,['eggs'=>100,'kg'=>6,'trays'=>0,'notes'=>$marker]),$actorToken);
         $s=cmd('pickup.create',array_replace($pick,['eggs'=>100,'kg'=>6,'trays'=>0,'notes'=>$marker]),$actorToken);
         $ownGood=first($s,'pickups',fn($p)=>$p['notes']===$marker && $p['category']==='good' && $p['user_id']===$actorId); $goodPickups[$role]=$ownGood['id'];
-        $gift=['date'=>date('Y-m-d'),'customer'=>'Pak Budi '.$role,'items'=>[['pickup_id'=>$own['id'],'category'=>'cracked','eggs'=>20,'kg'=>1.2,'trays'=>0,'is_free'=>true]],'payment_method'=>'credit','paid'=>0];
+        $gift=['date'=>date('Y-m-d'),'customer'=>'Pak Budi '.$role,'photo'=>$profilePhoto,'items'=>[['pickup_id'=>$own['id'],'category'=>'cracked','eggs'=>20,'kg'=>1.2,'trays'=>0,'is_free'=>true]],'payment_method'=>'credit','paid'=>0];
+        $snapshot=businessSnapshot();
         cmd('sale.create',array_replace($gift,['customer'=>'  ']),$actorToken,422);
+        cmd('sale.create',array_replace($gift,['photo'=>'']),$actorToken,422);
+        $regular=array_replace($gift,['items'=>[['pickup_id'=>$ownGood['id'],'category'=>'good','eggs'=>5,'kg'=>0.3,'trays'=>0]]]);
+        cmd('sale.create',array_replace($regular,['customer'=>'']),$actorToken,422); cmd('sale.create',array_replace($regular,['photo'=>'']),$actorToken,422);
+        check(businessSnapshot()===$snapshot,$role.' requires customer and documentation for free and regular sales without partial writes');
         cmd('sale.create',array_replace($gift,['paid'=>1]),$actorToken,422);
         cmd('sale.create',array_replace($gift,['items'=>[array_replace($gift['items'][0],['is_free'=>'true'])]]),$actorToken,422);
         cmd('sale.create',array_replace($gift,['items'=>[array_replace($gift['items'][0],['pickup_id'=>$ownGood['id'],'category'=>'good'])]]),$actorToken,422);
@@ -236,7 +296,7 @@ try {
         check($free['user_id']===$actorId && $free['customer']==='Pak Budi '.$role && $free['items'][0]['is_free']===true && $free['items'][0]['unit_price']===0 && $free['total']===0 && $free['paid']===0 && $free['balance']===0 && $free['payment_status']==='paid' && $free['payment_method']==='cash',$role.' records own harvest/pickup/free cracked eggs with named recipient and zero debt');
         check(count(array_filter($s['sales'],fn($sale)=>$sale['items'][0]['pickup_id']===$own['id']))===1,$role.' rejects missing recipient, overpayment, invalid free flag and free good eggs atomically');
     }
-    $mixed=['date'=>date('Y-m-d'),'customer'=>'Penerima campuran','items'=>[['pickup_id'=>$goodPickups['employee'],'category'=>'good','eggs'=>10,'kg'=>0.6,'trays'=>0],['pickup_id'=>$freePickups['employee'],'category'=>'cracked','eggs'=>10,'kg'=>0.6,'trays'=>0,'is_free'=>true]],'payment_method'=>'cash','paid'=>18600];
+    $mixed=['date'=>date('Y-m-d'),'customer'=>'Penerima campuran','photo'=>$profilePhoto,'items'=>[['pickup_id'=>$goodPickups['employee'],'category'=>'good','eggs'=>10,'kg'=>0.6,'trays'=>0],['pickup_id'=>$freePickups['employee'],'category'=>'cracked','eggs'=>10,'kg'=>0.6,'trays'=>0,'is_free'=>true]],'payment_method'=>'cash','paid'=>18600];
     $s=cmd('sale.create',$mixed,$e); $mixedSale=first($s,'sales',fn($sale)=>$sale['customer']==='Penerima campuran');
     check($mixedSale['total']===18600 && $mixedSale['balance']===0 && $mixedSale['items'][0]['unit_price']===31000 && !$mixedSale['items'][0]['is_free'] && $mixedSale['items'][1]['is_free'] && $mixedSale['items'][1]['total']===0,'mixed paid/free transaction charges only paid eggs and preserves both snapshots');
     cmd('sale.create',array_replace($mixed,['items'=>[['pickup_id'=>$freePickups['employee'],'category'=>'cracked','eggs'=>71,'kg'=>4.26,'trays'=>0,'is_free'=>true]],'paid'=>0]),$e,422); check(true,'free transactions consume the same pickup balance and cannot oversell');
@@ -244,7 +304,7 @@ try {
     cmd('price.create',['good_price'=>31000,'cracked_price'=>-1,'effective_at'=>'2026-02-01T00:00:00+07:00'],$a,422);
     cmd('price.create',['good_price'=>31000,'cracked_price'=>0,'effective_at'=>'2026-02-01T00:00:00+07:00'],$e,403);
     $s=cmd('price.create',['good_price'=>31000,'cracked_price'=>0,'effective_at'=>'2026-02-01T00:00:00+07:00'],$a); check(count(array_filter($s['prices'],fn($p)=>$p['cracked_price']===0))===1,'admin can set cracked daily price to zero while good price and employee restrictions remain enforced');
-    $dailyFree=['date'=>date('Y-m-d'),'customer'=>'Penerima harga gratis','items'=>[['pickup_id'=>$freePickups['employee'],'category'=>'cracked','eggs'=>10,'kg'=>0.6,'trays'=>0,'is_free'=>false]],'payment_method'=>'credit','paid'=>0];
+    $dailyFree=['date'=>date('Y-m-d'),'customer'=>'Penerima harga gratis','photo'=>$profilePhoto,'items'=>[['pickup_id'=>$freePickups['employee'],'category'=>'cracked','eggs'=>10,'kg'=>0.6,'trays'=>0,'is_free'=>false]],'payment_method'=>'credit','paid'=>0];
     cmd('sale.create',array_replace($dailyFree,['customer'=>'']),$e,422);
     $s=cmd('sale.create',$dailyFree,$e); $dailySale=first($s,'sales',fn($sale)=>$sale['customer']==='Penerima harga gratis'); check($dailySale['items'][0]['is_free'] && $dailySale['total']===0 && $dailySale['balance']===0 && $dailySale['payment_status']==='paid','zero daily cracked price automatically creates free recipient-linked transaction');
     $free=$freeSales['employee'];
