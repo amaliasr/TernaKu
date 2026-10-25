@@ -48,7 +48,7 @@
   font-weight: 600;
   margin: 0;
 }
-.content input {
+.content input:not([type="checkbox"]) {
   min-height: 50px;
   font-size: max(16px, calc(16px * var(--font-scale, 1)));
 }
