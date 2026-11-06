@@ -26,7 +26,7 @@ import type { Category, CommandPayload, Sale } from "@/lib/types";
 import { findSavedSale } from "@/lib/sale-receipt";
 import { availableSalePickups, saleStockIssues } from "@/lib/sale-availability";
 import EmployeeEntry from "./EmployeeEntry";
-import { DraftBoundary, DraftFields, useDraftField, useEntryDraft } from "./DraftBoundary";
+import { DraftBoundary, DraftFields, useDraftField, useEntryDraft, useSaleDueDate } from "./DraftBoundary";
 import { draftKey, type DraftAttempt } from "@/lib/entry-drafts";
 import Photo from "./PhotoUpload";
 import { SaleDetail } from "./RecordDialogs";
@@ -227,7 +227,7 @@ function SaleForm({ onSave, busy, onClose }: FormProps) {
   const [method, setMethod] = useDraftField("method", "cash");
   const [isFull, setIsFull] = useDraftField("fullyPaid", true);
   const [paid, setPaid] = useDraftField("paid", "");
-  const [dueDate, setDueDate] = useDraftField("dueDate", "");
+  const [dueDate, setDueDate] = useSaleDueDate();
   const [photo, setPhoto] = useDraftField("photo", "");
   const [photoBusy, setPhotoBusy] = useState(false);
   const [reviewedPriceId, setReviewedPriceId] = useDraftField("reviewedPriceId", price?.id);
@@ -310,6 +310,7 @@ function SaleForm({ onSave, busy, onClose }: FormProps) {
           })),
           payment_method: total === 0 ? "cash" : method,
           paid: payment,
+          due_date: payment < total ? dueDate : undefined,
           photo: photo || undefined,
         });
       }}
@@ -553,7 +554,7 @@ function SaleForm({ onSave, busy, onClose }: FormProps) {
       </div>
       {payment < total && (
         <Field className="d-block mt-3" label="Jatuh tempo pelanggan" hint="Pilih tanggal yang disepakati untuk melunasi sisa tagihan.">
-          <input type="date" name="due_date" className="form-control" value={dueDate} onChange={e => setDueDate(e.target.value)} required />
+          <input type="date" name="due_date" data-draft-controlled className="form-control" value={dueDate} onChange={e => setDueDate(e.target.value)} required />
         </Field>
       )}
       <div className="invoice-summary mt-3">

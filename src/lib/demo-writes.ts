@@ -13,7 +13,9 @@ export function withDemoWriteLock<T>(write: () => T): Promise<T> {
     open.onerror = () => reject(open.error);
     open.onsuccess = () => {
       const db = open.result;
-      const tx = db.transaction("lock", "readwrite");
+      let tx: IDBTransaction;
+      try { tx = db.transaction("lock", "readwrite"); }
+      catch (error) { db.close(); reject(error); return; }
       let result: T;
       let failure: unknown;
       tx.objectStore("lock").get("state").onsuccess = () => {

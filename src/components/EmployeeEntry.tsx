@@ -34,7 +34,7 @@ import {
 } from "./ModuleUI";
 import styles from "./EmployeeEntry.module.css";
 import Photo from "./PhotoUpload";
-import { useDraftField } from "./DraftBoundary";
+import { useDraftField, useSaleDueDate } from "./DraftBoundary";
 import { availableSalePickups, saleStockIssues } from "@/lib/sale-availability";
 import HarvestForm from "./HarvestForm";
 
@@ -359,7 +359,7 @@ function SaleEntry({ onSave, busy, onClose, onSwitchKind }: Props) {
   const [method, setMethod] = useDraftField<PaymentMethod>("method", "cash");
   const [full, setFull] = useDraftField("fullyPaid", true);
   const [paid, setPaid] = useDraftField("paid", "0");
-  const [dueDate, setDueDate] = useDraftField("dueDate", "");
+  const [dueDate, setDueDate] = useSaleDueDate();
   const [customer, setCustomer] = useDraftField("customer", "");
   const [photo, setPhoto] = useDraftField("photo", "");
   const [photoBusy, setPhotoBusy] = useState(false);
@@ -466,6 +466,7 @@ function SaleEntry({ onSave, busy, onClose, onSwitchKind }: Props) {
           payment_method: total === 0 ? "cash" : method,
           customer,
           paid: payment,
+          due_date: payment < total ? dueDate : undefined,
           photo: photo || undefined,
         });
       }}
@@ -735,7 +736,7 @@ function SaleEntry({ onSave, busy, onClose, onSwitchKind }: Props) {
       )}
       {payment < total && (
         <Field label="Kapan sisa tagihan akan dibayar?">
-          <input type="date" name="due_date" className="form-control" value={dueDate} onChange={e => setDueDate(e.target.value)} required />
+          <input type="date" name="due_date" data-draft-controlled className="form-control" value={dueDate} onChange={e => setDueDate(e.target.value)} required />
         </Field>
       )}
       <Photo value={photo} onChange={setPhoto} onBusyChange={setPhotoBusy} label="Foto dokumentasi penjualan" optional={false} disabled={busy} />
