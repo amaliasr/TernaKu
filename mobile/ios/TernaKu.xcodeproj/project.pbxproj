@@ -1,0 +1,97 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {};
+	objectVersion = 56;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		100000000000000000000001 /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000001; };
+		100000000000000000000002 /* PriceNotifications.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000002; };
+		100000000000000000000003 /* FarmViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000003; };
+		100000000000000000000004 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000004; };
+		100000000000000000000005 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000008; };
+/* End PBXBuildFile section */
+
+/* Begin PBXFileReference section */
+		200000000000000000000001 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDelegate.swift; sourceTree = "<group>"; };
+		200000000000000000000002 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PriceNotifications.swift; sourceTree = "<group>"; };
+		200000000000000000000003 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FarmViewController.swift; sourceTree = "<group>"; };
+		200000000000000000000004 = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		200000000000000000000005 = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		200000000000000000000006 = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = TernaKu.entitlements; sourceTree = "<group>"; };
+		200000000000000000000007 = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = TernaKu.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		200000000000000000000008 = {isa = PBXFileReference; lastKnownFileType = text.xml; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+
+		300000000000000000000001 = {isa = PBXGroup; children = (300000000000000000000002, 300000000000000000000003,); sourceTree = "<group>"; };
+		300000000000000000000002 = {isa = PBXGroup; path = TernaKu; children = (200000000000000000000001, 200000000000000000000002, 200000000000000000000003, 200000000000000000000004, 200000000000000000000005, 200000000000000000000006, 200000000000000000000008,); sourceTree = "<group>"; };
+		300000000000000000000003 = {isa = PBXGroup; name = Products; children = (200000000000000000000007,); sourceTree = "<group>"; };
+		400000000000000000000001 = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (100000000000000000000001, 100000000000000000000002, 100000000000000000000003,); runOnlyForDeploymentPostprocessing = 0; };
+		400000000000000000000002 = {isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
+		400000000000000000000003 = {isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (100000000000000000000004, 100000000000000000000005,); runOnlyForDeploymentPostprocessing = 0; };
+
+		500000000000000000000001 /* TernaKu */ = {
+			isa = PBXNativeTarget; buildConfigurationList = 800000000000000000000002;
+			buildPhases = (400000000000000000000001, 400000000000000000000002, 400000000000000000000003,);
+			buildRules = (); dependencies = (); name = TernaKu; productName = TernaKu;
+			productReference = 200000000000000000000007; productType = "com.apple.product-type.application";
+		};
+		600000000000000000000001 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				LastUpgradeCheck = 1600;
+				TargetAttributes = { 500000000000000000000001 = {
+					CreatedOnToolsVersion = 16.0; ProvisioningStyle = Automatic;
+					SystemCapabilities = {com.apple.Push = {enabled = 1;};};
+				}; };
+			};
+			buildConfigurationList = 800000000000000000000001; compatibilityVersion = "Xcode 14.0";
+			developmentRegion = id; hasScannedForEncodings = 0; knownRegions = (id, en, Base,);
+			mainGroup = 300000000000000000000001; productRefGroup = 300000000000000000000003;
+			projectDirPath = ""; projectRoot = ""; targets = (500000000000000000000001,);
+		};
+
+/* Begin XCBuildConfiguration section */
+		700000000000000000000001 /* Debug project */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CLANG_ENABLE_MODULES = YES; CLANG_ENABLE_OBJC_ARC = YES; SDKROOT = iphoneos;
+				IPHONEOS_DEPLOYMENT_TARGET = 16.0; SWIFT_VERSION = 5.0; DEBUG_INFORMATION_FORMAT = dwarf;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG; SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+			}; name = Debug;
+		};
+		700000000000000000000002 /* Release project */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CLANG_ENABLE_MODULES = YES; CLANG_ENABLE_OBJC_ARC = YES; SDKROOT = iphoneos;
+				IPHONEOS_DEPLOYMENT_TARGET = 16.0; SWIFT_VERSION = 5.0; DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				SWIFT_COMPILATION_MODE = wholemodule; VALIDATE_PRODUCT = YES;
+			}; name = Release;
+		};
+		700000000000000000000003 /* Debug application */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				APS_ENTITLEMENT = development; PUSH_ENVIRONMENT = sandbox;
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon; CODE_SIGN_ENTITLEMENTS = TernaKu/TernaKu.entitlements;
+				CODE_SIGN_STYLE = Automatic; CURRENT_PROJECT_VERSION = 1; MARKETING_VERSION = 1.0.0;
+				INFOPLIST_FILE = TernaKu/Info.plist; PRODUCT_BUNDLE_IDENTIFIER = com.rstudiohub.ternaku;
+				PRODUCT_NAME = TernaKu; SUPPORTED_PLATFORMS = "iphoneos iphonesimulator"; TARGETED_DEVICE_FAMILY = 1;
+			}; name = Debug;
+		};
+		700000000000000000000004 /* Release application */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				APS_ENTITLEMENT = production; PUSH_ENVIRONMENT = production;
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon; CODE_SIGN_ENTITLEMENTS = TernaKu/TernaKu.entitlements;
+				CODE_SIGN_STYLE = Automatic; CURRENT_PROJECT_VERSION = 1; MARKETING_VERSION = 1.0.0;
+				INFOPLIST_FILE = TernaKu/Info.plist; PRODUCT_BUNDLE_IDENTIFIER = com.rstudiohub.ternaku;
+				PRODUCT_NAME = TernaKu; SUPPORTED_PLATFORMS = "iphoneos iphonesimulator"; TARGETED_DEVICE_FAMILY = 1;
+			}; name = Release;
+		};
+/* End XCBuildConfiguration section */
+		800000000000000000000001 = {isa = XCConfigurationList; buildConfigurations = (700000000000000000000001, 700000000000000000000002,); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
+		800000000000000000000002 = {isa = XCConfigurationList; buildConfigurations = (700000000000000000000003, 700000000000000000000004,); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
+	};
+	rootObject = 600000000000000000000001;
+}
