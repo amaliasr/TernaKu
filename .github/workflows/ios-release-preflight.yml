@@ -45,7 +45,7 @@ jobs:
           version=$(read_value CFBundleShortVersionString)
           build=$(read_value CFBundleVersion)
           [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ && "$build" =~ ^[0-9]+(\.[0-9]+){0,2}$ ]]
-          xcrun lipo -verify_arch arm64 "$app/$(read_value CFBundleExecutable)"
+          xcrun lipo "$app/$(read_value CFBundleExecutable)" -verify_arch arm64
           echo "Verified TernaKu $version ($build), arm64 iPhoneOS, $sdk, APNs production."
           ditto -c -k --keepParent "$RUNNER_TEMP/TernaKu.xcarchive" "$RUNNER_TEMP/TernaKu-iPhone-unsigned.zip"
 
