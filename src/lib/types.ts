@@ -97,6 +97,8 @@ export interface SaleItem {
   pickup_id: string;
   category: Category;
   eggs: number;
+  /** The count was calculated from the available stock and measured sale weight. */
+  eggs_estimated?: boolean;
   kg: number;
   trays: number;
   unit_price: number;
@@ -168,6 +170,8 @@ export interface FeedUsage {
   created_at: string;
   user_id: string;
 }
+export type FarmActivity = "sale.create" | "production.create" | "production.stocked"
+  | "production.receive" | "pickup.return" | "stock.add";
 export interface Notification {
   id: string;
   user_id: string;
@@ -175,6 +179,9 @@ export interface Notification {
   message: string;
   created_at: string;
   read: boolean;
+  type?: "farm.activity";
+  event_id?: string;
+  activity?: FarmActivity;
 }
 export interface Activity {
   id: string;

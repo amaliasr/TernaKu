@@ -75,7 +75,9 @@ test("editing pending employee contact details does not approve or activate the 
 
 function saleFixture(actor: string, free: boolean): { state: State; payload: CommandPayload } {
   const category = free ? "cracked" : "good";
-  let state = cmd(fixture(), actor, "production.create", { date: DATE, category, eggs: 100, kg: 6, trays: 1 });
+  let state = fixture();
+  if (free && actor === "employee") state.prices[0].cracked_price = 0;
+  state = cmd(state, actor, "production.create", { date: DATE, category, eggs: 100, kg: 6, trays: 1 });
   state = cmd(state, actor, "pickup.create", { date: DATE, category, eggs: 100, kg: 6, trays: 1, area: "Pasar" });
   return { state, payload: { date: DATE, customer: "  Ibu Sari  ", photo: PHOTO, payment_method: "cash", paid: 0,
     items: [{ pickup_id: state.pickups[0].id, category, eggs: 50, kg: 3, trays: 0, ...(free ? { is_free: true } : {}) }] } };

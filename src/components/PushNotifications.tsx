@@ -164,7 +164,7 @@ function WebPushNotifications() {
       guard();
       setActive(true);
       setMessage(
-        "Notifikasi aktif di HP ini. Setiap pembaruan harga dari atasan akan dikirim, termasuk saat nominalnya sama.",
+        "HP ini siap menerima pemberitahuan TernaKu.",
       );
     } catch (cause) {
       if (createdSubscription) {
@@ -279,8 +279,7 @@ function WebPushNotifications() {
         <span>{active ? "Aktif" : "Belum aktif"}</span>
       </div>
       <p>
-        Dapatkan pemberitahuan setiap atasan memperbarui harga, walaupun
-        harganya sama dan aplikasi sedang ditutup.
+        Terima kabar penjualan, panen, telur masuk gudang, dan pembaruan harga saat aplikasi ditutup.
       </p>
       {mode === "demo" ? (
         <small>Aktifkan melalui akun Anda di website TernaKu.</small>

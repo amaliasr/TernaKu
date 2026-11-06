@@ -90,7 +90,7 @@ Nama kolom dan struktur respons mengikuti `../src/lib/types.ts` dan `../CONTRACT
 | `settings.update` | harvest_auto_stock:boolean | Admin |
 | `pickup.create` | date, category, eggs, kg, trays, area, notes | Semua, pengambil otomatis |
 | `pickup.return` | id, eggs, kg, trays, notes | Pemilik/admin |
-| `sale.create` | date, customer, phone?, stock_source?, items[{pickup_id?,category,eggs,kg,trays,is_free?}], payment_method, paid, due_date?, notes, photo, expected_price_id? | Admin dan karyawan. Nama pelanggan dan foto dokumentasi wajib |
+| `sale.create` | date, customer, phone?, stock_source?, items[{pickup_id?,category,eggs?,kg,trays,is_free?}], payment_method, paid, due_date?, notes, photo, expected_price_id? | Admin dan karyawan. Nama pelanggan dan foto dokumentasi wajib. Hanya admin dapat menggratiskan bentes saat harga aktifnya di atas Rp0 |
 | `sale.payment` | id, amount, expected_paid?, method? | Pemilik/admin |
 | `sale.due` | id, due_date | Pemilik/admin |
 | `price.create` | good_price, cracked_price, effective_at | Admin |
@@ -136,6 +136,8 @@ Admin menerima semua transaksi dan audit; karyawan hanya menerima produksi, pick
 `profile.update` menerima nama 1–120 karakter dan foto opsional. Foto yang tidak dikirim dipertahankan; `photo: ""` menghapusnya. Untuk perubahan nama saja, jangan mengirim ulang foto lama agar batas unggahan baru tidak diterapkan pada foto tersebut. Identitas pengguna selalu berasal dari token; kolom lain seperti `id`, `role`, `active`, `email`, dan `password` ditolak. Profil disimpan memakai `users` dan record privat `user_profile`, tanpa migrasi skema.
 
 Admin dapat mengedit nama, email login, target, dan foto karyawan melalui `user.update`. Email dinormalisasi dan harus unik. Foto yang tidak dikirim tetap dipertahankan; `photo: ""` menghapus foto. Perubahan ini tidak mengubah kata sandi, peran, maupun status persetujuan pendaftaran. Akun yang masih menunggu persetujuan tetap harus disetujui melalui `user.approve`. Log perubahan menyimpan metadata tanpa isi gambar.
+
+Berat terjual wajib diisi. Jika butir dikosongkan, API memperkirakan jumlah bulat dari sisa berat dan butir pada sumber yang dipilih. Baris ini ditandai dengan `eggs_estimated: true` pada nota.
 
 Setiap penjualan baru, termasuk telur gratis, wajib memuat nama pelanggan/penerima yang tidak kosong dan foto dokumentasi penjualan yang valid, maksimal 1 MB setelah kompresi. Nomor HP tetap opsional. Aturan ini berlaku untuk admin maupun karyawan. Transaksi lama tetap dapat dibaca dan dibayar tanpa harus menambahkan foto, tetapi koreksi nama pelanggan tidak boleh mengosongkannya.
 

@@ -23,10 +23,14 @@ function matchesPayload(sale: Sale, payload: CommandPayload): boolean {
     const submitted = items[index];
     if (!submitted || typeof submitted !== "object") return false;
     const line = submitted as CommandPayload;
+    const countMissing = line.eggs == null || (typeof line.eggs === "string" && !line.eggs.trim());
+    const countMatches = countMissing
+      ? item.eggs_estimated === true
+      : item.eggs_estimated !== true && item.eggs === Number(line.eggs);
     return (
       item.pickup_id === (line.pickup_id ?? "") &&
       item.category === line.category &&
-      item.eggs === Number(line.eggs) &&
+      countMatches &&
       item.kg === Number(line.kg) &&
       item.trays === Number(line.trays ?? 0) &&
       (line.is_free !== true ||

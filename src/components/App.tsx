@@ -684,6 +684,7 @@ function Workspace() {
   const [search, setSearch] = useState("");
   const [modal, setModal] = useState<string | null>(null);
   const [notifications, setNotifications] = useState(false);
+  const [noticeLimit, setNoticeLimit] = useState(8);
   const [help, setHelp] = useState(false);
   const [notice, setNotice] = useState("");
   useBackLayer(mobile && user?.role === "admin", () => setMobile(false));
@@ -739,9 +740,8 @@ function Workspace() {
   if (user.role === "employee") return <EmployeeWorkspace />;
   const menu = navigation.filter((n) => !n.admin || user.role === "admin");
   const current = menu.find((n) => n.id === page) || menu[0];
-  const unread = state.notifications.filter(
-    (n) => n.user_id === user.id && !n.read,
-  );
+  const inbox = state.notifications.filter(n => n.user_id === user.id);
+  const unread = inbox.filter(n => !n.read);
   const price = activePrice(state);
   const isAdmin = user.role === "admin";
   return (
@@ -882,7 +882,10 @@ function Workspace() {
               <button
                 className="icon-button"
                 aria-label={`Notifikasi, ${unread.length} belum dibaca`}
-                onClick={() => setNotifications(!notifications)}
+                onClick={() => {
+                  setNoticeLimit(8);
+                  setNotifications(!notifications);
+                }}
               >
                 <Bell size={20} />
                 {unread.length > 0 && <span className="notification-dot" />}
@@ -899,9 +902,7 @@ function Workspace() {
                       <X size={17} />
                     </button>
                   </div>
-                  {state.notifications
-                    .filter((n) => n.user_id === user.id)
-                    .slice(0, 8)
+                  {inbox.slice(0, noticeLimit)
                     .map((n) => (
                       <button
                         key={n.id}
@@ -915,7 +916,7 @@ function Workspace() {
                         }}
                       >
                         <span className="notification-symbol">
-                          <Wallet size={17} />
+                          <Bell size={17} />
                         </span>
                         <span>
                           <strong>{n.title}</strong>
@@ -925,8 +926,12 @@ function Workspace() {
                         {!n.read && <span className="unread-dot" />}
                       </button>
                     ))}
-                  {state.notifications.filter((n) => n.user_id === user.id)
-                    .length === 0 && (
+                  {noticeLimit < inbox.length && (
+                    <button type="button" onClick={() => setNoticeLimit(limit => limit + 12)}>
+                      Lihat pemberitahuan sebelumnya
+                    </button>
+                  )}
+                  {inbox.length === 0 && (
                     <p className="p-4 text-muted">Belum ada notifikasi.</p>
                   )}
                 </section>

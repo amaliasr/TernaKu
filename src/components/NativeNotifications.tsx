@@ -61,7 +61,7 @@ function DeviceSession({ children, platform, userId, employee }: {
         registered.current = null;
         setActive(false);
         await deviceRequest(platform, "disable");
-        if (current()) setMessage("Notifikasi harga di HP ini sudah dimatikan.");
+        if (current()) setMessage("Pemberitahuan di HP ini sudah dimatikan.");
         return;
       }
 
@@ -94,7 +94,7 @@ function DeviceSession({ children, platform, userId, employee }: {
         setMessage(device.status === "denied" ? "Izinkan notifikasi TernaKu di pengaturan HP."
           : device.status === "unavailable" || (device.status === "granted" && !device.token)
             ? "HP belum dapat terhubung ke layanan notifikasi. Periksa kembali saat tersambung internet."
-            : "Aktifkan untuk menerima harga saat aplikasi ditutup.");
+            : "Aktifkan agar pemberitahuan masuk saat aplikasi ditutup.");
         return;
       }
       if (registered.current?.token !== device.token || registered.current.installation_id !== device.installation_id) {
@@ -105,7 +105,7 @@ function DeviceSession({ children, platform, userId, employee }: {
         registered.current = device;
       }
       setActive(true);
-      if (task === "enable") setMessage("HP ini sudah terdaftar untuk menerima pembaruan harga.");
+      if (task === "enable") setMessage("HP ini siap menerima pemberitahuan TernaKu.");
       else setMessage("");
     } catch (error) {
       if (current()) setMessage(error instanceof Error ? error.message : "Belum dapat mengatur notifikasi. Coba lagi.");
@@ -142,7 +142,7 @@ export function NativeNotificationPanel({ panel }: { panel: Panel }) {
   const { active, busy, configured, denied, message, run } = panel;
   return <section className={styles.panel} aria-label="Notifikasi HP">
     <div className={styles.heading}><BellRing size={22} /><strong>Notifikasi di HP</strong><span>{active ? "Aktif" : "Belum aktif"}</span></div>
-    <p>Terima pemberitahuan setiap atasan menyimpan harga, termasuk saat nominalnya sama dan aplikasi ditutup.</p>
+    <p>Terima kabar penjualan, panen, telur masuk gudang, dan pembaruan harga saat aplikasi ditutup.</p>
     <div className={styles.buttons}>
       {active ? <>
         <button type="button" className="btn btn-light" disabled={busy} onClick={() => run("test")}>Coba notifikasi</button>

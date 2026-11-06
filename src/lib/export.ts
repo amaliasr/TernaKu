@@ -344,7 +344,7 @@ export async function printReceipt(sale: Sale, state: State) {
         : isFreeSaleItem(i)
           ? "Telur bentes - Gratis"
           : "Telur bentes",
-      number(i.eggs, 0),
+      i.eggs_estimated ? `${number(i.eggs, 0)} (estimasi)` : number(i.eggs, 0),
       number(i.kg, 3),
       number(i.trays),
       isFreeSaleItem(i) ? "Gratis" : money(i.unit_price),

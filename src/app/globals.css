@@ -2582,10 +2582,13 @@ small {
   }
   .modal-backdrop-custom {
     padding: 12px;
+    overflow: hidden;
+    overscroll-behavior: contain;
   }
   .modal-dialog-custom {
     max-height: calc(100dvh - 24px);
     border-radius: 12px;
+    overscroll-behavior-y: contain;
   }
   .modal-header,
   .modal-header-custom,
@@ -2595,7 +2598,12 @@ small {
   }
   .modal-footer,
   .modal-footer-custom {
-    padding: 15px 20px;
+    flex-wrap: wrap;
+    row-gap: 12px;
+    padding: 16px 20px calc(20px + env(safe-area-inset-bottom, 0px));
+  }
+  .modal-footer-custom > button {
+    min-height: 44px;
   }
   .notification-panel {
     right: -40px;
