@@ -737,7 +737,7 @@ function SaleEntry({ onSave, busy, onClose, onSwitchKind }: Props) {
       )}
       {payment < total && (
         <Field label="Kapan sisa tagihan akan dibayar?">
-          <input type="date" name="due_date" data-draft-controlled className="form-control" value={dueDate} onInput={e => setDueDate(e.currentTarget.value)} onChange={e => setDueDate(e.target.value)} required />
+          <input type="date" name="due_date" className="form-control" value={dueDate} onInput={e => setDueDate(e.currentTarget.value)} onChange={e => setDueDate(e.target.value)} required />
         </Field>
       )}
       <Photo value={photo} onChange={setPhoto} onBusyChange={setPhotoBusy} label="Foto dokumentasi penjualan" optional={false} disabled={busy} />
@@ -745,7 +745,7 @@ function SaleEntry({ onSave, busy, onClose, onSwitchKind }: Props) {
       <Optional label="Nomor HP dan catatan (boleh kosong)">
         <Field label="Nomor HP pelanggan (opsional)">
           <input
-            name="phone"
+            name="phone" data-draft-native
             className="form-control"
             type="tel"
             maxLength={30}
@@ -767,7 +767,7 @@ function SaleEntry({ onSave, busy, onClose, onSwitchKind }: Props) {
         </Field>
         <Field label="Catatan">
           <textarea
-            name="notes"
+            name="notes" data-draft-native
             className="form-control"
             rows={2}
             maxLength={2000}
