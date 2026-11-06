@@ -37,6 +37,7 @@ import {
 } from "@/lib/domain";
 import type { Pickup, Sale } from "@/lib/types";
 import EntryModal from "./EntryModal";
+import type { SaleStart } from "./SaleStockSource";
 import InstallApp from "./InstallApp";
 import PushNotifications from "./PushNotifications";
 import ThemeToggle from "./ThemeToggle";
@@ -94,6 +95,11 @@ export default function EmployeeWorkspace() {
   );
   const [profileOpen, setProfileOpen] = useState(false);
   const [modal, setModal] = useState<string | null>(null);
+  const [saleStart, setSaleStart] = useState<SaleStart>();
+  function openSale(start?: SaleStart) {
+    setSaleStart(start);
+    setModal("sale");
+  }
   const [notificationsOpen, setNotificationsOpen] = useState(false);
   const [notice, setNotice] = useState("");
   const [confirmation, setConfirmation] = useState<{
@@ -297,7 +303,7 @@ export default function EmployeeWorkspace() {
               </button>
               <button
                 className={styles.saleAction}
-                onClick={() => setModal("sale")}
+                onClick={() => openSale()}
                 disabled={!price}
               >
                 <span className={styles.actionIcon}>
@@ -504,7 +510,7 @@ export default function EmployeeWorkspace() {
             />
             <button
               className={styles.primaryButton}
-              onClick={() => setModal("sale")}
+              onClick={() => openSale()}
               disabled={!price}
             >
               <Plus size={23} /> Catat penjualan baru
@@ -617,6 +623,12 @@ export default function EmployeeWorkspace() {
             </div>
             <button
               className={styles.primaryButton}
+              onClick={() => openSale({ source: "warehouse" })}
+            >
+              <ShoppingBag size={22} /> Jual dari gudang
+            </button>
+            <button
+              className={styles.secondaryButton}
               onClick={() => setModal("pickup")}
             >
               <Package size={22} /> Ambil telur untuk dijual
@@ -636,7 +648,7 @@ export default function EmployeeWorkspace() {
                 <EmptyNote
                   icon="stock"
                   title="Tidak ada telur yang dibawa"
-                  text="Ambil telur dari gudang sebelum mencatat penjualan."
+                  text="Telur yang Anda ambil untuk dibawa akan muncul di sini."
                 />
               )}
               <div className={styles.records}>
@@ -667,7 +679,7 @@ export default function EmployeeWorkspace() {
                     <div className={styles.recordButtons}>
                       <button
                         className={styles.secondaryButton}
-                        onClick={() => setModal("sale")}
+                        onClick={() => openSale({ source: "pickup", pickupId: pickup.id })}
                         disabled={!price}
                       >
                         <ShoppingBag size={18} /> Catat jual
@@ -768,6 +780,7 @@ export default function EmployeeWorkspace() {
         <EntryModal
           key={modal}
           kind={modal}
+          saleStart={saleStart}
           onClose={() => setModal(null)}
           onSaved={(action) => {
             setNotice("");

@@ -20,6 +20,7 @@ import { createDemoState, DEMO_PASSWORD } from "./seed";
 import { refreshInterval, SessionSync } from "./session-sync";
 import { ApiError } from "./request-errors";
 import { readApiResponse } from "./api-response";
+import { commandPhotoForm } from "./command-photo";
 import { requestTimeout } from "./request-timeout";
 import { isPriceSyncResponse, mergePriceSync, refreshKind, validPriceCursor } from "./price-sync";
 import { isReceiptDelta, mergeReceiptDelta } from "./receipt-delta";
@@ -127,10 +128,13 @@ async function digest(value: string): Promise<string> {
     .map((byte) => byte.toString(16).padStart(2, "0"))
     .join("");
 }
+// Login/bootstrap negotiate this before the first write, including on older installations.
+let supportsPhotoForm = false;
 async function request<T>(
   path: string,
   token: string | null,
   body?: unknown,
+  photoForm?: FormData,
 ): Promise<T> {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), requestTimeout(path, body));
@@ -139,13 +143,16 @@ async function request<T>(
       method: body === undefined ? "GET" : "POST",
       headers: {
         Accept: "application/json",
-        ...(body === undefined ? {} : { "Content-Type": "application/json" }),
+        ...(body === undefined || photoForm ? {} : { "Content-Type": "application/json" }),
         ...(token ? { Authorization: `Bearer ${token}` } : {}),
       },
-      ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+      ...(body === undefined ? {} : { body: photoForm ?? JSON.stringify(body) }),
       signal: controller.signal,
       cache: "no-store",
     });
+    if (response.ok) supportsPhotoForm = response.headers.get("X-Ternaku-Photo-Upload") === "multipart";
+    // An older API explicitly rejects multipart before executing a command.
+    if (photoForm && response.status === 415) return await request<T>(path, token, body);
     return await readApiResponse<T>(response);
   } catch (cause) {
     if (cause instanceof DOMException && cause.name === "AbortError")
@@ -723,13 +730,14 @@ export function FarmProvider({ children }: { children: ReactNode }) {
           }
           if (!sessionUnchanged())
             throw new Error("Sesi berubah. Silakan masuk kembali.");
-          const response = await request<unknown>("/commands", sessionToken, {
+          const wireCommand = {
             action,
             payload,
             request_id,
             response_mode: "compact",
             ...(action === "sale.create" ? { receipt_for_role: currentUser.role } : {}),
-          });
+          };
+          const response = await request<unknown>("/commands", sessionToken, wireCommand, supportsPhotoForm ? commandPhotoForm(wireCommand) : undefined);
           if (!sessionUnchanged()) throw new Error("Sesi berubah. Buka kembali riwayat setelah masuk.");
           if (action === "sale.create" && isReceiptDelta(response, currentUser.id, request_id)) {
             next = mergeReceiptDelta(stateRef.current, response);

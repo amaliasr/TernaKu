@@ -17,6 +17,7 @@ import {
   YAxis,
 } from "recharts";
 import { useFarm } from "@/lib/store";
+import { saleSourceLabel } from "@/lib/sale-availability";
 import {
   businessDate,
   closingEggStock,
@@ -60,6 +61,7 @@ export default function Reports() {
         "Waktu input (WIB)",
         "Karyawan",
         "Pelanggan",
+        "Sumber telur",
         "Berat (kg)",
         "Gratis (kg)",
         "Omzet (Rp)",
@@ -73,6 +75,7 @@ export default function Reports() {
         s.created_at,
         employee(s.user_id),
         s.customer || "Umum",
+        saleSourceLabel(s.stock_source),
         s.items.reduce((a, i) => a + i.kg, 0),
         s.items.filter(isFreeSaleItem).reduce((a, i) => a + i.kg, 0),
         s.total,
@@ -204,6 +207,7 @@ export default function Reports() {
             production: "Produksi",
             pickup: "Pengambilan",
             return: "Pengembalian",
+            sale: "Penjualan dari gudang",
             correction: "Koreksi",
             reconcile: adjustmentMethodLabel(m.method),
           }[m.kind],

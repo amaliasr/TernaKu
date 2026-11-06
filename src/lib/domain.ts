@@ -83,6 +83,17 @@ export function activePrice(
 }
 const round = (n: number) => Math.round((n + Number.EPSILON) * 1000) / 1000;
 const emptyQuantity = (): Quantity => ({ eggs: 0, kg: 0, trays: 0 });
+function soldQuantity(items: SaleItem[], category: Category): Quantity {
+  const total = emptyQuantity();
+  for (const item of items) {
+    if (item.category !== category) continue;
+    total.eggs += item.eggs;
+    total.kg += item.kg;
+    total.trays += item.trays;
+  }
+  total.kg = round(total.kg);
+  return total;
+}
 export function isProductionStocked(production: Pick<Production, "stocked_at">): boolean {
   return production.stocked_at !== null;
 }
@@ -110,6 +121,13 @@ export function eggStock(state: State, category?: Category): Quantity {
       stock.kg += p.returned_kg - p.kg;
       stock.trays += p.returned_trays - p.trays;
     }
+  for (const sale of state.sales) {
+    if (sale.stock_source !== "warehouse") continue;
+    const sold = soldQuantity(sale.items, category);
+    stock.eggs -= sold.eggs;
+    stock.kg -= sold.kg;
+    stock.trays -= sold.trays;
+  }
   stock.kg = round(stock.kg);
   let countedTrays: number | undefined;
   for (const movement of state.stock_movements || []) {
@@ -135,12 +153,13 @@ export function closingEggStock(state: State, category: Category, day: string, c
   if (day === currentDay) return { eggs, kg };
   if (!state.stock_movements) return null;
   const moves = state.stock_movements.filter(m => m.category === category);
-  const origins = new Set(moves.filter(m => m.kind === "pickup" || m.kind === "production").map(m => m.reference_id));
-  // A legacy receipt or pickup with no ledger entries cannot safely be dated.
+  const origins = new Set(moves.filter(m => m.kind === "pickup" || m.kind === "production" || m.kind === "sale").map(m => m.reference_id));
+  // A stock change without a ledger entry cannot safely be dated.
   const verified = moves.some(m => m.kind === "reconcile" &&
     (m.method === undefined || m.method === "count") && businessDate(m.date) <= day);
   if (!verified && (state.productions.some(p => p.category === category && isProductionStocked(p) && !origins.has(p.id)) ||
-    state.pickups.some(p => p.category === category && !origins.has(p.id)))) return null;
+    state.pickups.some(p => p.category === category && !origins.has(p.id)) ||
+    state.sales.some(s => s.stock_source === "warehouse" && s.items.some(i => i.category === category) && !origins.has(s.id)))) return null;
   const balance = { eggs, kg };
   for (const move of moves) if (businessDate(move.date) > day) {
     balance.eggs -= move.eggs;
@@ -479,6 +498,31 @@ function completeBalance(eggs: number, kg: number): void {
     "Jika seluruh telur habis, jumlah butir dan berat harus dihabiskan bersama.",
   );
 }
+/** Call before replacing the sale, while eggStock still reflects the previous quantities. */
+function postWarehouseSale(state: State, sale: Sale, previous: Sale | undefined, now: Date, notes: string) {
+  state.stock_movements ??= [];
+  const stamp = now.toISOString();
+  for (const category of ["good", "cracked"] as const) {
+    const prior = previous ? soldQuantity(previous.items, category) : emptyQuantity();
+    const next = soldQuantity(sale.items, category);
+    const eggs = prior.eggs - next.eggs;
+    const kg = round(prior.kg - next.kg);
+    const trays = prior.trays - next.trays;
+    if (!eggs && !kg && !trays) continue;
+    const stock = eggStock(state, category);
+    const remainingKg = round(stock.kg + kg);
+    assert(stock.eggs + eggs >= 0 && remainingKg >= 0 && stock.trays + trays >= 0,
+      "Jumlah penjualan melebihi stok yang tersedia di gudang.");
+    completeBalance(stock.eggs + eggs, remainingKg);
+    state.stock_movements.push({
+      id: `movement-${sale.id}-${category}-${state.stock_movements.length}`,
+      reference_id: sale.id, category, eggs, kg, trays,
+      user_id: sale.user_id, date: previous ? stamp : sale.date, created_at: stamp,
+      kind: previous ? "correction" : "sale",
+      notes,
+    });
+  }
+}
 function totalAmount(value: number): number {
   assert(
     Number.isSafeInteger(value) && value >= 0 && value <= 1_000_000_000_000,
@@ -612,6 +656,8 @@ function correct(
         total >= sale.paid,
         "Total koreksi lebih kecil dari pembayaran yang sudah diterima. Pengembalian dana belum tersedia; rekonsiliasi pembayaran diperlukan sebelum koreksi ini.",
       );
+      if (sale.stock_source === "warehouse")
+        postWarehouseSale(state, { ...sale, items: updated }, sale, now, `Koreksi penjualan oleh ${user.name}: ${reason}`);
       sale.items = sale.items.map((old) =>
         updated.find((item) => item.id === old.id)!,
       );
@@ -624,7 +670,7 @@ function correct(
     } else (row as unknown as CommandPayload)[key] = text(value);
   }
   if (payload.entity === "pickup") checkPickup(state, row as Pickup);
-  if (payload.entity === "sale") {
+  if (payload.entity === "sale" && (row as Sale).stock_source !== "warehouse") {
     const sale = row as Sale;
     for (const pickupId of new Set(sale.items.map((item) => item.pickup_id))) {
       const pickup = find(state.pickups, pickupId, "Pengambilan");
@@ -798,6 +844,8 @@ export function executeCommand(
       break;
     }
     case "sale.create": {
+      const source = payload.stock_source === undefined ? "pickup" : payload.stock_source;
+      assert(source === "pickup" || source === "warehouse", "Pilih sumber stok penjualan.");
       const price = activePrice(state, now);
       assert(price, "Admin belum menetapkan harga telur yang berlaku.");
       assert(
@@ -808,29 +856,20 @@ export function executeCommand(
       const entries = list(payload.items);
       const reserved: Record<string, Quantity> = {};
       const items = entries.map((item) => {
-        const p = find(state.pickups, item.pickup_id, "Pengambilan");
-        assert(
-          p.user_id === user.id,
-          "Penjualan hanya boleh menggunakan pengambilan milik Anda.",
-        );
         const c = category(item.category);
-        assert(
-          c === p.category,
-          "Kategori penjualan harus sesuai pengambilan.",
-        );
         const q = quantities(item);
-        const available = pickupBalance(state, p);
-        const used = reserved[p.id] || emptyQuantity();
-        assert(
-          q.eggs + used.eggs <= available.eggs &&
-            round(q.kg + used.kg) <= available.kg,
-          "Jumlah penjualan melebihi sisa telur yang dibawa.",
-        );
-        reserved[p.id] = {
-          eggs: used.eggs + q.eggs,
-          kg: round(used.kg + q.kg),
-          trays: used.trays + q.trays,
-        };
+        let pickupId = "";
+        if (source === "warehouse") {
+          assert(item.pickup_id === undefined || item.pickup_id === "",
+            "Penjualan dari gudang tidak dapat menggunakan pengambilan.");
+        } else {
+          const p = find(state.pickups, item.pickup_id, "Pengambilan");
+          assert(p.user_id === user.id, "Penjualan hanya boleh menggunakan pengambilan milik Anda.");
+          assert(c === p.category, "Kategori penjualan harus sesuai pengambilan.");
+          pickupId = p.id;
+          const used = reserved[p.id] || emptyQuantity();
+          reserved[p.id] = { eggs: used.eggs + q.eggs, kg: round(used.kg + q.kg), trays: used.trays + q.trays };
+        }
         assert(
           item.is_free === undefined || typeof item.is_free === "boolean",
           "Pilihan gratis tidak valid.",
@@ -849,7 +888,7 @@ export function executeCommand(
             : price.cracked_price;
         return {
           id: id("item"),
-          pickup_id: p.id,
+          pickup_id: pickupId,
           category: c,
           ...q,
           unit_price,
@@ -859,6 +898,7 @@ export function executeCommand(
       });
       for (const [pickupId, used] of Object.entries(reserved)) {
         const available = pickupBalance(state, pickupId);
+        assert(used.eggs <= available.eggs && used.kg <= available.kg, "Jumlah penjualan melebihi sisa telur yang dibawa.");
         completeBalance(available.eggs - used.eggs, available.kg - used.kg);
       }
       const total = totalAmount(items.reduce((sum, i) => sum + i.total, 0));
@@ -876,13 +916,14 @@ export function executeCommand(
       const documentation = photo(payload.photo);
       assert(documentation !== "", "Foto dokumentasi penjualan wajib diisi.");
       const saleDate = dateValue(payload.date, now);
-      state.sales.push({
+      const sale: Sale = {
         id: id("sale"),
         number: invoice("TRX", state.sales.length),
         date: saleDate,
         due_date: dueDate(payload.due_date, businessDate(saleDate)),
         payments: paid ? [paymentEntry("initial", paid, stamp, user.id, method === "credit" ? undefined : method)] : [],
         user_id: user.id,
+        stock_source: source,
         customer,
         phone: text(payload.phone),
         items,
@@ -896,7 +937,9 @@ export function executeCommand(
         photo: documentation,
         created_at: stamp,
         locked: true,
-      });
+      };
+      if (source === "warehouse") postWarehouseSale(state, sale, undefined, now, `Penjualan gudang ${sale.number}`);
+      state.sales.push(sale);
       break;
     }
     case "sale.due":

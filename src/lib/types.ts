@@ -109,6 +109,8 @@ export interface Sale extends InvoiceLedger {
   number: string;
   date: string;
   user_id: string;
+  /** Older sales were always made from an employee's pickup. */
+  stock_source?: "warehouse" | "pickup";
   customer: string;
   phone: string;
   items: SaleItem[];
@@ -193,7 +195,7 @@ export interface StockMovement {
   created_at: string;
   user_id: string;
   category: Category;
-  kind: "production" | "pickup" | "return" | "correction" | "reconcile";
+  kind: "production" | "pickup" | "sale" | "return" | "correction" | "reconcile";
   /** Older reconcile movements always came from a physical count. */
   method?: StockAdjustmentMethod;
   /** Older physical counts recorded only eggs and kilograms. */

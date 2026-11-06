@@ -1,4 +1,4 @@
-import type { Pickup, PickupBalance, Sale, State } from "./types";
+import type { Pickup, PickupBalance, Sale, State, StockMovement } from "./types";
 
 interface ReceiptDelta {
   mode: "sale_receipt";
@@ -6,6 +6,8 @@ interface ReceiptDelta {
   sale: Sale;
   pickups: Pickup[];
   pickup_balances: Record<string, PickupBalance>;
+  inventory?: State["inventory"];
+  stock_movements?: StockMovement[];
 }
 
 const obj = (v: unknown): v is Record<string, unknown> => v !== null && typeof v === "object" && !Array.isArray(v);
@@ -25,6 +27,26 @@ export function isReceiptDelta(data: unknown, userId: string, requestId: string 
     || !["paid", "unpaid", "partial"].includes(String(sale.payment_status))
     || ![sale.total, sale.balance, sale.paid].every(finite) || !Array.isArray(sale.items) || !sale.items.length
     || sale.items.length > 100 || !sale.items.every(i => obj(i) && typeof i.pickup_id === "string" && validCategory(i.category) && quantity(i) && finite(i.unit_price) && finite(i.total))) return false;
+  if (sale.stock_source === "warehouse") {
+    if (pickups.length || Object.keys(balances).length || sale.items.some(i => i.pickup_id !== "")
+      || !obj(data.inventory) || !Array.isArray(data.stock_movements)) return false;
+    const inventory = data.inventory;
+    if (!["good","cracked"].every(category => {
+      const q = inventory[category];
+      return obj(q) && quantity(q) && ["kg","eggs","trays"].every(k => Number(q[k]) >= 0);
+    })) return false;
+    const categories = new Set(sale.items.map(i => i.category));
+    const ids = new Set<string>();
+    for (const m of data.stock_movements) {
+      if (!obj(m) || typeof m.id !== "string" || !m.id || ids.has(m.id) || m.kind !== "sale"
+        || m.reference_id !== sale.id || m.user_id !== userId || !categories.delete(m.category)
+        || !quantity(m) || Number(m.eggs) >= 0 || Number(m.kg) >= 0 || Number(m.trays) > 0
+        || !["date","created_at","notes"].every(k => typeof m[k] === "string")) return false;
+      ids.add(m.id);
+    }
+    return !categories.size;
+  }
+  if ((sale.stock_source !== undefined && sale.stock_source !== "pickup") || sale.items.some(i => !i.pickup_id)) return false;
   const expected = new Set(sale.items.map(i => i.pickup_id));
   if (pickups.length !== expected.size || Object.keys(balances).length !== expected.size) return false;
   for (const p of pickups) {
@@ -45,10 +67,16 @@ export function mergeReceiptDelta(state: State, delta: ReceiptDelta): State {
     updated.delete(p.id);
     return next ?? p;
   });
-  // Only carried stock changes when eggs are sold. Warehouse stock was deducted
-  // on pickup. Updating the latter here would count a sale twice.
+  // A warehouse receipt carries an authoritative balance. Never subtract the
+  // quantities locally: the same receipt may be replayed after a lost response.
+  const warehouse = delta.sale.stock_source === "warehouse" && delta.inventory && delta.stock_movements;
+  const movementIds = new Set(warehouse ? warehouse.map(m => m.id) : []);
   return { ...state, command_result: delta.command_result,
     sales,
+    ...(warehouse ? {
+      inventory: delta.inventory,
+      stock_movements: [...warehouse, ...(state.stock_movements || []).filter(m => !movementIds.has(m.id))],
+    } : {}),
     pickups: [...updated.values(), ...pickups],
     pickup_balances: { ...state.pickup_balances, ...delta.pickup_balances },
   };

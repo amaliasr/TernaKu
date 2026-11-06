@@ -9,6 +9,7 @@ function matchesPayload(sale: Sale, payload: CommandPayload): boolean {
   if (
     !Number.isFinite(submittedAt) ||
     Date.parse(sale.date) !== submittedAt ||
+    (sale.stock_source ?? "pickup") !== (payload.stock_source ?? "pickup") ||
     sale.customer !== text(payload.customer) ||
     sale.phone !== text(payload.phone) ||
     sale.notes !== text(payload.notes) ||
@@ -23,7 +24,7 @@ function matchesPayload(sale: Sale, payload: CommandPayload): boolean {
     if (!submitted || typeof submitted !== "object") return false;
     const line = submitted as CommandPayload;
     return (
-      item.pickup_id === line.pickup_id &&
+      item.pickup_id === (line.pickup_id ?? "") &&
       item.category === line.category &&
       item.eggs === Number(line.eggs) &&
       item.kg === Number(line.kg) &&

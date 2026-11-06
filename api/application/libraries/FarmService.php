@@ -123,17 +123,18 @@ class FarmService {
     private function audit(string $action, string $description, $before = null, $after = null): void {
         $this->insert('activity',['user_id'=>$this->actor['id'],'action'=>$action,'description'=>$description,'created_at'=>$this->now(),'before'=>$before,'after'=>$after]);
     }
-    private function movement(string $kind,array $record,array $q,string $notes='',?string $date=null): void {
-        $this->insert('stock_movement',['date'=>$date ?? $record['date'],'created_at'=>$this->now(),'user_id'=>$record['user_id'],'category'=>$record['category'],'kind'=>$kind,'reference_id'=>$record['id'],'eggs'=>$q['eggs'],'kg'=>$q['kg'],'trays'=>$q['trays'],'notes'=>$notes]);
+    private function movement(string $kind,array $record,array $q,string $notes='',?string $date=null): array {
+        return $this->insert('stock_movement',['date'=>$date ?? $record['date'],'created_at'=>$this->now(),'user_id'=>$record['user_id'],'category'=>$record['category'],'kind'=>$kind,'reference_id'=>$record['id'],'eggs'=>$q['eggs'],'kg'=>$q['kg'],'trays'=>$q['trays'],'notes'=>$notes]);
     }
-    private function stock(string $key, int $eggs, float $kg, int $trays = 0): void {
+    private function stock(string $key, int $eggs, float $kg, int $trays = 0, bool $requireTrays = false): void {
         $r=$this->query('SELECT eggs,kg,trays FROM stock WHERE stock_key=? FOR UPDATE',[$key])->fetch(PDO::FETCH_ASSOC);
         if (!$r) throw new ApiProblem('Stok tidak ditemukan.',404);
         $newEggs=(int)$r['eggs']+$eggs; $newKg=round((float)$r['kg']+$kg,3); $newTrays=(int)$r['trays']+$trays;
         if ($newEggs<0 || $newKg<0) throw new ApiProblem('Stok tidak mencukupi. Periksa jumlah butir dan berat aktual.');
+        if ($requireTrays && $newTrays<0) throw new ApiProblem('Jumlah krat melebihi stok di gudang.');
         if (strpos($key,'egg:')===0 && (($newEggs===0) !== ($newKg==0))) throw new ApiProblem('Sisa jumlah butir dan berat harus sama-sama habis atau sama-sama masih tersedia. Periksa berat aktual.');
         // Tray count is informational: employees may re-pack trays without changing egg stock.
-        $this->query('UPDATE stock SET eggs=?,kg=?,trays=? WHERE stock_key=?',[$newEggs,$newKg,max(0,$newTrays),$key]);
+        $this->query('UPDATE stock SET eggs=?,kg=?,trays=? WHERE stock_key=?',[$newEggs,number_format($newKg,3,'.',''),max(0,$newTrays),$key]);
     }
     public function authenticate(string $token): array {
         if (!preg_match('/^[a-f0-9]{64}$/D',$token)) throw new ApiProblem('Silakan masuk terlebih dahulu.',401);
@@ -333,12 +334,37 @@ class FarmService {
         }
         $state['settings']=$this->settings();
         $state['users']=$this->publicUsers($admin,$compact);
-        $state['inventory']=[]; $state['feed_inventory']=[];
-        foreach($this->query('SELECT * FROM stock')->fetchAll(PDO::FETCH_ASSOC) as $s) {
-            if (strpos($s['stock_key'],'egg:')===0) $state['inventory'][substr($s['stock_key'],4)]=['eggs'=>(int)$s['eggs'],'kg'=>(float)$s['kg'],'trays'=>(int)$s['trays']];
-            else $state['feed_inventory'][substr($s['stock_key'],5)]=(float)$s['kg'];
+        return $state+$this->stockBalances();
+    }
+    private function stockBalances(bool $eggsOnly=false): array {
+        $balances=['inventory'=>[],'feed_inventory'=>[]];
+        $sql='SELECT stock_key,eggs,kg,trays FROM stock'.($eggsOnly?" WHERE stock_key IN ('egg:good','egg:cracked')":'');
+        foreach($this->query($sql)->fetchAll(PDO::FETCH_ASSOC) as $stock) {
+            $key=$stock['stock_key'];
+            if(str_starts_with($key,'egg:')) $balances['inventory'][substr($key,4)]=['eggs'=>(int)$stock['eggs'],'kg'=>(float)$stock['kg'],'trays'=>(int)$stock['trays']];
+            else $balances['feed_inventory'][substr($key,5)]=(float)$stock['kg'];
         }
-        return $state;
+        return $balances;
+    }
+    private function warehouseSaleMovements(array $sale,array $beforeItems,string $kind,string $notes,?string $date=null): array {
+        // Reconcile old and new quantities per category; repeated lines can have different prices.
+        $deltas=[]; $ids=[];
+        foreach([1=>$beforeItems,-1=>$sale['items']] as $direction=>$items) {
+            foreach($items as $item) {
+                $category=$item['category'];
+                $delta=$deltas[$category]??['eggs'=>0,'kg'=>0,'trays'=>0];
+                foreach($delta as $field=>$value) $delta[$field]=$value+$direction*$item[$field];
+                $delta['kg']=round($delta['kg'],3);
+                $deltas[$category]=$delta;
+            }
+        }
+        foreach($deltas as $category=>$q) {
+            if(!$q['eggs'] && !$q['kg'] && !$q['trays']) continue;
+            $this->stock('egg:'.$category,$q['eggs'],$q['kg'],$q['trays'],true);
+            $movement=$this->movement($kind,$sale+['category'=>$category],$q,$notes,$date);
+            $ids[]=$movement['id'];
+        }
+        return $ids;
     }
     private function carriedQuantities(array $pickups,?string $excludeSale = null): array {
         if(!$pickups) return [];
@@ -479,16 +505,21 @@ class FarmService {
         if($entity==='sale' && isset($changes['items'])) {
             if(count($changes['items'])!==count($r['items'])) throw new ApiProblem('Item penjualan tidak boleh ditambah atau dihapus lewat koreksi.');
             $quantities=[]; foreach($changes['items'] as $item) $quantities[$item['id']]=$item;
+            $warehouse=($r['stock_source']??'pickup')==='warehouse';
             $newItems=[]; $reserved=[]; $total=0;
             foreach($r['items'] as $item) {
                 if(!isset($quantities[$item['id']])) throw new ApiProblem('ID item koreksi tidak cocok dengan penjualan.');
                 $newItem=array_replace($item,$quantities[$item['id']]); $newItem['total']=round($newItem['kg']*$item['unit_price']); $total+=$newItem['total'];
                 if(!is_finite($total) || $total>1000000000000) throw new ApiProblem('Total transaksi maksimal Rp1.000.000.000.000.');
-                $pid=$item['pickup_id']; $used=$reserved[$pid]??['eggs'=>0,'kg'=>0]; $reserved[$pid]=['eggs'=>$used['eggs']+$newItem['eggs'],'kg'=>round($used['kg']+$newItem['kg'],3)]; $newItems[]=$newItem;
+                $newItems[]=$newItem;
+                if(!$warehouse) {
+                    $pid=$item['pickup_id']; $used=$reserved[$pid]??['eggs'=>0,'kg'=>0]; $reserved[$pid]=['eggs'=>$used['eggs']+$newItem['eggs'],'kg'=>round($used['kg']+$newItem['kg'],3)];
+                }
             }
             foreach($reserved as $pid=>$q) $this->checkBalance($q,$this->pickupBalance($this->record('pickup',$pid,true),$r['id']));
             if($total<$r['paid']) throw new ApiProblem('Total koreksi lebih kecil dari pembayaran yang sudah diterima. Pengembalian uang/refund belum didukung.');
             $updated['items']=$newItems; $updated['total']=$total; $updated['balance']=$total-$r['paid']; $updated['payment_status']=$r['paid']==$total?'paid':($r['paid']>0?'partial':'unpaid');
+            if($warehouse) $this->warehouseSaleMovements($updated,$r['items'],'correction','Koreksi penjualan oleh '.$this->actor['name'].': '.$reason,$this->now());
         }
         if($entity==='sale' && array_filter($updated['items'],fn($item)=>$item['category']==='cracked' && $item['unit_price']==0)) $this->text($updated,'customer',190,true);
         $this->save($entity,$updated); $this->audit('correction.apply',$reason,$r,$updated);
@@ -531,6 +562,14 @@ class FarmService {
             try {
                 $sale=$this->records('sale',$this->actor['id'],true,true,$result['record_id'])[0]??null;
                 if(!$sale) throw new ApiProblem('Nota yang sudah disimpan belum dapat dibuka.',503);
+                $receipt=['mode'=>'sale_receipt','sale'=>$sale,'command_result'=>['action'=>'sale.create','record_id'=>$sale['id'],'request_id'=>$result['request_id']]];
+                if(($sale['stock_source']??'pickup')==='warehouse') {
+                    $movements=[];
+                    foreach($result['movement_ids'] as $id) $movements[]=$this->record('stock_movement',$id);
+                    $receipt+=['pickups'=>[],'pickup_balances'=>(object)[],'inventory'=>$this->stockBalances(true)['inventory'],'stock_movements'=>$movements];
+                    $this->db->commit();
+                    return $receipt;
+                }
                 $pickups=[]; foreach(array_unique(array_column($sale['items'],'pickup_id')) as $id) {
                     $row=$this->record('pickup',$id); $this->ownOnly($row); $pickups[$id]=$row;
                 }
@@ -540,7 +579,7 @@ class FarmService {
                     $b['status']=$b['kg']<=0 && $b['eggs']<=0 ? ($p['returned_kg']>0 || $p['returned_eggs']>0?'Dikembalikan':'Terjual') : ($b['eggs']<$p['eggs']-$p['returned_eggs']?'Sebagian terjual':'Dibawa');
                 } unset($b);
                 $this->db->commit();
-                return ['mode'=>'sale_receipt','sale'=>$sale,'pickups'=>array_values($pickups),'pickup_balances'=>$balances,'command_result'=>['action'=>'sale.create','record_id'=>$sale['id'],'request_id'=>$result['request_id']]];
+                return $receipt+['pickups'=>array_values($pickups),'pickup_balances'=>$balances];
             } catch(Throwable $e) { if($this->db->inTransaction()) $this->db->rollBack(); throw $e; }
         }
         $state=$this->bootstrap($compact);
@@ -681,6 +720,7 @@ class FarmService {
         $this->audit($action,'Mencatat pembayaran '.($supplier?'ke pemasok ':'pelanggan ').$r['number'],$before,['id'=>$r['id'],'paid'=>$r['paid'],'balance'=>$r['balance'],'payment'=>$entry]);
     }
     private function createSale(array $p): void {
+        $source=$this->enum($p+['stock_source'=>'pickup'],'stock_source',['pickup','warehouse']);
         $customer=$this->text($p,'customer',190,true);
         $photo=$this->photo($p); if($photo==='') throw new ApiProblem('Foto dokumentasi penjualan wajib diisi.');
         $items=$p['items']??null; if(!is_array($items) || count($items)<1 || count($items)>100) throw new ApiProblem('Transaksi harus berisi 1–100 item.');
@@ -689,15 +729,24 @@ class FarmService {
         $out=[]; $total=0; $reserved=[]; $pickups=[];
         foreach($items as $item) {
             if(!is_array($item)) throw new ApiProblem('Item tidak valid.');
-            $id=$this->text($item,'pickup_id',40,true); if(isset($pickups[$id])) continue;
+            $id=$this->text($item,'pickup_id',40,$source==='pickup');
+            if($source==='warehouse') {
+                if($id!=='') throw new ApiProblem('Penjualan dari gudang hanya boleh menggunakan stok gudang.');
+                continue;
+            }
+            if(isset($pickups[$id])) continue;
             $pickup=$this->record('pickup',$id,true); $this->ownOnly($pickup); $pickups[$id]=$pickup;
         }
         $balances=$this->carriedQuantities($pickups);
         foreach($items as $item) {
-            $id=trim($item['pickup_id']); $pickup=$pickups[$id];
-            $category=$this->enum($item,'category',['good','cracked']); if($category!==$pickup['category']) throw new ApiProblem('Kategori penjualan berbeda dengan telur yang diambil.');
-            $q=$this->quantity($item); $bal=$balances[$id];
-            $used=$reserved[$id]??['eggs'=>0,'kg'=>0]; $this->checkBalance(['eggs'=>$q['eggs']+$used['eggs'],'kg'=>round($q['kg']+$used['kg'],3)],$bal); $reserved[$id]=['eggs'=>$q['eggs']+$used['eggs'],'kg'=>round($q['kg']+$used['kg'],3)];
+            $id=''; $category=$this->enum($item,'category',['good','cracked']); $q=$this->quantity($item);
+            if($source==='pickup') {
+                $id=trim($item['pickup_id']);
+                if($category!==$pickups[$id]['category']) throw new ApiProblem('Kategori penjualan berbeda dengan telur yang diambil.');
+                $used=$reserved[$id]??['eggs'=>0,'kg'=>0];
+                $reserved[$id]=['eggs'=>$q['eggs']+$used['eggs'],'kg'=>round($q['kg']+$used['kg'],3)];
+                $this->checkBalance($reserved[$id],$balances[$id]);
+            }
             if(array_key_exists('is_free',$item) && !is_bool($item['is_free'])) throw new ApiProblem('Pilihan gratis tidak valid.');
             if(($item['is_free']??false) && $category!=='cracked') throw new ApiProblem('Hanya telur bentes yang boleh diberikan gratis.');
             $free=$category==='cracked' && (($item['is_free']??false) || $price['cracked_price']==0);
@@ -708,8 +757,9 @@ class FarmService {
         $paid=$this->number($p,'paid',0,true); if($paid>$total) throw new ApiProblem('Nominal pembayaran melebihi total transaksi.');
         $method=$this->enum($p,'payment_method',['cash','transfer','qris','credit']);
         $date=$this->date($p);
-        $r=$this->insert('sale',['due_date'=>$this->invoiceDue($p,$date),'payments'=>$paid>0?[$this->invoicePayment('initial',$paid,$method==='credit'?null:$method)]:[],'number'=>'TK-'.date('Ymd').'-'.strtoupper(bin2hex(random_bytes(4))),'date'=>$date,'user_id'=>$this->actor['id'],'customer'=>$customer,'phone'=>$this->text($p,'phone',40),'items'=>$out,'total'=>$total,'paid'=>$paid,'balance'=>$total-$paid,'payment_method'=>$total==0?'cash':$method,'payment_status'=>$paid==$total?'paid':($paid>0?'partial':'unpaid'),'notes'=>$this->text($p,'notes'),'photo'=>$photo,'created_at'=>$this->now(),'locked'=>true]);
+        $r=$this->insert('sale',['stock_source'=>$source,'due_date'=>$this->invoiceDue($p,$date),'payments'=>$paid>0?[$this->invoicePayment('initial',$paid,$method==='credit'?null:$method)]:[],'number'=>'TK-'.date('Ymd').'-'.strtoupper(bin2hex(random_bytes(4))),'date'=>$date,'user_id'=>$this->actor['id'],'customer'=>$customer,'phone'=>$this->text($p,'phone',40),'items'=>$out,'total'=>$total,'paid'=>$paid,'balance'=>$total-$paid,'payment_method'=>$total==0?'cash':$method,'payment_status'=>$paid==$total?'paid':($paid>0?'partial':'unpaid'),'notes'=>$this->text($p,'notes'),'photo'=>$photo,'created_at'=>$this->now(),'locked'=>true]);
         $this->commandResult=['action'=>'sale.create','record_id'=>$r['id'],'request_id'=>''];
+        if($source==='warehouse') $this->commandResult['movement_ids']=$this->warehouseSaleMovements($r,[],'sale','Penjualan gudang '.$r['number']);
         $this->audit('sale.create','Mencatat penjualan '.$r['number'],null,$r);
     }
     private function createUser(array $p): void {

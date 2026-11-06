@@ -7,7 +7,6 @@ import {
   Egg,
   Plus,
   Trash2,
-  Warehouse,
 } from "lucide-react";
 import { useFarm } from "@/lib/store";
 import {
@@ -35,7 +34,8 @@ import {
 import styles from "./EmployeeEntry.module.css";
 import Photo from "./PhotoUpload";
 import { useDraftField, useSaleDueDate } from "./DraftBoundary";
-import { availableSalePickups, saleStockIssues } from "@/lib/sale-availability";
+import { saleStockIssues, saleStockKey } from "@/lib/sale-availability";
+import { SaleStockSourceField, useSaleStockSource, type SaleStart } from "./SaleStockSource";
 import HarvestForm from "./HarvestForm";
 
 type Props = {
@@ -43,7 +43,7 @@ type Props = {
   onSave: (action: string, payload: CommandPayload) => Promise<void>;
   busy: boolean;
   onClose: () => void;
-  onSwitchKind: (kind: "pickup") => void;
+  saleStart?: SaleStart;
 };
 
 const quantity = (value: number) => number(value, 3);
@@ -335,6 +335,7 @@ function PickupEntry({
 }
 
 type SaleLine = {
+  category?: Category;
   key: number;
   pickup_id: string;
   kg: string;
@@ -343,14 +344,14 @@ type SaleLine = {
   is_free: boolean;
 };
 
-function SaleEntry({ onSave, busy, onClose, onSwitchKind }: Props) {
+function SaleEntry({ onSave, busy, onClose, saleStart }: Props) {
   const { state, user, priceSync, refresh } = useFarm();
   const price = activePrice(state);
-  const available = availableSalePickups(state, user?.id);
+  const { source, setSource, available, warehouseSale, optionFor, choiceFor, emptyMessage } = useSaleStockSource(state, user?.id, saleStart);
   const [items, setItems] = useDraftField<SaleLine[]>("items", () => [
     {
       key: 0,
-      pickup_id: available.length === 1 ? available[0].id : "",
+      ...choiceFor(source),
       kg: "",
       eggs: "",
       trays: "",
@@ -370,11 +371,11 @@ function SaleEntry({ onSave, busy, onClose, onSwitchKind }: Props) {
   const [reviewMessage, setReviewMessage] = useState(false);
   const priceReviewRef = useRef<HTMLDivElement>(null);
   const hasQuantity = items.some((item) => item.kg !== "" || item.eggs !== "");
-  const stockIssues = saleStockIssues(items, available);
-  const showTotal = !!price && stockIssues.size === 0 && items.every(item => item.pickup_id);
+  const stockIssues = saleStockIssues(items, available, source);
+  const showTotal = !!price && stockIssues.size === 0 && items.every(item => optionFor(item));
   const priceChanged = !!price && hasQuantity && reviewedPriceId !== price.id;
   const unitPrice = (item: SaleLine) => {
-    const pickup = available.find((entry) => entry.id === item.pickup_id);
+    const pickup = optionFor(item);
     if (
       pickup?.category === "cracked" &&
       (item.is_free || price?.cracked_price === 0)
@@ -392,7 +393,7 @@ function SaleEntry({ onSave, busy, onClose, onSwitchKind }: Props) {
   );
   const hasFree = items.some(
     (item) =>
-      available.find((entry) => entry.id === item.pickup_id)?.category ===
+      optionFor(item)?.category ===
         "cracked" &&
       (item.is_free || price?.cracked_price === 0),
   );
@@ -405,34 +406,16 @@ function SaleEntry({ onSave, busy, onClose, onSwitchKind }: Props) {
     if (!hasQuantity) setReviewedPriceId(price?.id);
     setItems((old) =>
       old.map((item) =>
-        item.key === key ? { ...item, ...(field === "pickup_id" ? {is_free: false} : {}), [field]: value } : item,
+        item.key === key ? { ...item, ...(field === "pickup_id" || field === "category" ? {is_free: false} : {}), [field]: value } : item,
       ),
     );
   };
 
-  if (!available.length)
-    return (
-      <div className={`${styles.form} ${styles.empty}`}>
-        <Warehouse size={36} />
-        <h3>Belum ada telur yang Anda bawa</h3>
-        {stockIssues.size > 0 && <p className={styles.warning}>Telur yang dipilih pada draf ini sudah habis. Setelah mengambil telur lagi, buka draf dan pilih pengambilan yang baru.</p>}
-        <p>
-          Catat dulu telur yang diambil dari gudang. Setelah itu, buka Jual
-          untuk mencatat penjualan.
-        </p>
-        <button
-          className="btn btn-primary"
-          type="button"
-          onClick={() => onSwitchKind("pickup")}
-        >
-          Ambil telur dari gudang
-        </button>
-        <button className="btn btn-light" type="button" onClick={onClose}>
-          Kembali
-        </button>
-      </div>
-    );
-
+  const sourceField = <SaleStockSourceField source={source} onChange={next => {
+    if (next === source) return;
+    setSource(next);
+    setItems(old => old.map(item => ({ ...item, ...choiceFor(next), is_free: false })));
+  }} />;
   return (
     <SimpleForm
       busy={busy}
@@ -452,15 +435,16 @@ function SaleEntry({ onSave, busy, onClose, onSwitchKind }: Props) {
           ...data,
           date: `${date || initialDate}:00+07:00`,
           expected_price_id: price?.id,
+          stock_source: source,
           items: items.map((item) => ({
-            pickup_id: item.pickup_id,
-            category: available.find((pickup) => pickup.id === item.pickup_id)
+            pickup_id: warehouseSale ? "" : item.pickup_id,
+            category: optionFor(item)
               ?.category,
             eggs: Number(item.eggs),
             kg: Number(item.kg),
             trays: Number(item.trays || 0),
             is_free:
-              available.find((pickup) => pickup.id === item.pickup_id)
+              optionFor(item)
                 ?.category === "cracked" &&
               (item.is_free || price?.cracked_price === 0),
           })),
@@ -472,6 +456,8 @@ function SaleEntry({ onSave, busy, onClose, onSwitchKind }: Props) {
         });
       }}
     >
+      {sourceField}
+      {emptyMessage && <p className={styles.warning}>{emptyMessage}</p>}
       <div className={styles.priceBar} aria-label="Harga telur saat ini">
         <div>
           <span>Bagus / kg</span>
@@ -518,9 +504,9 @@ function SaleEntry({ onSave, busy, onClose, onSwitchKind }: Props) {
         </p>
       )}
       {items.map((item, index) => {
-        const pickup = available.find((entry) => entry.id === item.pickup_id);
+        const pickup = optionFor(item);
         const balance = pickup?.balance;
-        const issue = stockIssues.get(item.pickup_id);
+        const issue = stockIssues.get(saleStockKey(item, source));
         const choices = available;
         return (
           <section
@@ -554,20 +540,19 @@ function SaleEntry({ onSave, busy, onClose, onSwitchKind }: Props) {
                 <span>{pickup.area}</span>
               </p>
             ) : (
-              <Field label="Pilih telur yang Anda bawa">
+              <Field label={warehouseSale ? "Jenis telur di gudang" : "Pilih telur yang Anda bawa"}>
                 <select
                   className="form-select"
                   value={pickup?.id || ""}
                   onChange={(e) =>
-                    update(item.key, "pickup_id", e.target.value)
+                    update(item.key, warehouseSale ? "category" : "pickup_id", e.target.value)
                   }
                   required
                 >
-                  <option value="">Pilih jenis dan pengambilan</option>
+                  <option value="">{warehouseSale ? "Pilih jenis telur" : "Pilih jenis dan pengambilan"}</option>
                   {choices.map((entry) => (
                     <option key={entry.id} value={entry.id}>
-                      {categoryLabel(entry.category)} · {entry.area} ·{" "}
-                      {dateLabel(entry.date)} ·{" "}
+                      {categoryLabel(entry.category)} · {warehouseSale ? "" : `${entry.area} · ${dateLabel(entry.date)} · `}
                       {quantity(entry.balance.kg)} kg
                     </option>
                   ))}
@@ -577,8 +562,8 @@ function SaleEntry({ onSave, busy, onClose, onSwitchKind }: Props) {
             {issue && <p className={styles.warning} role="alert">{issue}</p>}
             {balance && (
               <p className={styles.hint}>
-                Anda bawa {quantity(balance.eggs)} butir ·{" "}
-                {quantity(balance.kg)} kg. Harga {money(unitPrice(item))}/kg.
+                {warehouseSale ? "Tersedia di gudang" : "Anda bawa"} {quantity(balance.eggs)} butir ·{" "}
+                {quantity(balance.kg)} kg{warehouseSale && ` · ${quantity(balance.trays)} krat`}. Harga {money(unitPrice(item))}/kg.
               </p>
             )}
             {pickup?.category === "cracked" && (
@@ -621,7 +606,7 @@ function SaleEntry({ onSave, busy, onClose, onSwitchKind }: Props) {
                   inputMode="numeric"
                   min="0"
                   step="1"
-                  max={balance?.trays}
+                  max={warehouseSale ? balance?.trays : undefined}
                   value={item.trays}
                   placeholder="0"
                   onChange={(e) => update(item.key, "trays", e.target.value)}
@@ -645,13 +630,12 @@ function SaleEntry({ onSave, busy, onClose, onSwitchKind }: Props) {
           type="button"
           className={`btn btn-outline-primary ${styles.add}`}
           onClick={() => {
-            const remaining = available;
             const key = Math.max(0, ...items.map(item => item.key)) + 1;
             setItems((old) => [
               ...old,
               {
                 key,
-                pickup_id: remaining.length === 1 ? remaining[0].id : "",
+                ...choiceFor(source),
                 eggs: "",
                 kg: "",
                 trays: "",
@@ -778,7 +762,7 @@ function SaleEntry({ onSave, busy, onClose, onSwitchKind }: Props) {
         <span>Total penjualan</span>
         <strong>{showTotal ? money(total) : "—"}</strong>
         <small>
-          {!showTotal ? "Periksa pengambilan, jumlah, dan harga telur." : hasFree && total === 0 ? (
+          {!showTotal ? "Periksa pilihan telur, jumlah, dan harga." : hasFree && total === 0 ? (
             "Gratis · tidak ada tagihan"
           ) : (
             <>

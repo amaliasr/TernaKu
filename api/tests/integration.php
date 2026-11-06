@@ -23,6 +23,20 @@ function req(string $path,array $body=[],string $token='',string $method='POST',
     $r=json_decode($raw,true); if($status!==$expected || !is_array($r)) throw new RuntimeException("$method $path expected $expected received $status: ".substr($raw,0,800)); return $r['data']??$r;
 }
 function cmd(string $action,array $payload,string $token,int $expected=200): array { return req('/commands',['action'=>$action,'payload'=>$payload],$token,'POST',$expected); }
+function multipartCommand(array $command,string $token,string $bytes,string $mime='image/png',int $expected=200): array {
+    global $base;
+    $c=curl_init($base.'/commands');
+    curl_setopt_array($c,[
+        CURLOPT_RETURNTRANSFER=>true, CURLOPT_TIMEOUT=>15, CURLOPT_HTTPHEADER=>['Authorization: Bearer '.$token],
+        CURLOPT_POSTFIELDS=>['command'=>json_encode($command), 'photo'=>new CURLStringFile($bytes,'photo',$mime)],
+    ]);
+    $raw=curl_exec($c);
+    if($raw===false) throw new RuntimeException(curl_error($c));
+    $status=curl_getinfo($c,CURLINFO_RESPONSE_CODE); $size=curl_getinfo($c,CURLINFO_SIZE_UPLOAD);
+    $response=json_decode($raw,true,512,JSON_THROW_ON_ERROR);
+    if($status!==$expected) throw new RuntimeException("Multipart command expected $expected, received $status: ".substr($raw,0,600));
+    return [$response['data']??$response,$size];
+}
 function mediaReq(string $path,string $token,int $expected=200): array {
     global $base; $c=curl_init($base.$path); curl_setopt_array($c,[CURLOPT_RETURNTRANSFER=>true,CURLOPT_HEADER=>true,CURLOPT_HTTPHEADER=>['Authorization: Bearer '.$token],CURLOPT_TIMEOUT=>15]);
     $raw=curl_exec($c); if($raw===false) throw new RuntimeException(curl_error($c)); $status=curl_getinfo($c,CURLINFO_RESPONSE_CODE); $length=curl_getinfo($c,CURLINFO_HEADER_SIZE); $type=curl_getinfo($c,CURLINFO_CONTENT_TYPE); curl_close($c);
@@ -149,6 +163,24 @@ try {
     $png=base64_decode(explode(',',$profilePhoto,2)[1]);
     $atLimit='data:image/png;base64,'.base64_encode(str_pad($png,1048576,"\0"));
     $s=cmd('profile.update',['name'=>'Sari','photo'=>$atLimit],$e); check($s['users'][0]['photo']===$atLimit,'photo accepts exactly one MiB decoded without truncation');
+    $imageBytes=base64_decode(explode(',',$atLimit,2)[1]);
+    $upload=['action'=>'profile.update','payload'=>['photo'=>'','name'=>'Sari'],'request_id'=>'photo-'.bin2hex(random_bytes(10)),'response_mode'=>'compact'];
+    [$compactPhoto,$uploadSize]=multipartCommand($upload,$e,$imageBytes);
+    $jsonUpload=$upload; $jsonUpload['payload']['photo']=$atLimit;
+    $legacySize=strlen(json_encode($jsonUpload,JSON_UNESCAPED_SLASHES));
+    $photoSnapshot=businessSnapshot(); req('/commands',$jsonUpload,$e);
+    check($photoSnapshot===businessSnapshot() && $compactPhoto['users'][0]['photo_ref']['version']===hash('sha256',$atLimit)
+        && mediaReq('/media/profile/'.$sari['id'],$e)['body']===$imageBytes,'multipart and JSON replay share one fingerprint and retain every image byte');
+    check($uploadSize<$legacySize*.76,'binary wire format removes base64 overhead from a 1 MiB photo');
+    echo "MEASURE photo request $uploadSize bytes multipart vs $legacySize bytes JSON\n";
+    $changed=$jsonUpload; $changed['payload']['photo']=$profilePhoto; req('/commands',$changed,$e,'POST',409);
+    $upload['request_id']='bad-photo-'.bin2hex(random_bytes(8));
+    multipartCommand($upload,$e,$imageBytes.'x','image/png',413);
+    multipartCommand($upload,$e,$imageBytes,'image/webp',422);
+    multipartCommand($upload,$e,'not a photo','image/jpeg',422);
+    multipartCommand($upload,$e,'','image/png',422);
+    unset($upload['payload']['photo']); multipartCommand($upload,$e,$imageBytes,'image/png',400);
+    check(businessSnapshot()===$photoSnapshot,'invalid multipart uploads and changed retries cannot overwrite a saved photo');
     cmd('profile.update',['name'=>'Sari','photo'=>'data:image/png;base64,'.base64_encode(str_pad($png,1048577,"\0"))],$e,422); check(true,'photo rejects one byte above one MiB');
     $legacyPhoto='data:image/png;base64,'.base64_encode(str_pad($png,1048577,"\0"));
     $db->prepare("UPDATE records SET data=? WHERE kind='user_profile' AND user_id=?")->execute([json_encode(['photo'=>$legacyPhoto]),$sari['id']]);
@@ -512,6 +544,68 @@ try {
     $boundary['items'][0] = ['category'=>'cracked', 'expected'=>$maxStock, 'physical'=>$measured];
     $reduced = cmd('stock.reconcile', $boundary, $a);
     check($reduced['inventory']['cracked'] === $measured, 'large decimal balances round-trip through HTTP, PDO, and the stock ledger');
+    $warehouseStock=['good'=>['eggs'=>50,'kg'=>5,'trays'=>2],'cracked'=>['eggs'=>20,'kg'=>2,'trays'=>1]];
+    $counts=[]; foreach($warehouseStock as $category=>$quantity) $counts[]=['category'=>$category,'expected'=>$reduced['inventory'][$category],'physical'=>$quantity];
+    cmd('stock.reconcile',['items'=>$counts,'reason'=>'Hitung persediaan sebelum penjualan gudang'],$a);
+    $beforeWarehouse=req('/bootstrap?compact=1',[],$e,'GET');
+    $items=[
+        ['category'=>'good','eggs'=>10,'kg'=>1,'trays'=>1],
+        ['category'=>'cracked','eggs'=>2,'kg'=>0.2,'trays'=>0,'is_free'=>true],
+        ['category'=>'good','eggs'=>5,'kg'=>0.5,'trays'=>0,'pickup_id'=>''],
+    ];
+    $warehousePayload=array_replace($salePayload,['stock_source'=>'warehouse','customer'=>'Pembeli di gudang','photo'=>$profilePhoto,'items'=>$items,'paid'=>0]);
+    $badSourceSnapshot=businessSnapshot();
+    foreach([['stock_source'=>'external'],['stock_source'=>'pickup'],['items'=>[$items[0]+['pickup_id'=>$pickup]]],['customer'=>''],['photo'=>''],
+        ['items'=>[$items[0],array_replace($items[1],['eggs'=>21])]],['items'=>[array_replace($items[0],['trays'=>3])]]] as $badFields) {
+        cmd('sale.create',array_replace($warehousePayload,$badFields),$e,422);
+    }
+    check(businessSnapshot()===$badSourceSnapshot,'warehouse sales validate required customer, photo, source and stock atomically across categories');
+    $envelope=['action'=>'sale.create','payload'=>$warehousePayload,'request_id'=>'warehouse-'.bin2hex(random_bytes(8)),'response_mode'=>'compact','receipt_for_role'=>'employee'];
+    $form=$envelope; $form['payload']['photo']='';
+    [$direct]=multipartCommand($form,$e,$png);
+    $saved=$direct['sale']; $saleId=$saved['id']; $invoiceNumber=$saved['number'];
+    $soldGood=first($direct,'stock_movements',fn($m)=>$m['category']==='good');
+    check($direct['mode']==='sale_receipt' && $saved['stock_source']==='warehouse' && $saved['items'][1]['unit_price']===0
+        && $saved['items'][0]['unit_price']>0 && $saved['total']==array_sum(array_column($saved['items'],'total'))
+        && array_column($saved['items'],'pickup_id')===['','',''] && $direct['pickups']===[] && $direct['pickup_balances']===[]
+        && $direct['inventory']==['good'=>['eggs'=>35,'kg'=>3.5,'trays'=>1],'cracked'=>['eggs'=>18,'kg'=>1.8,'trays'=>1]]
+        && count($direct['stock_movements'])===2 && $soldGood['eggs']===-15 && $soldGood['kg']==-1.5 && $soldGood['trays']===-1
+        && $soldGood['reference_id']===$saleId && $soldGood['kind']==='sale' && $soldGood['user_id']===$sari['id'],
+        'one multipart warehouse sale returns a numbered receipt, aggregates repeated categories and honors free cracked eggs');
+    check($direct===req('/commands',$envelope,$e) && mediaReq('/media/sale/'.$saleId,$e)['body']===$png,
+        'JSON replay of a binary sale immediately reopens the same receipt and retains its photo');
+    $afterWarehouse=req('/bootstrap?compact=1',[],$e,'GET');
+    check(count($afterWarehouse['sales'])===count($beforeWarehouse['sales'])+1 && $afterWarehouse['pickups']===$beforeWarehouse['pickups']
+        && $afterWarehouse['inventory']===$direct['inventory'],'warehouse sales appear in employee history without creating or consuming personal pickups');
+    $quantities=array_map(fn($item)=>array_intersect_key($item,array_flip(['id','eggs','kg','trays'])),$saved['items']);
+    $quantities[0]['eggs']=6; $quantities[0]['kg']=0.6; $quantities[0]['trays']=0;
+    $correction=['entity'=>'sale','id'=>$saleId,'reason'=>'Sesuaikan berat setelah timbang ulang','changes'=>['items'=>$quantities]];
+    $correctedWarehouse=cmd('correction.apply',$correction,$a);
+    $correctionMove=first($correctedWarehouse,'stock_movements',fn($m)=>$m['reference_id']===$saleId && $m['kind']==='correction');
+    $replay=req('/commands',$envelope,$e);
+    check($replay['sale']['number']===$invoiceNumber && $replay['sale']['items'][0]['unit_price']===$saved['items'][0]['unit_price']
+        && $replay['inventory']['good']==['eggs'=>39,'kg'=>3.9,'trays'=>2] && $replay['inventory']===$correctedWarehouse['inventory']
+        && $replay['stock_movements']===$direct['stock_movements'] && $correctionMove['eggs']===4 && $correctionMove['kg']==0.4 && $correctionMove['trays']===1,
+        'a warehouse correction restores the signed difference and a retry shows the updated inventory and original sale movements');
+    $beforeBadCorrection=businessSnapshot(); $correction['changes']['items'][0]['eggs']=100;
+    cmd('correction.apply',$correction,$a,422);
+    check($beforeBadCorrection===businessSnapshot(),'an overselling correction leaves inventory, invoice, and ledger untouched');
+    $jobs=[];
+    $raceItem=['category'=>'good','eggs'=>30,'kg'=>3,'trays'=>1];
+    foreach([$a,$e] as $token) {
+        $pipes=[]; $worker=proc_open([PHP_BINARY,__DIR__.'/command-worker.php'],[0=>['pipe','r'],1=>['pipe','w'],2=>['pipe','w']],$pipes);
+        fwrite($pipes[0],json_encode(['token'=>$token,'action'=>'sale.create','payload'=>array_replace($warehousePayload,['items'=>[$raceItem]])])); fclose($pipes[0]); $jobs[]=[$worker,$pipes];
+    }
+    $results=[];
+    foreach($jobs as [$worker,$pipes]) {
+        $results[]=trim(stream_get_contents($pipes[1])); $err=stream_get_contents($pipes[2]);
+        fclose($pipes[1]); fclose($pipes[2]); if(proc_close($worker)!==0) throw new RuntimeException($err);
+    }
+    sort($results); $afterRace=req('/bootstrap?compact=1',[],$a,'GET');
+    check($results===['200','422'] && $afterRace['inventory']['good']==['eggs'=>9,'kg'=>0.9,'trays'=>1]
+        && count($afterRace['sales'])===count($correctedWarehouse['sales'])+1
+        && count($afterRace['stock_movements'])===count($correctedWarehouse['stock_movements'])+1,
+        'simultaneous warehouse sales by admin and employee commit exactly one invoice and one stock deduction');
     cmd('user.update',['id'=>$sari['id'],'active'=>false],$a); req('/bootstrap',[],$e,'GET',401); req('/sync/prices',[],$e,'GET',401); mediaReq('/media/production/'.$pendingHarvest['id'],$e,401); check(true,'deactivation immediately revokes bootstrap, five-second sync, and media access');
     req('/auth/logout',[],$other); req('/bootstrap',[],$other,'GET',401); check(true,'logout invalidates token');
     req('/application/config/config.php',[],'','GET',404); check(true,'internal files not exposed by dev router');

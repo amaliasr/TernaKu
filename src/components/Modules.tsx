@@ -764,6 +764,7 @@ function StockPage({ open }: { open: OpenForm }) {
     production: "Produksi masuk",
     pickup: "Pengambilan keluar",
     return: "Pengembalian telur",
+    sale: "Penjualan dari gudang",
     correction: "Koreksi",
     reconcile: "Penyesuaian gudang",
   };
@@ -834,9 +835,12 @@ function StockPage({ open }: { open: OpenForm }) {
       <Heading
         eyebrow="PERSEDIAAN TELUR"
         title="Stok gudang & pengambilan"
-        description="Stok gudang adalah telur yang sudah diterima dan siap diambil untuk dijual. Panen yang belum diterima ditampilkan terpisah."
+        description="Telur yang sudah diterima bisa langsung dijual dari gudang atau diambil untuk dibawa. Panen yang belum diterima ditampilkan terpisah."
       >
-        <AddButton onClick={() => open("pickup")}>Ambil telur</AddButton>
+        <div className="d-flex flex-wrap gap-2">
+          <AddButton onClick={() => open("warehouse-sale")}>Jual dari gudang</AddButton>
+          <button className="btn btn-outline-primary" onClick={() => open("pickup")}>Ambil telur</button>
+        </div>
       </Heading>
       {action.feedback}
       <Stats
@@ -1036,7 +1040,7 @@ function StockPage({ open }: { open: OpenForm }) {
             <p className="small text-muted px-4">
               {state.stock_movements
                 ? user?.role === "admin"
-                  ? "Riwayat panen, pengambilan, pengembalian, dan penyesuaian stok."
+                  ? "Riwayat panen, penjualan dari gudang, pengambilan, pengembalian, dan penyesuaian stok."
                   : "Riwayat pergerakan stok dari pencatatan Anda."
                 : "Pengembalian dijumlahkan untuk setiap pengambilan. Data ini tidak ditampilkan saat Anda memilih rentang tanggal."}
             </p>

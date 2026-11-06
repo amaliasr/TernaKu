@@ -1,4 +1,5 @@
 import type { FeedPurchase, Sale, State } from "./types";
+import { saleSourceLabel } from "./sale-availability";
 import { historicalPaid, type FarmInvoice } from "./invoice-ledger";
 import {
   dateLabel,
@@ -335,7 +336,7 @@ export async function printReceipt(sale: Sale, state: State) {
     "NOTA PENJUALAN",
     sale.number,
     sale.date,
-    `${sale.items.some(isFreeSaleItem) ? "Pelanggan / penerima" : "Pelanggan"}: ${sale.customer || "Pelanggan umum"}${sale.phone ? " | " + sale.phone : ""}`,
+    `${sale.items.some(isFreeSaleItem) ? "Pelanggan / penerima" : "Pelanggan"}: ${sale.customer || "Pelanggan umum"}${sale.phone ? " | " + sale.phone : ""}\nSumber telur: ${saleSourceLabel(sale.stock_source)}`,
     state.users.find((u) => u.id === sale.user_id)?.name || "Karyawan",
     sale.items.map((i) => [
       i.category === "good"
