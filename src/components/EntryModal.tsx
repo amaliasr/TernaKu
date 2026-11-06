@@ -24,7 +24,8 @@ import {
 } from "@/lib/domain";
 import type { Category, CommandPayload, Sale } from "@/lib/types";
 import { findSavedSale } from "@/lib/sale-receipt";
-import { availableSalePickups, saleStockIssues } from "@/lib/sale-availability";
+import { saleStockIssues, saleStockKey } from "@/lib/sale-availability";
+import { SaleStockSourceField, useSaleStockSource, type SaleStart } from "./SaleStockSource";
 import EmployeeEntry from "./EmployeeEntry";
 import { DraftBoundary, DraftFields, useDraftField, useEntryDraft, useSaleDueDate } from "./DraftBoundary";
 import { draftKey, type DraftAttempt } from "@/lib/entry-drafts";
@@ -44,6 +45,7 @@ import {
 const number = (value: number) => formatNumber(value, 3);
 
 type FormProps = {
+  saleStart?: SaleStart;
   onSave: (action: string, payload: CommandPayload) => Promise<void>;
   busy: boolean;
   onClose: () => void;
@@ -211,18 +213,19 @@ function PickupForm({ onSave, busy, onClose }: FormProps) {
   );
 }
 type SaleLine = {
+  category?: Category;
   pickup_id: string;
   kg: string;
   eggs: string;
   trays: string;
   is_free: boolean;
 };
-function SaleForm({ onSave, busy, onClose }: FormProps) {
+function SaleForm({ onSave, busy, onClose, saleStart }: FormProps) {
   const { state, user } = useFarm();
   const price = activePrice(state);
-  const available = availableSalePickups(state, user?.id);
+  const { source, setSource, available, warehouseSale, optionFor, choiceFor, emptyMessage } = useSaleStockSource(state, user?.id, saleStart);
   const [items, setItems] = useDraftField<SaleLine[]>("items", [
-    { pickup_id: "", kg: "", eggs: "", trays: "0", is_free: false },
+    { ...choiceFor(source), kg: "", eggs: "", trays: "0", is_free: false },
   ]);
   const [method, setMethod] = useDraftField("method", "cash");
   const [isFull, setIsFull] = useDraftField("fullyPaid", true);
@@ -231,11 +234,11 @@ function SaleForm({ onSave, busy, onClose }: FormProps) {
   const [photo, setPhoto] = useDraftField("photo", "");
   const [photoBusy, setPhotoBusy] = useState(false);
   const [reviewedPriceId, setReviewedPriceId] = useDraftField("reviewedPriceId", price?.id);
-  const stockIssues = saleStockIssues(items, available);
-  const showTotal = !!price && stockIssues.size === 0 && items.every(item => item.pickup_id);
+  const stockIssues = saleStockIssues(items, available, source);
+  const showTotal = !!price && stockIssues.size === 0 && items.every(item => optionFor(item));
   const needsPriceReview = !!price && reviewedPriceId !== price.id && items.some(line => line.kg !== "" || line.eggs !== "");
   const linePrice = (line: SaleLine) => {
-    const pickup = available.find((p) => p.id === line.pickup_id);
+    const pickup = optionFor(line);
     if (!pickup) return 0;
     if (
       pickup?.category === "cracked" &&
@@ -253,7 +256,7 @@ function SaleForm({ onSave, busy, onClose }: FormProps) {
     payment = total === 0 ? 0 : isFull ? total : Number(paid);
   const hasFree = items.some(
     (line) =>
-      available.find((p) => p.id === line.pickup_id)?.category ===
+      optionFor(line)?.category ===
         "cracked" &&
       (line.is_free || price?.cracked_price === 0),
   );
@@ -263,25 +266,13 @@ function SaleForm({ onSave, busy, onClose }: FormProps) {
     value: string | boolean,
   ) =>
     setItems((old) =>
-      old.map((line, i) => (i === index ? { ...line, ...(key === "pickup_id" ? {is_free: false} : {}), [key]: value } : line)),
+      old.map((line, i) => (i === index ? { ...line, ...(key === "pickup_id" || key === "category" ? {is_free: false} : {}), [key]: value } : line)),
     );
-  if (!available.length)
-    return (
-      <div className="modal-body-custom">
-        <div className="empty-state">
-          <Egg size={36} />
-          <h3>Belum ada telur yang dibawa</h3>
-          {stockIssues.size > 0 && <p className="alert alert-warning">Pengambilan pada draf ini sudah habis. Setelah mengambil telur lagi, buka draf dan pilih pengambilan yang baru.</p>}
-          <p>
-            Catat pengambilan telur terlebih dahulu melalui menu Stok Telur.
-            Penjualan harus berasal dari persediaan milik Anda.
-          </p>
-          <button className="btn btn-primary" onClick={onClose}>
-            Mengerti
-          </button>
-        </div>
-      </div>
-    );
+  const sourceField = <SaleStockSourceField source={source} onChange={next => {
+    if (next === source) return;
+    setSource(next);
+    setItems(old => old.map(item => ({ ...item, ...choiceFor(next), is_free: false })));
+  }} />;
   return (
     <FormShell
       busy={busy}
@@ -296,15 +287,16 @@ function SaleForm({ onSave, busy, onClose }: FormProps) {
           ...data,
           date: data.date + ":00+07:00",
           expected_price_id: price?.id,
+          stock_source: source,
           items: items.map((item) => ({
-            pickup_id: item.pickup_id,
-            category: available.find((p) => p.id === item.pickup_id)
+            pickup_id: warehouseSale ? "" : item.pickup_id,
+            category: optionFor(item)
               ?.category,
             kg: Number(item.kg),
             eggs: Number(item.eggs),
             trays: Number(item.trays),
             is_free:
-              available.find((p) => p.id === item.pickup_id)?.category ===
+              optionFor(item)?.category ===
                 "cracked" &&
               (item.is_free || price?.cracked_price === 0),
           })),
@@ -356,15 +348,17 @@ function SaleForm({ onSave, busy, onClose }: FormProps) {
         </Field>
       </div>
       <div className="form-section">
+        {sourceField}
+        {emptyMessage && <p className="alert alert-warning">{emptyMessage}</p>}
         <div className="d-flex justify-content-between align-items-center mb-3">
-          <h3 className="mb-0">Item penjualan</h3>
+          <h3 className="mb-0">Telur yang dijual</h3>
           <button
             type="button"
             className="btn btn-sm btn-outline-primary"
             onClick={() =>
               setItems((old) => [
                 ...old,
-                { pickup_id: "", kg: "", eggs: "", trays: "0", is_free: false },
+                { ...choiceFor(source), kg: "", eggs: "", trays: "0", is_free: false },
               ])
             }
             disabled={items.length >= 100}
@@ -374,23 +368,23 @@ function SaleForm({ onSave, busy, onClose }: FormProps) {
           </button>
         </div>
         {items.map((item, index) => {
-          const pickup = available.find((p) => p.id === item.pickup_id),
+          const pickup = optionFor(item),
             balance = pickup?.balance;
-          const issue = stockIssues.get(item.pickup_id);
+          const issue = stockIssues.get(saleStockKey(item, source));
           return (
             <div className="sale-line" key={index}>
               <div className="d-flex gap-2 align-items-end">
                 <Field
                   className="flex-grow-1"
-                  label={`Pengambilan ${index + 1}`}
+                  label={warehouseSale ? `Jenis telur ${index + 1}` : `Pengambilan ${index + 1}`}
                 >
                   <select
                     className="form-select"
                     value={pickup?.id || ""}
-                    onChange={(e) => update(index, "pickup_id", e.target.value)}
+                    onChange={(e) => update(index, warehouseSale ? "category" : "pickup_id", e.target.value)}
                     required
                   >
-                    <option value="">Pilih persediaan Anda</option>
+                    <option value="">{warehouseSale ? "Pilih jenis telur" : "Pilih persediaan Anda"}</option>
                     {available.map((p) => (
                       <option key={p.id} value={p.id}>
                         {categoryLabel(p.category)} · {p.area} ·{" "}
@@ -416,7 +410,7 @@ function SaleForm({ onSave, busy, onClose }: FormProps) {
               {balance && (
                 <small className="text-muted d-block my-2">
                   Tersedia {number(balance.eggs)} butir / {number(balance.kg)}{" "}
-                  kg · Harga {money(linePrice(item))}/kg
+                  kg{warehouseSale && ` · ${number(balance.trays)} krat`} · Harga {money(linePrice(item))}/kg
                 </small>
               )}
               {pickup?.category === "cracked" && (
@@ -471,6 +465,7 @@ function SaleForm({ onSave, busy, onClose }: FormProps) {
                     className="form-control"
                     type="number"
                     min="0"
+                    max={warehouseSale ? balance?.trays : undefined}
                     step="1"
                     value={item.trays}
                     onChange={(e) => update(index, "trays", e.target.value)}
@@ -1184,35 +1179,34 @@ function readUnconfirmedSale(userId: string): UnconfirmedSale | null {
     return null;
   }
 }
-type EntryProps = { kind: string | null; onClose: () => void; onSaved?: (action: string) => void };
+type EntryProps = { kind: string | null; saleStart?: SaleStart; onClose: () => void; onSaved?: (action: string) => void };
 export function EntryModal(props: EntryProps) {
   const { user, mode } = useFarm();
-  const kind = props.kind;
+  const kind = props.kind === "warehouse-sale" ? "sale" : props.kind;
+  const saleStart = props.kind === "warehouse-sale" ? { source: "warehouse" as const } : props.saleStart;
   if (user && (kind === "production" || kind === "sale")) {
     const scope = draftKey(mode, user.id, kind);
     return <DialogSession key={scope} onClose={props.onClose}>
       <DraftBoundary storageKey={scope} label={kind === "sale" ? "penjualan" : "panen"} onClose={props.onClose}>
-        <EntryBody {...props} />
+        <EntryBody {...props} kind={kind} saleStart={saleStart} />
       </DraftBoundary>
     </DialogSession>;
   }
   return <EntryBody {...props} />;
 }
-function EntryBody({kind, onClose, onSaved}: EntryProps) {
+function EntryBody({kind, onClose, onSaved, saleStart}: EntryProps) {
   const { command, user, refresh, mode, state } = useFarm();
   const draft = useEntryDraft();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [savedSale, setSavedSale] = useState<{ sale: Sale | null } | null>(null);
   const savingRef = useRef(false);
-  const [employeeKind, setEmployeeKind] = useState<"pickup" | null>(null);
   const [unconfirmed, setUnconfirmed] = useState<UnconfirmedSale | null>(() =>
     draft?.writer.record.attempt || (mode === "live" && user && kind === "sale" ? readUnconfirmedSale(user.id) : null),
   );
   const errorRef = useRef<HTMLDivElement>(null);
   const retryRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
-    setEmployeeKind(null);
     setError("");
     setSavedSale(null);
   }, [kind]);
@@ -1224,8 +1218,7 @@ function EntryBody({kind, onClose, onSaved}: EntryProps) {
   const simple =
     user?.role === "employee" &&
     ["production", "pickup", "sale"].includes(kind);
-  const shownKind = simple ? employeeKind || kind : kind;
-  const { title, subtitle, form: Form } = config[shownKind];
+  const { title, subtitle, form: Form } = config[kind];
   const adminOnly = [
     "price",
     "user",
@@ -1408,7 +1401,7 @@ function EntryBody({kind, onClose, onSaved}: EntryProps) {
               production: "Catat panen",
               pickup: "Ambil telur dari gudang",
               sale: "Catat penjualan",
-            }[shownKind] || title
+            }[kind] || title
           : title
       }
       subtitle={
@@ -1475,7 +1468,7 @@ function EntryBody({kind, onClose, onSaved}: EntryProps) {
         hidden={!!unconfirmed}
         style={{ border: 0, padding: 0, margin: 0, minWidth: 0 }}
       >
-        <DraftFields enabled={shownKind === "sale" || shownKind === "production"}>
+        <DraftFields enabled={kind === "sale" || kind === "production"}>
         {adminOnly && user?.role !== "admin" ? (
           <div className="modal-body-custom">
             <div className="alert alert-warning">
@@ -1484,18 +1477,15 @@ function EntryBody({kind, onClose, onSaved}: EntryProps) {
           </div>
         ) : simple ? (
           <EmployeeEntry
-            key={shownKind}
-            kind={shownKind as "production" | "pickup" | "sale"}
+            key={kind}
+            kind={kind as "production" | "pickup" | "sale"}
             onSave={save}
             busy={busy}
             onClose={close}
-            onSwitchKind={(nextKind) => {
-              setError("");
-              setEmployeeKind(nextKind);
-            }}
+            saleStart={saleStart}
           />
         ) : (
-          <Form key={kind} onSave={save} busy={busy} onClose={close} />
+          <Form key={kind} saleStart={saleStart} onSave={save} busy={busy} onClose={close} />
         )}
         </DraftFields>
       </fieldset>

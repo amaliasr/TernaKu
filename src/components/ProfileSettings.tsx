@@ -129,6 +129,7 @@ export default function ProfileSettings({ onClose }: { onClose: () => void }) {
               }}
               onBusyChange={setPhotoBusy}
               label="Foto profil"
+              purpose="profile"
               capture="user"
               disabled={saving}
             />

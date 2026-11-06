@@ -18,6 +18,7 @@ final class WebFiles extends WebChromeClient {
     private final MainActivity activity;
     private ValueCallback<Uri[]> upload;
     private Uri cameraUri;
+    private boolean cameraCleanupStarted;
     private byte[] document;
     private GeolocationPermissions.Callback location;
     private String locationOrigin;
@@ -34,10 +35,6 @@ final class WebFiles extends WebChromeClient {
             if (params.isCaptureEnabled()) {
                 File dir = new File(activity.getCacheDir(), "camera");
                 if (!dir.isDirectory() && !dir.mkdirs()) throw new IOException();
-                File[] stale = dir.listFiles();
-                if (stale != null) for (File file : stale) {
-                    if (System.currentTimeMillis() - file.lastModified() > 86400000L) file.delete();
-                }
                 File photo = File.createTempFile("foto-", ".jpg", dir);
                 cameraUri = FileProvider.getUriForFile(activity, activity.getPackageName() + ".photos", photo);
                 intent = new Intent(MediaStore.ACTION_IMAGE_CAPTURE).putExtra(MediaStore.EXTRA_OUTPUT, cameraUri);
@@ -48,6 +45,16 @@ final class WebFiles extends WebChromeClient {
                         .setType("image/*").putExtra(Intent.EXTRA_ALLOW_MULTIPLE, params.getMode() == FileChooserParams.MODE_OPEN_MULTIPLE);
             }
             activity.startActivityForResult(intent, PICK);
+            if (cameraUri != null && !cameraCleanupStarted) {
+                cameraCleanupStarted = true;
+                File dir = new File(activity.getCacheDir(), "camera");
+                new Thread(() -> {
+                    File[] photos = dir.listFiles();
+                    if (photos == null) return;
+                    long cutoff = System.currentTimeMillis() - 86400000L;
+                    for (File file : photos) if (file.lastModified() < cutoff) file.delete();
+                }, "ternaku-photo-cache").start();
+            }
         } catch (ActivityNotFoundException | IOException failed) {
             callback.onReceiveValue(null);
             upload = null;

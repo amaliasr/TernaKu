@@ -2,7 +2,7 @@
 
 import { useEffect, useId, useRef, useState, type ChangeEvent } from "react";
 import { Camera, ImagePlus, X } from "lucide-react";
-import { preparePhoto } from "@/lib/photos";
+import { preparePhoto, type PhotoPurpose } from "@/lib/photos";
 import ImagePreview from "./ImagePreview";
 import styles from "./PhotoUpload.module.css";
 import type { MediaReference } from "@/lib/types";
@@ -16,10 +16,11 @@ type PhotoUploadProps = {
   disabled?: boolean;
   optional?: boolean;
   capture?: "user" | "environment";
+  purpose?: PhotoPurpose;
   onBusyChange?: (busy: boolean) => void;
 };
 
-export default function PhotoUpload({ onChange, value, defaultValue = "", photoRef, label = "Foto dokumentasi", disabled = false, optional = true, capture = "environment", onBusyChange }: PhotoUploadProps) {
+export default function PhotoUpload({ onChange, value, defaultValue = "", photoRef, label = "Foto dokumentasi", disabled = false, optional = true, capture = "environment", purpose = "documentation", onBusyChange }: PhotoUploadProps) {
   const id = useId();
   const camera = useRef<HTMLInputElement>(null);
   const gallery = useRef<HTMLInputElement>(null);
@@ -42,7 +43,7 @@ export default function PhotoUpload({ onChange, value, defaultValue = "", photoR
     busyCallback.current?.(true);
     input.setCustomValidity("Tunggu sampai foto selesai diproses sebelum menyimpan.");
     try {
-      const photo = await preparePhoto(file);
+      const photo = await preparePhoto(file, purpose);
       if (current === generation.current) change(photo);
     } catch (cause) {
       if (current === generation.current) setError(cause instanceof Error ? cause.message : "Foto belum dapat dibaca.");
@@ -59,8 +60,8 @@ export default function PhotoUpload({ onChange, value, defaultValue = "", photoR
     </div>
     <input ref={camera} className="visually-hidden" type="file" accept="image/*" capture={capture} disabled={disabled} aria-label={`${label}: ambil foto`} aria-describedby={`${id}-help`} onChange={(event) => void select(event)} />
     <input ref={gallery} className="visually-hidden" type="file" accept="image/*" disabled={disabled} aria-label={`${label}: pilih dari galeri`} aria-describedby={`${id}-help`} onChange={(event) => void select(event)} />
-    <small id={`${id}-help`} className="text-muted">Foto besar disesuaikan otomatis hingga maksimal 1 MB. Foto yang sudah kecil dipertahankan bila sesuai. Foto sumber maksimal 25 MB.</small>
-    {busy && <p role="status">Memproses foto…</p>}
+    <small id={`${id}-help`} className="text-muted">Pilih foto hingga 25 MB. TernaKu otomatis memperkecil foto sebelum dikirim.</small>
+    {busy && <p role="status">Menyiapkan foto di perangkat…</p>}
     {error && <p role="alert" className="text-danger">{error}</p>}
     {(preview || photoRef) && <div className={styles.preview}><ImagePreview src={preview} photoRef={photoRef} alt={label} /><button type="button" className="btn btn-light" disabled={busy || disabled} onClick={() => { change(""); setError(""); }}><X size={18} /> Hapus foto</button></div>}
   </div>;

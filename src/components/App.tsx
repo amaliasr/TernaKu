@@ -1057,7 +1057,7 @@ function Workspace() {
                 [
                   "3",
                   "Catat penjualan & cetak nota",
-                  "Pilih telur yang dibawa. Harga aktif dan total dihitung otomatis.",
+                  "Jual langsung dari gudang atau dari telur yang Anda bawa. Harga dan total dihitung otomatis.",
                 ],
                 [
                   "4",

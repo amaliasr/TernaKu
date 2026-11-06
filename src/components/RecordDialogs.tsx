@@ -3,6 +3,7 @@
 import { useRef, useState } from "react";
 import { ArrowDownToLine, Info } from "lucide-react";
 import { useFarm } from "@/lib/store";
+import { saleSourceLabel } from "@/lib/sale-availability";
 import {
   dateLabel,
   isFreeSaleItem,
@@ -571,6 +572,7 @@ export function EmployeeDialog({
                       setPhotoBusy(value);
                     }}
                     label="Foto profil karyawan"
+                    purpose="profile"
                     capture="user"
                     disabled={busy}
                   />
@@ -642,6 +644,7 @@ export function SaleDetail({
             </small>
             <h3 className="mt-1">{sale.customer || "Pelanggan umum"}</h3>
             {sale.phone && <small>{sale.phone}</small>}
+            <small className="d-block text-muted">Sumber telur: {saleSourceLabel(sale.stock_source)}</small>
           </div>
           <Pill tone={sale.balance === 0 ? "success" : "warning"}>
             {sale.total === 0

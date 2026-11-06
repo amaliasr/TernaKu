@@ -50,3 +50,21 @@ test("receipt delta always resolves the exact invoice, including on replay after
   assert.equal(isReceiptDelta({...payload,pickup_balances:{}},user.id,"req12345"),false);
   assert.equal(isReceiptDelta({...payload,command_result:{...payload.command_result,record_id:"wrong"}},user.id,"req12345"),false);
 });
+test("a warehouse receipt updates shared inventory once, never claims a personal pickup, and rejects unrelated movements", () => {
+  const state=emptyState(), req="warehouse-1", stamp="2026-11-06T08:00:00Z";
+  const sale:Sale={id:"w",number:"TK-W",user_id:user.id,date:stamp,created_at:stamp,notes:"",customer:"Toko",phone:"",
+    stock_source:"warehouse",total:0,paid:0,balance:0,payment_method:"cash",payment_status:"paid",locked:true,
+    items:[{id:"i",pickup_id:"",category:"cracked",eggs:10,kg:0.5,trays:0,unit_price:0,total:0}]};
+  const m={id:"m",kind:"sale",reference_id:"w",user_id:user.id,category:"cracked",date:stamp,created_at:stamp,notes:"TK-W",eggs:-10,kg:-0.5,trays:0};
+  const inventory={good:{eggs:120,kg:7,trays:2},cracked:{eggs:5,kg:0.25,trays:0}};
+  const receipt={mode:"sale_receipt",command_result:{action:"sale.create",record_id:sale.id,request_id:req},sale,pickups:[],pickup_balances:{},inventory,stock_movements:[m]};
+  assert.ok(isReceiptDelta(receipt,user.id,req));
+  const once=mergeReceiptDelta(state,receipt);
+  assert.deepEqual(once.inventory,inventory);
+  assert.deepEqual(once.stock_movements,[m]);
+  assert.deepEqual(once.pickups,state.pickups);
+  assert.deepEqual(mergeReceiptDelta(once,receipt),once);
+  for (const bad of [{stock_movements:[]}, {stock_movements:[m,m]}, {stock_movements:[{...m,reference_id:"other"}]},
+    {stock_movements:[{...m,user_id:"other"}]}, {pickup_balances:{fake:{}}}, {inventory:{...inventory,cracked:{eggs:-1,kg:0,trays:0}}}])
+    assert.equal(isReceiptDelta({...receipt,...bad},user.id,req),false);
+});

@@ -117,3 +117,10 @@ test("free cracked-egg receipt remains zero and belongs to its named recipient",
   assert.equal(findSavedSale(state([free]), "employee", gift), free);
   assert.equal(findSavedSale(state([free]), "employee", { ...gift, customer: "Penerima lain" }), null);
 });
+test("legacy snapshot matching never confuses warehouse sales with personal pickup sales", () => {
+  const warehouse=sale("warehouse",{stock_source:"warehouse"});
+  warehouse.items[0].pickup_id="";
+  const direct={...payload,stock_source:"warehouse",items:[{category:"good",eggs:30,kg:1.8,trays:0}]};
+  assert.equal(findSavedSale(state([warehouse]),"employee",direct),warehouse);
+  assert.equal(findSavedSale(state([warehouse]),"employee",{...direct,stock_source:"pickup"}),null);
+});

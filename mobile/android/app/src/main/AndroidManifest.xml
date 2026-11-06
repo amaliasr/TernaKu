@@ -5,6 +5,7 @@
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
     <application android:name=".TernaKuApp" android:label="TernaKu" android:icon="@mipmap/ic_launcher"
+        android:roundIcon="@mipmap/ic_launcher_round"
         android:allowBackup="false" android:usesCleartextTraffic="false" android:theme="@style/TernaKuTheme">
         <activity android:name=".MainActivity" android:exported="true" android:launchMode="singleTop"
             android:windowSoftInputMode="adjustResize" android:configChanges="orientation|screenSize|keyboardHidden">
