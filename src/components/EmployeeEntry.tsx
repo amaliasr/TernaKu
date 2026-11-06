@@ -311,7 +311,8 @@ function PickupEntry({
             type="datetime-local"
             max={localNow()}
             value={date}
-            onChange={(e) => setDate(e.target.value)}
+            onInput={(e) => setDate(e.currentTarget.value)}
+              onChange={(e) => setDate(e.target.value)}
           />
         </Field>
         <Field label="Catatan">
@@ -736,7 +737,7 @@ function SaleEntry({ onSave, busy, onClose, onSwitchKind }: Props) {
       )}
       {payment < total && (
         <Field label="Kapan sisa tagihan akan dibayar?">
-          <input type="date" name="due_date" data-draft-controlled className="form-control" value={dueDate} onChange={e => setDueDate(e.target.value)} required />
+          <input type="date" name="due_date" data-draft-controlled className="form-control" value={dueDate} onInput={e => setDueDate(e.currentTarget.value)} onChange={e => setDueDate(e.target.value)} required />
         </Field>
       )}
       <Photo value={photo} onChange={setPhoto} onBusyChange={setPhotoBusy} label="Foto dokumentasi penjualan" optional={false} disabled={busy} />
@@ -760,7 +761,8 @@ function SaleEntry({ onSave, busy, onClose, onSwitchKind }: Props) {
             className="form-control"
             max={localNow()}
             value={date}
-            onChange={(e) => setDate(e.target.value)}
+            onInput={(e) => setDate(e.currentTarget.value)}
+              onChange={(e) => setDate(e.target.value)}
           />
         </Field>
         <Field label="Catatan">

@@ -554,7 +554,7 @@ function SaleForm({ onSave, busy, onClose }: FormProps) {
       </div>
       {payment < total && (
         <Field className="d-block mt-3" label="Jatuh tempo pelanggan" hint="Pilih tanggal yang disepakati untuk melunasi sisa tagihan.">
-          <input type="date" name="due_date" data-draft-controlled className="form-control" value={dueDate} onChange={e => setDueDate(e.target.value)} required />
+          <input type="date" name="due_date" data-draft-controlled className="form-control" value={dueDate} onInput={e => setDueDate(e.currentTarget.value)} onChange={e => setDueDate(e.target.value)} required />
         </Field>
       )}
       <div className="invoice-summary mt-3">

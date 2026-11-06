@@ -77,6 +77,7 @@ export function useDraftField<T>(key: string, initial: T | (() => T)): [T, Dispa
   }, [writer, key]);
   return [value, (action) => {
     const next = typeof action === "function" ? (action as (old: T) => T)(ref.current) : action;
+    if (Object.is(ref.current, next)) return;
     ref.current = next;
     setValue(next);
     if (editor) { editor.writer.record.fields[key] = next; editor.changed(); }
@@ -107,10 +108,15 @@ export function DraftFields({children, enabled}: {children: ReactNode; enabled: 
       else writer.record.fields[key] = el.value;
     });
   }, [writer, enabled]);
-  return <div ref={root} onChangeCapture={e => {
+  const rememberNativeValue = (el: EventTarget | null) => {
     if (!editor || !enabled) return;
-    const el = e.target;
     if (!(el instanceof HTMLInputElement || el instanceof HTMLSelectElement || el instanceof HTMLTextAreaElement) || !el.name || el.type === "file" || el.hasAttribute("data-draft-controlled")) return;
-    editor.writer.record.fields["native:" + el.name] = el.value; editor.changed();
-  }}>{enabled && editor && <p className="small text-muted px-3 mt-3 mb-0" role="status">{editor.status || "Isian dan foto disimpan sebagai draf di HP ini."}</p>}{children}</div>;
+    const key = "native:" + el.name;
+    if (editor.writer.record.fields[key] === el.value) return;
+    editor.writer.record.fields[key] = el.value;
+    editor.changed();
+  };
+  return <div ref={root} onInputCapture={e => rememberNativeValue(e.target)} onChangeCapture={e => rememberNativeValue(e.target)}>
+    {enabled && editor && <p className="small text-muted px-3 mt-3 mb-0" role="status">{editor.status || "Isian dan foto disimpan sebagai draf di HP ini."}</p>}{children}
+  </div>;
 }
