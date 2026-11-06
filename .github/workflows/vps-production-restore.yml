@@ -45,7 +45,7 @@ jobs:
           INSERT INTO records(id,sequence,kind,user_id,occurred_at,data) VALUES
           ('one',2,'push_subscription','demo','2026-01-01','{"fixture":true}'),
           ('two',7,'sale','demo','2026-01-01','{"customer":"Pélanggan","photo":"data:image/png;base64,aGVsbG8="}'),
-          ('three',14,'push_job','demo','2026-01-01','{"fixture":true}');
+          ('three',14,'push_job','demo','2099-01-01','{"fixture":true}');
           ALTER TABLE records AUTO_INCREMENT=48;
           SQL
           sha=$(sha256sum "$dump" | cut -d' ' -f1)
@@ -62,3 +62,20 @@ jobs:
               SELECT AUTO_INCREMENT FROM information_schema.tables WHERE table_schema=DATABASE() AND table_name=\"records\";
             "
           ' | grep -x 48
+      - name: Verify production service readiness with disposable notification keys
+        run: |
+          umask 077
+          docker compose build web api
+          docker run --rm ternaku-prod-api:local php -r '
+            require "vendor/autoload.php";
+            $keys=Minishlink\WebPush\VAPID::createVapidKeys();
+            printf("WEB_PUSH_PUBLIC_KEY=%s\nWEB_PUSH_PRIVATE_KEY=%s\n",$keys["publicKey"],$keys["privateKey"]);
+          ' > "$RUNNER_TEMP/disposable-push.env"
+          set -a
+          . "$RUNNER_TEMP/disposable-push.env"
+          WEB_PUSH_SUBJECT=mailto:ci@example.invalid
+          set +a
+          docker compose up --no-build --pull never -d --wait --wait-timeout 150 web
+          curl -fsS http://127.0.0.1:18183/ternaku/health | jq -e '.data.status=="ok" and .data.push_ready==true'
+          test -z "$(docker compose --profile push ps --status running -q worker)"
+          docker compose --profile push up --no-build --pull never -d --wait --wait-timeout 150 worker

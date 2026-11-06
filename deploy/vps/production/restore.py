@@ -143,7 +143,8 @@ def transfer(cid, scratch, next_sequence):
         names = ",".join("`" + c + "`" for c in columns)
         statements.append(f"INSERT INTO {dst} ({names}) SELECT {names} FROM {src};")
         check(f"(SELECT COUNT(*) FROM {src})=(SELECT COUNT(*) FROM {dst})")
-        join = " AND ".join(f"d.`{c}`=s.`{c}`" for c in pk.split())
+        # The raw identifier bytes are stable across MariaDB/MySQL collations.
+        join = " AND ".join(f"d.`{c}`=CAST(s.`{c}` AS BINARY)" for c in pk.split())
         equal = " AND ".join(f"(CAST(d.`{c}` AS BINARY) <=> CAST(s.`{c}` AS BINARY))" for c in columns)
         check(f"NOT EXISTS (SELECT 1 FROM {src} s LEFT JOIN {dst} d ON {join} "
               f"WHERE d.`{pk.split()[0]}` IS NULL OR NOT ({equal}))")
