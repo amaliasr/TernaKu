@@ -93,16 +93,16 @@ export function useSaleDueDate() {
   });
 }
 
-/** Standard named inputs still use native form validation and FormData. */
+/** Only uncontrolled sale fields opt into native persistence. A capture-phase
+ * status update can render an old controlled value before its edit is handled. */
 export function DraftFields({children, enabled}: {children: ReactNode; enabled: boolean}) {
   const editor = useEntryDraft();
   const root = useRef<HTMLDivElement>(null);
   const writer = editor?.writer;
   useLayoutEffect(() => {
     if (!enabled || !writer) return;
-    const fields = root.current?.querySelectorAll<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>("input[name]:not([type=file]),select[name],textarea[name]");
+    const fields = root.current?.querySelectorAll<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>("[data-draft-native][name]");
     fields?.forEach(el => {
-      if (el.hasAttribute("data-draft-controlled")) return;
       const key = "native:" + el.name;
       if (typeof writer.record.fields[key] === "string") el.value = writer.record.fields[key] as string;
       else writer.record.fields[key] = el.value;
@@ -110,13 +110,13 @@ export function DraftFields({children, enabled}: {children: ReactNode; enabled: 
   }, [writer, enabled]);
   const rememberNativeValue = (el: EventTarget | null) => {
     if (!editor || !enabled) return;
-    if (!(el instanceof HTMLInputElement || el instanceof HTMLSelectElement || el instanceof HTMLTextAreaElement) || !el.name || el.type === "file" || el.hasAttribute("data-draft-controlled")) return;
+    if (!(el instanceof HTMLInputElement || el instanceof HTMLSelectElement || el instanceof HTMLTextAreaElement) || !el.name || el.type === "file" || !el.hasAttribute("data-draft-native")) return;
     const key = "native:" + el.name;
     if (editor.writer.record.fields[key] === el.value) return;
     editor.writer.record.fields[key] = el.value;
     editor.changed();
   };
-  return <div ref={root} onInputCapture={e => rememberNativeValue(e.target)} onChangeCapture={e => rememberNativeValue(e.target)}>
+  return <div ref={root} onInput={e => rememberNativeValue(e.target)} onChange={e => rememberNativeValue(e.target)}>
     {enabled && editor && <p className="small text-muted px-3 mt-3 mb-0" role="status">{editor.status || "Isian dan foto disimpan sebagai draf di HP ini."}</p>}{children}
   </div>;
 }

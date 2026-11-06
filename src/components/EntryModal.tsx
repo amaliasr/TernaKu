@@ -318,7 +318,7 @@ function SaleForm({ onSave, busy, onClose }: FormProps) {
       <div className="row g-3">
         <Field className="col-sm-6" label="Waktu transaksi (WIB)">
           <input
-            name="date"
+            name="date" data-draft-native
             type="datetime-local"
             className="form-control"
             defaultValue={localNow()}
@@ -333,7 +333,7 @@ function SaleForm({ onSave, busy, onClose }: FormProps) {
           }
         >
           <input
-            name="customer"
+            name="customer" data-draft-native
             className="form-control"
             placeholder="Nama pelanggan"
             maxLength={150}
@@ -344,7 +344,7 @@ function SaleForm({ onSave, busy, onClose }: FormProps) {
         </Field>
         <Field className="col-sm-6" label="Telepon pelanggan (opsional)">
           <input
-            name="phone"
+            name="phone" data-draft-native
             type="tel"
             className="form-control"
             placeholder="08…"
@@ -554,7 +554,7 @@ function SaleForm({ onSave, busy, onClose }: FormProps) {
       </div>
       {payment < total && (
         <Field className="d-block mt-3" label="Jatuh tempo pelanggan" hint="Pilih tanggal yang disepakati untuk melunasi sisa tagihan.">
-          <input type="date" name="due_date" data-draft-controlled className="form-control" value={dueDate} onInput={e => setDueDate(e.currentTarget.value)} onChange={e => setDueDate(e.target.value)} required />
+          <input type="date" name="due_date" className="form-control" value={dueDate} onInput={e => setDueDate(e.currentTarget.value)} onChange={e => setDueDate(e.target.value)} required />
         </Field>
       )}
       <div className="invoice-summary mt-3">
@@ -573,7 +573,7 @@ function SaleForm({ onSave, busy, onClose }: FormProps) {
       </div>
       <Field className="d-block mt-3" label="Catatan (opsional)">
         <textarea
-          name="notes"
+          name="notes" data-draft-native
           className="form-control"
           rows={2}
           maxLength={2000}
