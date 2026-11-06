@@ -34,7 +34,7 @@ import {
   REPORT_TIME_NOTE,
   type ReportTable,
 } from "@/lib/export";
-import { categoryLabel, methodLabel } from "./ModuleUI";
+import { adjustmentMethodLabel, categoryLabel, methodLabel } from "./ModuleUI";
 
 export default function Reports() {
   const { state, user } = useFarm();
@@ -205,7 +205,7 @@ export default function Reports() {
             pickup: "Pengambilan",
             return: "Pengembalian",
             correction: "Koreksi",
-            reconcile: "Hitung fisik gudang",
+            reconcile: adjustmentMethodLabel(m.method),
           }[m.kind],
           m.eggs,
           m.kg,
@@ -222,9 +222,22 @@ export default function Reports() {
           !stock ? "Riwayat stok pada tanggal ini belum lengkap." : to === today() ? "Saldo berjalan hari ini (WIB)" : "Saldo pada akhir hari (WIB)"];
       }),
     }, {
-      name: "Hitung fisik",
-      columns: ["Tanggal & jam (WIB)", "Pencatat", "Kategori", "Butir aplikasi", "Butir fisik", "Selisih butir", "Kg aplikasi", "Kg fisik", "Selisih kg", "Catatan"],
-      rows: (state.stock_movements || []).filter(m=>m.kind==="reconcile" && inRange(m.date)).map(m=>[m.date,employee(m.user_id),categoryLabel(m.category),m.expected?.eggs??"—",m.physical?.eggs??"—",m.eggs,m.expected?.kg??"—",m.physical?.kg??"—",m.kg,m.notes]),
+      name: "Penyesuaian gudang",
+      columns: [
+        "Tanggal & jam (WIB)", "Admin", "Kategori", "Jenis penyesuaian",
+        "Butir awal", "Selisih butir", "Butir akhir",
+        "Kg awal", "Selisih kg", "Kg akhir",
+        "Krat awal", "Selisih krat", "Krat akhir", "Alasan",
+      ],
+      rows: (state.stock_movements ?? [])
+        .filter(m => m.kind === "reconcile" && inRange(m.date))
+        .map(m => [
+          m.created_at, employee(m.user_id), categoryLabel(m.category), adjustmentMethodLabel(m.method),
+          m.expected?.eggs ?? "—", m.eggs, m.physical?.eggs ?? "—",
+          m.expected?.kg ?? "—", m.kg, m.physical?.kg ?? "—",
+          m.expected?.trays ?? "—", m.physical?.trays === undefined ? "—" : m.trays, m.physical?.trays ?? "—",
+          m.notes,
+        ]),
     }] : [{
       name: "Stok saat ini",
       columns: ["Waktu pencatatan WIB", "Kategori", "Butir", "Berat (kg)"],

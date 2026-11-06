@@ -55,6 +55,7 @@ import Avatar from "./Avatar";
 import PendingHarvest from "./PendingHarvest";
 import StockCount from "./StockCount";
 import {
+  adjustmentMethodLabel,
   businessDate,
   categoryLabel,
   Dialog,
@@ -764,7 +765,7 @@ function StockPage({ open }: { open: OpenForm }) {
     pickup: "Pengambilan keluar",
     return: "Pengembalian telur",
     correction: "Koreksi",
-    reconcile: "Hitung fisik gudang",
+    reconcile: "Penyesuaian gudang",
   };
   const movements = (
     state.stock_movements
@@ -772,11 +773,12 @@ function StockPage({ open }: { open: OpenForm }) {
           key: m.id,
           date: m.date,
           category: m.category,
-          label: movementLabels[m.kind],
+          label: m.kind === "reconcile" ? adjustmentMethodLabel(m.method) : movementLabels[m.kind],
           user: m.user_id,
           kg: m.kg,
           eggs: m.eggs,
-          incoming: m.kg >= 0,
+          trays: m.kind === "reconcile" && m.physical?.trays == null ? null : m.trays,
+          incoming: (m.kg || m.eggs || m.trays) >= 0,
         }))
       : [
           ...state.productions.filter(isProductionStocked).map((p) => ({
@@ -787,6 +789,7 @@ function StockPage({ open }: { open: OpenForm }) {
             user: p.user_id,
             kg: p.kg,
             eggs: p.eggs,
+            trays: p.trays,
             incoming: true,
           })),
           ...state.pickups.map((p) => ({
@@ -797,6 +800,7 @@ function StockPage({ open }: { open: OpenForm }) {
             user: p.user_id,
             kg: -p.kg,
             eggs: -p.eggs,
+            trays: -p.trays,
             incoming: false,
           })),
           ...state.pickups
@@ -809,6 +813,7 @@ function StockPage({ open }: { open: OpenForm }) {
               user: p.user_id,
               kg: p.returned_kg,
               eggs: p.returned_eggs,
+              trays: p.returned_trays,
               incoming: true,
             })),
         ]
@@ -828,26 +833,24 @@ function StockPage({ open }: { open: OpenForm }) {
     <>
       <Heading
         eyebrow="PERSEDIAAN TELUR"
-        title="Stok & pengambilan"
+        title="Stok gudang & pengambilan"
         description="Stok gudang adalah telur yang sudah diterima dan siap diambil untuk dijual. Panen yang belum diterima ditampilkan terpisah."
       >
         <AddButton onClick={() => open("pickup")}>Ambil telur</AddButton>
       </Heading>
       {action.feedback}
-      <PendingHarvest />
-      <StockCount />
       <Stats
         items={[
           {
             label: "Stok telur bagus",
-            value: `${number(good.kg)} kg`,
-            note: `${number(good.eggs)} butir di gudang`,
+            value: `${formatNumber(good.kg, 3)} kg`,
+            note: `${number(good.eggs)} butir · ${number(good.trays)} krat`,
             icon: <Egg size={22} />,
           },
           {
             label: "Stok telur bentes",
-            value: `${number(cracked.kg)} kg`,
-            note: `${number(cracked.eggs)} butir di gudang`,
+            value: `${formatNumber(cracked.kg, 3)} kg`,
+            note: `${number(cracked.eggs)} butir · ${number(cracked.trays)} krat`,
             icon: <Egg size={22} />,
             tone: "orange",
           },
@@ -863,6 +866,8 @@ function StockPage({ open }: { open: OpenForm }) {
           },
         ]}
       />
+      <StockCount />
+      <PendingHarvest />
       <section className="panel">
         <div className="panel-header">
           <div className="module-tabs">
@@ -991,12 +996,13 @@ function StockPage({ open }: { open: OpenForm }) {
                     <th>Kategori</th>
                     <th className="text-end">Butir</th>
                     <th className="text-end">Berat</th>
+                    <th className="text-end">Krat</th>
                   </tr>
                 </thead>
                 <tbody>
                   {movements.map((m) => (
                     <tr key={m.key}>
-                      <td>{m.date ? dateLabel(m.date) : "—"}</td>
+                      <td>{m.date ? dateLabel(m.date, m.date.length > 10) : "—"}</td>
                       <td>
                         <span
                           className={`movement-label ${m.incoming ? "incoming" : "outgoing"}`}
@@ -1019,8 +1025,9 @@ function StockPage({ open }: { open: OpenForm }) {
                       </td>
                       <td className="text-end fw-semibold">
                         {m.kg >= 0 ? "+" : ""}
-                        {number(m.kg)} kg
+                        {formatNumber(m.kg, 3)} kg
                       </td>
+                      <td className="text-end">{m.trays == null ? "—" : `${m.trays > 0 ? "+" : ""}${number(m.trays)}`}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -1029,7 +1036,7 @@ function StockPage({ open }: { open: OpenForm }) {
             <p className="small text-muted px-4">
               {state.stock_movements
                 ? user?.role === "admin"
-                  ? "Riwayat panen, pengambilan, pengembalian, dan koreksi stok."
+                  ? "Riwayat panen, pengambilan, pengembalian, dan penyesuaian stok."
                   : "Riwayat pergerakan stok dari pencatatan Anda."
                 : "Pengembalian dijumlahkan untuk setiap pengambilan. Data ini tidak ditampilkan saat Anda memilih rentang tanggal."}
             </p>
@@ -1929,7 +1936,7 @@ function EmployeesPage({ open }: { open: OpenForm }) {
 }
 const actionLabels: Record<string, string> = {
   "production.create": "Produksi dicatat",
-  "stock.reconcile": "Stok gudang dicocokkan",
+  "stock.reconcile": "Penyesuaian stok gudang",
   "pickup.create": "Pengambilan telur",
   "pickup.return": "Pengembalian telur",
   "sale.create": "Penjualan dicatat",

@@ -13,9 +13,11 @@ import type {
   Sale,
   SaleItem,
   State,
+  StockCountQuantity,
   User,
 } from "./types";
 import { dueDate, paymentEntry } from "./invoice-ledger";
+import { ApiError } from "./request-errors";
 
 export const money = (value: number) =>
   new Intl.NumberFormat("id-ID", {
@@ -85,34 +87,44 @@ export function isProductionStocked(production: Pick<Production, "stocked_at">):
   return production.stocked_at !== null;
 }
 export function eggStock(state: State, category?: Category): Quantity {
-  if (state.inventory) {
-    if (category) return { ...state.inventory[category] };
+  if (!category) {
+    const good = eggStock(state, "good");
+    const cracked = eggStock(state, "cracked");
     return {
-      eggs: state.inventory.good.eggs + state.inventory.cracked.eggs,
-      kg: round(state.inventory.good.kg + state.inventory.cracked.kg),
-      trays: state.inventory.good.trays + state.inventory.cracked.trays,
+      eggs: good.eggs + cracked.eggs,
+      kg: round(good.kg + cracked.kg),
+      trays: good.trays + cracked.trays,
     };
   }
+  if (state.inventory) return { ...state.inventory[category] };
   const stock = emptyQuantity();
   for (const p of state.productions)
-    if (isProductionStocked(p) && (!category || p.category === category)) {
+    if (isProductionStocked(p) && p.category === category) {
       stock.eggs += p.eggs;
       stock.kg += p.kg;
       stock.trays += p.trays;
     }
   for (const p of state.pickups)
-    if (!category || p.category === category) {
+    if (p.category === category) {
       stock.eggs += p.returned_eggs - p.eggs;
       stock.kg += p.returned_kg - p.kg;
       stock.trays += p.returned_trays - p.trays;
     }
   stock.kg = round(stock.kg);
+  let countedTrays: number | undefined;
   for (const movement of state.stock_movements || []) {
-    if (movement.kind !== "reconcile" || (category && movement.category !== category)) continue;
-    stock.eggs += movement.eggs;
-    stock.kg = round(stock.kg + movement.kg);
+    if (movement.category !== category) continue;
+    if (movement.kind === "reconcile") {
+      stock.eggs += movement.eggs;
+      stock.kg = round(stock.kg + movement.kg);
+      if (movement.physical?.trays !== undefined) countedTrays = movement.physical.trays;
+    } else if (countedTrays !== undefined) {
+      // Repacking can use more trays than previously recorded. Once trays have
+      // been counted, the demo replays subsequent movements from that baseline.
+      countedTrays = Math.max(0, countedTrays + movement.trays);
+    }
   }
-  stock.trays = Math.max(0, stock.trays);
+  stock.trays = countedTrays ?? Math.max(0, stock.trays);
   return stock;
 }
 /** Farm-wide history needs the full admin ledger: undo movements after the WIB day.
@@ -125,7 +137,8 @@ export function closingEggStock(state: State, category: Category, day: string, c
   const moves = state.stock_movements.filter(m => m.category === category);
   const origins = new Set(moves.filter(m => m.kind === "pickup" || m.kind === "production").map(m => m.reference_id));
   // A legacy receipt or pickup with no ledger entries cannot safely be dated.
-  const verified = moves.some(m => m.kind === "reconcile" && businessDate(m.date) <= day);
+  const verified = moves.some(m => m.kind === "reconcile" &&
+    (m.method === undefined || m.method === "count") && businessDate(m.date) <= day);
   if (!verified && (state.productions.some(p => p.category === category && isProductionStocked(p) && !origins.has(p.id)) ||
     state.pickups.some(p => p.category === category && !origins.has(p.id)))) return null;
   const balance = { eggs, kg };
@@ -339,6 +352,7 @@ function numeric(
   name: string,
   positive = false,
   integer = false,
+  maximum = 1_000_000_000,
 ): number {
   assert(
     value !== "" &&
@@ -352,7 +366,7 @@ function numeric(
     Number.isFinite(n) && (positive ? n > 0 : n >= 0),
     `${name} harus berupa angka ${positive ? "lebih dari nol" : "nol atau lebih"}.`,
   );
-  assert(n <= 1_000_000_000, `${name} terlalu besar.`);
+  assert(n <= maximum, `${name} terlalu besar.`);
   if (integer) assert(Number.isInteger(n), `${name} harus bilangan bulat.`);
   else
     assert(
@@ -373,6 +387,20 @@ function boundedName(value: unknown, label: string, maximum: number): string {
   const name = requiredText(value, label);
   assert(Array.from(name).length <= maximum, `${label} maksimal ${maximum} karakter.`);
   return name;
+}
+function stockCountQuantity(value: unknown): StockCountQuantity {
+  assert(value && typeof value === "object" && !Array.isArray(value), "Jumlah stok tidak valid.");
+  const input = value as CommandPayload;
+  for (const field of ["eggs", "kg", ...(Object.hasOwn(input, "trays") ? ["trays"] : [])]) {
+    const measure = input[field];
+    assert(typeof measure === "number" || (typeof measure === "string" && /^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?$/i.test(measure.trim())),
+      "Isi jumlah stok menggunakan angka.");
+  }
+  const eggs = numeric(input.eggs, "Jumlah butir", false, true, 1_000_000_000_000);
+  const kg = round(numeric(input.kg, "Berat aktual", false, false, 999_999_999_999.999));
+  return Object.hasOwn(input, "trays")
+    ? { eggs, kg, trays: numeric(input.trays, "Jumlah krat", false, true, 1_000_000_000_000) }
+    : { eggs, kg };
 }
 function photo(value: unknown): string {
   if (value === undefined || value === "") return "";
@@ -669,27 +697,45 @@ export function executeCommand(
     }
     case "stock.reconcile": {
       admin(user);
+      const method = payload.method === undefined ? "count" : payload.method;
+      assert(method === "count" || method === "add" || method === "subtract", "Pilih cara penyesuaian stok.");
       const items = list(payload.items);
-      assert(items.length === 2 && new Set(items.map(r => r.category)).size === 2, "Hitung kedua kategori telur satu kali.");
-      const reason = boundedName(payload.reason, "Catatan pencocokan", 2000);
+      assert(items.length <= 2 && new Set(items.map(item => item.category)).size === items.length,
+        "Setiap kategori telur hanya boleh dihitung sekali.");
+      const reason = boundedName(payload.reason, "Alasan penyesuaian", 2000);
       const reference = id("count");
       state.stock_movements ??= [];
       const counts = items.map(item => {
-        const c = category(item.category), before = eggStock(state, c);
-        const count = (v: unknown) => {
-          assert(v && typeof v === "object" && !Array.isArray(v), "Jumlah stok tidak valid.");
-          const obj = v as CommandPayload;
-          const eggs = numeric(obj.eggs, "Butir fisik", false, true), kg = numeric(obj.kg, "Berat fisik");
-          completeBalance(eggs, kg);
-          return { eggs, kg };
-        };
-        const expected = count(item.expected), physical = count(item.physical);
-        assert(expected.eggs === before.eggs && expected.kg === before.kg, "Stok berubah saat dihitung. Tutup formulir, cek stok terbaru, lalu cocokkan lagi.");
-        return { category: c, expected, physical };
+        const c = category(item.category);
+        const before = eggStock(state, c);
+        const expected = stockCountQuantity(item.expected);
+        const physical = stockCountQuantity(item.physical);
+        completeBalance(physical.eggs, physical.kg);
+        assert((expected.trays === undefined) === (physical.trays === undefined),
+          "Sertakan jumlah krat sebelum dan sesudah penyesuaian.");
+        if (expected.eggs !== before.eggs || expected.kg !== before.kg ||
+            (expected.trays !== undefined && expected.trays !== before.trays)) {
+          throw new ApiError("Stok berubah saat dihitung. Cek stok terbaru, lalu cocokkan lagi.", 409);
+        }
+        const eggs = physical.eggs - expected.eggs;
+        const kg = round(physical.kg - expected.kg);
+        const trays = (physical.trays ?? 0) - (expected.trays ?? 0);
+        if (method === "add" || method === "subtract") {
+          const differences = [eggs, kg, trays];
+          assert(differences.some(n => n !== 0), "Isi jumlah yang ingin disesuaikan.");
+          assert(method === "add" ? differences.every(n => n >= 0) : differences.every(n => n <= 0),
+            "Jumlah akhir tidak sesuai dengan jenis penyesuaian.");
+        }
+        return { category: c, expected, physical, eggs, kg, trays };
       });
-      for (const c of counts) state.stock_movements.push({ id: id("movement"), reference_id: reference, kind: "reconcile", date: stamp, created_at: stamp, user_id: user.id, ...c,
-        eggs: c.physical.eggs - c.expected.eggs, kg: round(c.physical.kg - c.expected.kg), trays: 0, notes: reason });
-      detail.after = { id: reference, counts, reason };
+      for (const count of counts) {
+        state.stock_movements.push({
+          id: `${reference}-${count.category}`, reference_id: reference, kind: "reconcile",
+          date: stamp, created_at: stamp, user_id: user.id, method, ...count,
+          notes: reason,
+        });
+      }
+      detail.after = { id: reference, counts, reason, method };
       break;
     }
     case "production.receive": {

@@ -668,7 +668,7 @@ export function FarmProvider({ children }: { children: ReactNode }) {
         if (mode === "demo") {
           // Hash before taking the cross-tab lock to keep other saves responsive.
           const createdPassword = action === "user.create" ? await passwordHash(String(payload.email).trim().toLowerCase(), String(payload.password)) : undefined;
-          const attempt = requestId && (action === "sale.create" || action === "production.create")
+          const attempt = requestId && (action === "sale.create" || action === "production.create" || action === "stock.reconcile")
             ? { request_id: requestId, fingerprint: await digest(JSON.stringify({ action, payload })) } : undefined;
           const saved = await withDemoWriteLock(() => {
             if (!sessionUnchanged() || (localStorage.getItem(DEMO_USER_KEY) ?? "admin") !== currentUser.id)
