@@ -19,7 +19,8 @@ jobs:
         with: { persist-credentials: false }
       - uses: actions/setup-java@v4
         with: { distribution: temurin, java-version: "21" }
-      - uses: android-actions/setup-android@v3
+      - name: Prepare Android SDK 36
+        run: '"$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platforms;android-36" "build-tools;36.0.0"'
       - name: Assemble Android preview
         working-directory: mobile/android
         run: bash gradlew --no-daemon :app:assembleDebug
@@ -39,6 +40,8 @@ jobs:
         run: |
           xcodebuild -project mobile/ios/TernaKu.xcodeproj -scheme TernaKu -configuration Debug -sdk iphonesimulator -destination 'generic/platform=iOS Simulator' -derivedDataPath "$RUNNER_TEMP/ternaku-ios" CODE_SIGNING_ALLOWED=NO build
           ditto -c -k --sequesterRsrc --keepParent "$RUNNER_TEMP/ternaku-ios/Build/Products/Debug-iphonesimulator/TernaKu.app" "$RUNNER_TEMP/TernaKu-simulator.zip"
+      - name: Test two equal-price notifications after closing the iOS app
+        run: bash mobile/ios/Tests/smoke-prices.sh
       - uses: actions/upload-artifact@v7
         with:
           name: TernaKu-iOS-simulator

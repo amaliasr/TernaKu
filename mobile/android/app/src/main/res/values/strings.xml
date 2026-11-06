@@ -1,0 +1,9 @@
+<resources>
+    <string name="price_channel" translatable="false">ternaku_prices_v1</string>
+    <style name="TernaKuTheme" parent="android:style/Theme.Material.Light.NoActionBar">
+        <item name="android:windowBackground">#F5F7EF</item>
+        <item name="android:colorAccent">#196348</item>
+        <item name="android:statusBarColor">#196348</item>
+        <item name="android:navigationBarColor">#196348</item>
+    </style>
+</resources>

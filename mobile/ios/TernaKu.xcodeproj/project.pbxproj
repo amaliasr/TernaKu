@@ -4,6 +4,30 @@
 	classes = {};
 	objectVersion = 56;
 	objects = {
+		900000000000000000000001 /* PriceAlertsUITests */ = {
+			isa = PBXNativeTarget; buildConfigurationList = 900000000000000000000009;
+			buildPhases = (900000000000000000000005,); buildRules = ();
+			dependencies = (90000000000000000000000B,); name = PriceAlertsUITests;
+			productName = PriceAlertsUITests; productReference = 900000000000000000000002;
+			productType = "com.apple.product-type.bundle.ui-testing";
+		};
+		900000000000000000000002 = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = PriceAlertsUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		900000000000000000000003 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tests/PriceAlertsUITests.swift; sourceTree = SOURCE_ROOT; };
+		900000000000000000000004 = {isa = PBXBuildFile; fileRef = 900000000000000000000003; };
+		900000000000000000000005 = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (900000000000000000000004,); runOnlyForDeploymentPostprocessing = 0; };
+		900000000000000000000006 = {isa = XCBuildConfiguration; name = Debug; buildSettings = {
+			CODE_SIGN_STYLE = Automatic; GENERATE_INFOPLIST_FILE = YES; PRODUCT_BUNDLE_IDENTIFIER = com.rstudiohub.ternaku.uitests;
+			PRODUCT_NAME = "$(TARGET_NAME)"; TARGETED_DEVICE_FAMILY = 1; TEST_TARGET_NAME = TernaKu;
+			};
+		};
+		900000000000000000000007 = {isa = XCBuildConfiguration; name = Release; buildSettings = {
+			CODE_SIGN_STYLE = Automatic; GENERATE_INFOPLIST_FILE = YES; PRODUCT_BUNDLE_IDENTIFIER = com.rstudiohub.ternaku.uitests;
+			PRODUCT_NAME = "$(TARGET_NAME)"; TARGETED_DEVICE_FAMILY = 1; TEST_TARGET_NAME = TernaKu;
+			};
+		};
+		900000000000000000000009 = {isa = XCConfigurationList; buildConfigurations = (900000000000000000000006, 900000000000000000000007,); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
+		90000000000000000000000A = {isa = PBXContainerItemProxy; containerPortal = 600000000000000000000001; proxyType = 1; remoteGlobalIDString = 500000000000000000000001; remoteInfo = TernaKu; };
+		90000000000000000000000B = {isa = PBXTargetDependency; target = 500000000000000000000001; targetProxy = 90000000000000000000000A; };
 
 /* Begin PBXBuildFile section */
 		100000000000000000000001 /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000001; };
@@ -24,9 +48,9 @@
 		200000000000000000000008 = {isa = PBXFileReference; lastKnownFileType = text.xml; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
-		300000000000000000000001 = {isa = PBXGroup; children = (300000000000000000000002, 300000000000000000000003,); sourceTree = "<group>"; };
+		300000000000000000000001 = {isa = PBXGroup; children = (300000000000000000000002, 900000000000000000000003, 300000000000000000000003,); sourceTree = "<group>"; };
 		300000000000000000000002 = {isa = PBXGroup; path = TernaKu; children = (200000000000000000000001, 200000000000000000000002, 200000000000000000000003, 200000000000000000000004, 200000000000000000000005, 200000000000000000000006, 200000000000000000000008,); sourceTree = "<group>"; };
-		300000000000000000000003 = {isa = PBXGroup; name = Products; children = (200000000000000000000007,); sourceTree = "<group>"; };
+		300000000000000000000003 = {isa = PBXGroup; name = Products; children = (200000000000000000000007, 900000000000000000000002,); sourceTree = "<group>"; };
 		400000000000000000000001 = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (100000000000000000000001, 100000000000000000000002, 100000000000000000000003,); runOnlyForDeploymentPostprocessing = 0; };
 		400000000000000000000002 = {isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
 		400000000000000000000003 = {isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (100000000000000000000004, 100000000000000000000005,); runOnlyForDeploymentPostprocessing = 0; };
@@ -49,7 +73,7 @@
 			buildConfigurationList = 800000000000000000000001; compatibilityVersion = "Xcode 14.0";
 			developmentRegion = id; hasScannedForEncodings = 0; knownRegions = (id, en, Base,);
 			mainGroup = 300000000000000000000001; productRefGroup = 300000000000000000000003;
-			projectDirPath = ""; projectRoot = ""; targets = (500000000000000000000001,);
+			projectDirPath = ""; projectRoot = ""; targets = (500000000000000000000001, 900000000000000000000001,);
 		};
 
 /* Begin XCBuildConfiguration section */

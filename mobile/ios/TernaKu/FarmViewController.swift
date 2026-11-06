@@ -6,6 +6,7 @@ final class FarmViewController: UIViewController, WKNavigationDelegate, WKUIDele
     private var web: WKWebView!
     private var downloads: [ObjectIdentifier: URL] = [:]
     private let retry = UIButton(type: .system)
+    private var openedSite = false
 
     init(push: PriceNotifications) {
         self.push = push
@@ -48,10 +49,12 @@ final class FarmViewController: UIViewController, WKNavigationDelegate, WKUIDele
     }
 
     func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
-        guard (error as NSError).code != NSURLErrorCancelled, webView.url == nil else { return }
+        guard (error as NSError).code != NSURLErrorCancelled, !openedSite else { return }
         retry.isHidden = false
         web.isHidden = true
     }
+
+    func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) { openedSite = true }
 
     func webViewWebContentProcessDidTerminate(_ webView: WKWebView) { loadFarm() }
 
