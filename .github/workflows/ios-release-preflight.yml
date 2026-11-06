@@ -1,0 +1,57 @@
+name: TernaKu iPhone release preflight
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - ".github/workflows/ios-release-preflight.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  archive:
+    runs-on: macos-26
+    timeout-minutes: 15
+    env:
+      DEVELOPER_DIR: /Applications/Xcode.app/Contents/Developer
+    steps:
+      - uses: actions/checkout@v7
+        with: { persist-credentials: false }
+
+      - name: Build an unsigned release for physical iPhones
+        run: |
+          xcodebuild -version
+          xcode_version=$(xcodebuild -version | awk '/^Xcode / { print $2 }')
+          test "${xcode_version%%.*}" -ge 26
+          xcodebuild archive \
+            -project mobile/ios/TernaKu.xcodeproj \
+            -scheme TernaKu -configuration Release \
+            -destination 'generic/platform=iOS' \
+            -archivePath "$RUNNER_TEMP/TernaKu.xcarchive" \
+            CODE_SIGNING_ALLOWED=NO
+
+      - name: Verify the device archive
+        run: |
+          app="$RUNNER_TEMP/TernaKu.xcarchive/Products/Applications/TernaKu.app"
+          plist="$app/Info.plist"
+          read_value() { /usr/libexec/PlistBuddy -c "Print :$1" "$plist"; }
+          test "$(read_value CFBundleIdentifier)" = com.rstudiohub.ternaku
+          test "$(read_value CFBundleSupportedPlatforms:0)" = iPhoneOS
+          test "$(read_value DTPlatformName)" = iphoneos
+          test "$(read_value APNSEnvironment)" = production
+          sdk=$(read_value DTSDKName)
+          [[ "$sdk" =~ ^iphoneos([0-9]+)\. && "${BASH_REMATCH[1]}" -ge 26 ]]
+          version=$(read_value CFBundleShortVersionString)
+          build=$(read_value CFBundleVersion)
+          [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ && "$build" =~ ^[0-9]+(\.[0-9]+){0,2}$ ]]
+          xcrun lipo -verify_arch arm64 "$app/$(read_value CFBundleExecutable)"
+          echo "Verified TernaKu $version ($build), arm64 iPhoneOS, $sdk, APNs production."
+          ditto -c -k --keepParent "$RUNNER_TEMP/TernaKu.xcarchive" "$RUNNER_TEMP/TernaKu-iPhone-unsigned.zip"
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: TernaKu-iPhone-unsigned
+          path: ${{ runner.temp }}/TernaKu-iPhone-unsigned.zip
+          if-no-files-found: error
+          retention-days: 7
