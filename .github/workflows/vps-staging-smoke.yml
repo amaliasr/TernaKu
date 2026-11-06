@@ -1,0 +1,61 @@
+name: TernaKu staging containers
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/vps-staging-smoke.yml"
+      - "deploy/vps/**"
+      - "api/schema.sql"
+      - "api/composer.*"
+      - "api/application/**"
+      - "package*.json"
+      - "next.config.ts"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: staging-containers-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-and-smoke:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      COMPOSE_FILE: deploy/vps/compose.yaml
+      COMPOSE_PROJECT_NAME: ternaku-staging
+      STAGING_PORT: "18182"
+      STAGING_ORIGIN: http://localhost:18182
+      STAGING_DB_PASSWORD: ci-disposable-app
+      STAGING_DB_ROOT_PASSWORD: ci-disposable-root
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Build the Linux images from the checkout
+        run: |
+          docker compose config --quiet
+          docker compose --progress plain build web api db
+      - name: Start the project with a fresh staging database
+        run: docker compose up -d --no-build --pull never --wait --wait-timeout 180 web
+      - name: Verify the site, API route and empty schema through the running services
+        run: |
+          curl --fail --silent --show-error "$STAGING_ORIGIN/" > "$RUNNER_TEMP/ternaku.html"
+          grep -q '<title>TernaKu' "$RUNNER_TEMP/ternaku.html"
+          curl --fail --silent --show-error "$STAGING_ORIGIN/ternaku/health" | jq -e '.data.status == "ok" and .data.push_ready == false'
+          curl --fail --silent --show-error "$STAGING_ORIGIN/ternaku/auth/registration-status" | jq -e '.data.first_admin_required == true and .data.setup_enabled == false'
+          docker compose exec -T db sh -ec '
+            export MYSQL_PWD="$MYSQL_PASSWORD"
+            test "$(mysql -N -B -u "$MYSQL_USER" "$MYSQL_DATABASE" -e "SELECT COUNT(*) FROM users")" = 0
+            test "$(mysql -N -B -u "$MYSQL_USER" "$MYSQL_DATABASE" -e "SELECT COUNT(*) FROM stock WHERE eggs = 0 AND kg = 0")" = 2
+          '
+      - name: Show startup diagnostics on failure
+        if: failure()
+        run: |
+          docker compose ps --all
+          docker compose logs --no-color --tail 80 db api web
+      - name: Clean up the runner project
+        if: always()
+        run: docker compose down --volumes --remove-orphans
