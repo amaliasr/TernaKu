@@ -2582,10 +2582,13 @@ small {
   }
   .modal-backdrop-custom {
     padding: 12px;
+    overflow: hidden;
+    overscroll-behavior: contain;
   }
   .modal-dialog-custom {
     max-height: calc(100dvh - 24px);
     border-radius: 12px;
+    overscroll-behavior-y: contain;
   }
   .modal-header,
   .modal-header-custom,
