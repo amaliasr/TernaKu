@@ -1,0 +1,109 @@
+name: ternaku-prod
+
+x-build: &build
+  context: ${PROD_BUILD_CONTEXT:-../../..}
+  dockerfile: deploy/vps/Dockerfile
+
+x-php: &php
+  image: ternaku-prod-api:${PROD_IMAGE_TAG:-local}
+  build: { <<: *build, target: api }
+  restart: unless-stopped
+  networks: [app, data]
+  volumes: [api_logs:/srv/ternaku/application/logs]
+  depends_on:
+    db: { condition: service_healthy }
+  environment:
+    APP_ENV: production
+    APP_URL: https://ternaku.rstudiohub.com/ternaku
+    ALLOWED_ORIGINS: https://ternaku.rstudiohub.com
+    DB_HOST: db
+    DB_PORT: "3306"
+    DB_NAME: ternaku
+    DB_USER: ternaku
+    DB_PASSWORD: ${PROD_DB_PASSWORD:?Set a dedicated database password}
+    SETUP_TOKEN: ""
+    WEB_PUSH_PUBLIC_KEY: ${WEB_PUSH_PUBLIC_KEY:-}
+    WEB_PUSH_PRIVATE_KEY: ${WEB_PUSH_PRIVATE_KEY:-}
+    WEB_PUSH_SUBJECT: ${WEB_PUSH_SUBJECT:-}
+
+services:
+  db:
+    image: ternaku-prod-db:${PROD_IMAGE_TAG:-local}
+    build: { <<: *build, target: db }
+    restart: unless-stopped
+    networks: [data]
+    volumes: [mysql_data:/var/lib/mysql]
+    environment:
+      MYSQL_DATABASE: ternaku
+      MYSQL_USER: ternaku
+      MYSQL_PASSWORD: ${PROD_DB_PASSWORD:?Set a dedicated database password}
+      MYSQL_ROOT_PASSWORD: ${PROD_DB_ROOT_PASSWORD:?Set a separate root password}
+    healthcheck:
+      test: ["CMD-SHELL", "MYSQL_PWD=\"$$MYSQL_PASSWORD\" mysql --protocol=TCP --user=\"$$MYSQL_USER\" --database=\"$$MYSQL_DATABASE\" --execute='SELECT 1' >/dev/null"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+
+  api:
+    <<: *php
+    healthcheck:
+      test:
+        - CMD
+        - php
+        - -r
+        - >-
+          $$data=json_decode(@file_get_contents('http://127.0.0.1/health'),true)['data']??[];
+          exit((($$data['status']??'')==='ok' && ($$data['push_ready']??false)===true)?0:1);
+      interval: 10s
+      timeout: 5s
+      retries: 6
+
+  web:
+    image: ternaku-prod-web:${PROD_IMAGE_TAG:-local}
+    build: { <<: *build, target: web }
+    restart: unless-stopped
+    networks:
+      app: {}
+      ingress: { aliases: [ternaku-prod-origin] }
+    ports: ["127.0.0.1:18183:8080"]
+    depends_on:
+      api: { condition: service_healthy, restart: true }
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          wget -q -O /dev/null http://127.0.0.1:8080/ &&
+          wget -q -O - http://127.0.0.1:8080/ternaku/auth/registration-status |
+          grep -q '"first_admin_required":false'
+      interval: 10s
+      timeout: 5s
+      retries: 6
+
+  worker:
+    <<: *php
+    profiles: [push]
+    init: true
+    user: www-data
+    command: ["/bin/sh", "-c", "while :; do php scripts/push-worker.php --limit=50; sleep 60; done"]
+    healthcheck:
+      test:
+        - CMD
+        - php
+        - -r
+        - >-
+          $$f=__DIR__.'/application/logs/push-worker-status.json';
+          $$s=json_decode(@file_get_contents($$f),true);
+          exit((($$s['ok']??false)===true && strtotime($$s['last_run']??'')>time()-180)?0:1);
+      interval: 20s
+      timeout: 5s
+      retries: 3
+      start_period: 65s
+
+networks:
+  app: {}
+  data: { internal: true }
+  ingress: { external: true, name: ternaku-prod-ingress }
+volumes:
+  api_logs: {}
+  mysql_data: {}

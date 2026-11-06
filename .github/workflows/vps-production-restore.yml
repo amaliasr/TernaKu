@@ -1,0 +1,89 @@
+name: TernaKu production restore
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/vps-production-restore.yml"
+      - "deploy/vps/production/**"
+      - "deploy/vps/Dockerfile"
+      - "api/schema.sql"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  restore:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      COMPOSE_FILE: deploy/vps/production/compose.yaml
+      PROD_DB_PASSWORD: local-disposable-app
+      PROD_DB_ROOT_PASSWORD: local-disposable-root
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Start an isolated empty MySQL 8.4 target
+        run: |
+          docker network create ternaku-prod-ingress
+          docker compose --profile push config --quiet
+          docker compose build db
+          docker compose up -d --no-build --pull never --wait --wait-timeout 180 db
+      - name: Restore all records and verify a second run cannot overwrite data
+        run: |
+          umask 077
+          dump="$RUNNER_TEMP/synthetic.sql"
+          sed -e '/^INSERT IGNORE INTO /d' -e 's/DEFAULT CHARSET=utf8mb4;/DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_uca1400_ai_ci;/' api/schema.sql > "$dump"
+          cat >> "$dump" <<'SQL'
+          INSERT INTO users(id,name,email,password_hash,role) VALUES ('demo','Test','test@example.invalid','fake','admin');
+          INSERT INTO tokens(token_hash,user_id,expires_at) VALUES (REPEAT('a',64),'demo','2030-01-01');
+          INSERT INTO command_requests(user_id,request_id,fingerprint) VALUES ('demo','once',REPEAT('f',64));
+          INSERT INTO command_mutex VALUES (1,7);
+          INSERT INTO stock VALUES ('egg:good',99,5.944,1),('egg:cracked',3,0.2,0);
+          INSERT INTO login_attempts VALUES (REPEAT('b',64),1,'2026-01-01');
+          INSERT INTO records(id,sequence,kind,user_id,occurred_at,data) VALUES
+          ('one',2,'push_subscription','demo','2026-01-01','{"fixture":true}'),
+          ('two',7,'sale','demo','2026-01-01','{"customer":"Pélanggan","photo":"data:image/png;base64,aGVsbG8="}'),
+          ('three',14,'push_job','demo','2099-01-01','{"fixture":true}');
+          ALTER TABLE records AUTO_INCREMENT=48;
+          SQL
+          sha=$(sha256sum "$dump" | cut -d' ' -f1)
+          runner=(python3 deploy/vps/production/restore.py "$dump" --sha256 "$sha")
+          valid=users=1,records=3,login_attempts=1,stock=2,command_mutex=1,command_requests=1,tokens=1
+          if "${runner[@]}" --apply --counts "${valid/records=3/records=2}"; then exit 1; fi
+          "${runner[@]}" --check --counts "$valid"
+          "${runner[@]}" --apply --counts "$valid"
+          if "${runner[@]}" --apply --counts "$valid"; then exit 1; fi
+          docker compose exec -T db sh -ec '
+            export MYSQL_PWD="$MYSQL_PASSWORD"
+            exec mysql -N -s -u "$MYSQL_USER" "$MYSQL_DATABASE" -e "
+              SET SESSION information_schema_stats_expiry=0;
+              SELECT AUTO_INCREMENT FROM information_schema.tables WHERE table_schema=DATABASE() AND table_name=\"records\";
+            "
+          ' | grep -x 48
+      - name: Verify production service readiness with disposable notification keys
+        run: |
+          umask 077
+          docker compose build web api
+          docker run --rm ternaku-prod-api:local php -r '
+            require "vendor/autoload.php";
+            $keys=Minishlink\WebPush\VAPID::createVapidKeys();
+            printf("WEB_PUSH_PUBLIC_KEY=%s\nWEB_PUSH_PRIVATE_KEY=%s\n",$keys["publicKey"],$keys["privateKey"]);
+          ' > "$RUNNER_TEMP/disposable-push.env"
+          set -a
+          . "$RUNNER_TEMP/disposable-push.env"
+          WEB_PUSH_SUBJECT=mailto:ci@example.invalid
+          PROD_LEGACY_STATIC_DIR="$RUNNER_TEMP/old-public-assets"
+          PROD_LEGACY_NGINX_CONF="$GITHUB_WORKSPACE/deploy/vps/production/nginx-legacy.conf"
+          set +a
+          install -d -m 0755 "$PROD_LEGACY_STATIC_DIR" "$PROD_LEGACY_STATIC_DIR/_next" "$PROD_LEGACY_STATIC_DIR/_next/static"
+          echo 'old-public-asset' > "$PROD_LEGACY_STATIC_DIR/_next/static/old-0123456789abcdef.js"
+          chmod 0644 "$PROD_LEGACY_STATIC_DIR/_next/static/old-0123456789abcdef.js"
+          dc=(docker compose -f "$COMPOSE_FILE" -f deploy/vps/production/compose.legacy-assets.yaml)
+          "${dc[@]}" up --no-build --pull never -d --wait --wait-timeout 150 web
+          curl -fsS http://127.0.0.1:18183/ternaku/health | jq -e '.data.status=="ok" and .data.push_ready==true'
+          curl -fsS http://127.0.0.1:18183/_next/static/old-0123456789abcdef.js | grep -Fx 'old-public-asset'
+          test "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:18183/_next/static/missing.js)" = 404
+          test -z "$("${dc[@]}" --profile push ps --status running -q worker)"
+          "${dc[@]}" --profile push up --no-build --pull never -d --wait --wait-timeout 150 worker

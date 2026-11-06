@@ -4,16 +4,17 @@
 
 Web pengelolaan telur dan pakan untuk admin serta karyawan, berbahasa Indonesia, responsif, dengan font **Poppins**. Frontend memakai **Next.js 16 App Router, React, TypeScript, Bootstrap 5**, dan Recharts. Backend terpisah memakai **CodeIgniter 3.1.13, PHP 8.2, MySQL/MariaDB InnoDB**. Frontend di-export menjadi file statis; seluruh autentikasi dan mutasi data production berjalan melalui API.
 
-Tujuan deployment:
+TernaKu produksi berjalan di VPS dalam project Docker `ternaku-prod`. Karyawan tetap memakai alamat web yang sama.
 
 | Komponen   | Lokasi                                                      |
 | ---------- | ----------------------------------------------------------- |
 | Repository | [amaliasr/TernaKu](https://github.com/amaliasr/TernaKu)     |
-| Frontend   | `https://ternaku.rstudiohub.com`                              |
-| API        | `https://api.buildmanagement.id/ternaku`                    |
-| Database   | MySQL pada hosting API; tidak diakses langsung oleh browser |
+| Frontend   | `https://ternaku.rstudiohub.com` |
+| API        | `https://ternaku.rstudiohub.com/ternaku` |
+| API untuk versi lama | `https://api.buildmanagement.id/ternaku` meneruskan permintaan ke VPS |
+| Database   | MySQL pada jaringan privat `ternaku-prod` |
 
-Source dan workflow build siap digunakan. Publikasi ke domain memerlukan akses hosting, konfigurasi domain, serta kredensial database yang sesuai; repository ini tidak menyimpan kredensial production.
+Lihat [panduan produksi VPS](deploy/vps/production/README.md) untuk merilis kode, memeriksa layanan, dan memulihkan database.
 
 ## Fitur versi awal
 
@@ -116,18 +117,22 @@ Alternatif installer CLI: siapkan kode acak `SETUP_TOKEN` minimal 32 karakter pa
 
 ## Deployment melalui GitHub
 
+Push ke `main` menjalankan pemeriksaan di GitHub. Untuk menerbitkan hasilnya ke domain produksi, pilih commit yang lulus dan jalankan rilis Compose pada VPS sesuai [panduan produksi](deploy/vps/production/README.md#merilis-versi-berikutnya).
+
+### Paket untuk pemasangan terpisah pada hosting bersama
+
 Untuk pemasangan manual melalui File Manager seperti RumahFlow, ikuti **[Petunjuk pemasangan API TernaKu](api/PEMASANGAN.md)**. Panduan mencakup lokasi folder, database MySQL, `.env`, pembuatan admin melalui terminal atau Cron Jobs sementara, dan pemeriksaan koneksi website.
 
 Workflow [.github/workflows/ci.yml](.github/workflows/ci.yml) berjalan pada push ke `main`/`master`, pull request, atau pemicu manual. Workflow memasang dependencies, memeriksa TypeScript, menjalankan tes domain, memeriksa sintaks PHP aplikasi, menjalankan tes HTTP+MySQL termasuk persaingan stok, lalu membangun frontend **dengan DEMO=false**. Setelah berhasil tersedia dua artifact:
 
-- `ternaku-web`: isi hasil static export `out/`, untuk document root `ternaku.rstudiohub.com`.
-- `ternaku-api`: arsip `ternaku-api.tar.gz`, untuk folder `/ternaku` di document root `api.buildmanagement.id`. Arsip memakai daftar file yang diizinkan dan mencakup runtime CI3 resmi. File `.env`, database/log lokal, tes, dan unduhan sementara tidak dimasukkan.
+- `ternaku-web`: isi hasil static export `out/` untuk document root frontend.
+- `ternaku-api`: arsip `ternaku-api.tar.gz` untuk folder `/ternaku` di document root API. Arsip memakai daftar file yang diizinkan dan mencakup runtime CI3 resmi. File `.env`, database/log lokal, tes, dan unduhan sementara tidak dimasukkan.
 
-Workflow menyiapkan paket deploy; belum ada transfer otomatis ke hosting karena akses deployment belum dikonfigurasi. Untuk deploy manual:
+Langkah pemasangan manual pada instalasi terpisah:
 
 1. Unduh artifact dari GitHub Actions yang berhasil dan unggah isi `ternaku-web` ke document root frontend. Ini adalah file statis, tidak membutuhkan server Node.js di hosting.
 2. Ekstrak `ternaku-api.tar.gz` ke folder API, termasuk `.htaccess`, `application/`, dan `system/`.
-3. Buat `.env` di folder `ternaku/` pada hosting API, sejajar dengan `index.php`, dari contoh yang tersedia. Isi `APP_ENV=production`, `APP_URL=https://api.buildmanagement.id/ternaku`, `ALLOWED_ORIGINS=https://ternaku.rstudiohub.com`, dan kredensial database khusus hosting. Jalankan installer via terminal hosting atau Cron Jobs sementara sesuai petunjuk pemasangan.
+3. Buat `.env` di folder `ternaku/` pada hosting API, sejajar dengan `index.php`, dari contoh yang tersedia. Isi `APP_ENV=production`, `APP_URL` dengan alamat API instalasi tersebut, `ALLOWED_ORIGINS` dengan origin frontend, dan kredensial database khusus hosting. Jalankan installer via terminal hosting atau Cron Jobs sementara sesuai petunjuk pemasangan.
 4. Aktifkan HTTPS kedua domain dan pastikan Apache mengizinkan `.htaccess`/rewrite. Folder `application/logs/` harus dapat ditulis oleh PHP. Untuk Nginx, terapkan larangan akses direktori internal dan `.env` yang setara; `.htaccess` hanya berlaku di Apache.
 5. Periksa `/ternaku/health`, login dari domain frontend, dan verifikasi bahwa `.env`, `schema.sql`, serta `application/` tidak dapat diunduh melalui browser.
 
