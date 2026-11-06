@@ -19,6 +19,8 @@ Untuk rilis APK berikutnya, naikkan `versionCode` dan `versionName`, lalu tanda 
 2. Pada Mac, buka `mobile/ios/TernaKu.xcodeproj`, pilih target **TernaKu → Signing & Capabilities**, kemudian pilih tim Apple Developer peternakan. Periksa kemampuan **Push Notifications** dan profil penandatanganan untuk App ID ini. Build Debug memakai APNs sandbox. Release dan TestFlight memakai APNs production.
 3. Untuk karyawan, pilih **Product → Archive → Distribute App → App Store Connect**, kemudian bagikan melalui TestFlight atau rilis di App Store. Arsip simulator dari GitHub Actions dapat digunakan untuk pengujian di Mac. Instalasi di iPhone fisik membutuhkan build perangkat yang ditandatangani. [Panduan TestFlight](https://developer.apple.com/testflight/)
 
+Untuk mengekspor IPA perangkat, memeriksa konfigurasi APNs produksi, dan menyiapkan undangan karyawan, ikuti [panduan rilis TestFlight TernaKu](ios/TESTFLIGHT.md).
+
 ## Mengaktifkan pengiriman di VPS
 
 Simpan kunci di direktori privat khusus, misalnya `/docker/ternaku-prod/private/mobile-push`. Tempatkan **hanya** JSON akun layanan dengan nama `fcm.json` dan kunci APNs dengan nama `apns.p8` di sana. Keduanya dapat disiapkan terpisah. Pastikan proses PHP dan worker (`www-data`) dapat membaca file. Contoh pada image Linux TernaKu: direktori milik `root:www-data` mode `0750`, file mode `0640`.
