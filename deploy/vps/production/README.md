@@ -31,3 +31,9 @@ Sesudah pengujian melalui reverse proxy berhasil, arahkan klien lama di `api.bui
 ```
 
 Worker melaporkan sehat bila sudah berhasil memeriksa antrean dan pemeriksaan terakhir berumur kurang dari tiga menit. Untuk menghentikan sementara pemeriksaan antrean, jalankan `"${dc[@]}" --profile push stop worker`. API juga dapat mengirim langsung saat harga diperbarui, sehingga pembekuan penulisan harus mencakup API lama beserta cron-nya.
+
+### Berkas antarmuka untuk HP yang sudah membuka versi lama
+
+Sebelum DNS beralih, unduh aset publik versi lama yang dirujuk HTML, runtime JavaScript, manifest build, dan CSS. Cocokkan hash setiap berkas dengan salinan transfer. Ekstrak isi `_next/static/` ke direktori khusus di VPS dan beri akses baca pada proses nginx. Simpan arsip transfer serta manifest hash di luar direktori ini.
+
+Tetapkan `PROD_LEGACY_STATIC_DIR` ke direktori yang berisi `_next/static`, dan `PROD_LEGACY_NGINX_CONF` ke lokasi absolut `nginx-legacy.conf`. Sertakan `-f deploy/vps/production/compose.legacy-assets.yaml` setelah file dasar dalam setiap perintah Compose. Jika pengelola Docker membaca satu file saja, gabungkan kedua mount pada `services.web.volumes` di file Compose kanonis yang dipakai pengelola. Keduanya hanya memberikan akses baca. Dengan begitu, pembuatan ulang container tetap memakai arsip. Nginx mengutamakan file dari versi aktif, kemudian mencari aset yang masih diminta HP di direktori lama.

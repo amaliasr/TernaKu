@@ -1,0 +1,14 @@
+# Install a verified archive of immutable public files before enabling this override.
+services:
+  web:
+    volumes:
+      - type: bind
+        source: ${PROD_LEGACY_STATIC_DIR:?Set the directory containing _next/static}
+        target: /srv/ternaku-legacy
+        read_only: true
+        bind: { create_host_path: false }
+      - type: bind
+        source: ${PROD_LEGACY_NGINX_CONF:?Set the path to nginx-legacy.conf}
+        target: /etc/nginx/conf.d/default.conf
+        read_only: true
+        bind: { create_host_path: false }

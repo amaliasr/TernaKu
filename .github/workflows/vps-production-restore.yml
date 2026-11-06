@@ -74,8 +74,16 @@ jobs:
           set -a
           . "$RUNNER_TEMP/disposable-push.env"
           WEB_PUSH_SUBJECT=mailto:ci@example.invalid
+          PROD_LEGACY_STATIC_DIR="$RUNNER_TEMP/old-public-assets"
+          PROD_LEGACY_NGINX_CONF="$GITHUB_WORKSPACE/deploy/vps/production/nginx-legacy.conf"
           set +a
-          docker compose up --no-build --pull never -d --wait --wait-timeout 150 web
+          install -d -m 0755 "$PROD_LEGACY_STATIC_DIR" "$PROD_LEGACY_STATIC_DIR/_next" "$PROD_LEGACY_STATIC_DIR/_next/static"
+          echo 'old-public-asset' > "$PROD_LEGACY_STATIC_DIR/_next/static/old-0123456789abcdef.js"
+          chmod 0644 "$PROD_LEGACY_STATIC_DIR/_next/static/old-0123456789abcdef.js"
+          dc=(docker compose -f "$COMPOSE_FILE" -f deploy/vps/production/compose.legacy-assets.yaml)
+          "${dc[@]}" up --no-build --pull never -d --wait --wait-timeout 150 web
           curl -fsS http://127.0.0.1:18183/ternaku/health | jq -e '.data.status=="ok" and .data.push_ready==true'
-          test -z "$(docker compose --profile push ps --status running -q worker)"
-          docker compose --profile push up --no-build --pull never -d --wait --wait-timeout 150 worker
+          curl -fsS http://127.0.0.1:18183/_next/static/old-0123456789abcdef.js | grep -Fx 'old-public-asset'
+          test "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:18183/_next/static/missing.js)" = 404
+          test -z "$("${dc[@]}" --profile push ps --status running -q worker)"
+          "${dc[@]}" --profile push up --no-build --pull never -d --wait --wait-timeout 150 worker
