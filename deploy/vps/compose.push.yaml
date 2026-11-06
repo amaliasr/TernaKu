@@ -1,0 +1,10 @@
+# Enable this override only on a synthetic or sanitized staging database.
+x-push: &push
+  WEB_PUSH_PUBLIC_KEY: ${STAGING_VAPID_PUBLIC_KEY:?Set the staging public VAPID key}
+  WEB_PUSH_PRIVATE_KEY: ${STAGING_VAPID_PRIVATE_KEY:?Set the staging private VAPID key}
+  WEB_PUSH_SUBJECT: ${STAGING_VAPID_SUBJECT:?Set the staging VAPID contact}
+services:
+  api:
+    environment: *push
+  worker:
+    environment: *push

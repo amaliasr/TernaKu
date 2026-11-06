@@ -1,0 +1,96 @@
+name: ternaku-staging
+
+x-build: &build
+  context: "${STAGING_BUILD_CONTEXT:-../..}"
+  dockerfile: deploy/vps/Dockerfile
+
+x-php: &php
+  image: ternaku-staging-api:local
+  build:
+    <<: *build
+    target: api
+  restart: unless-stopped
+  environment:
+    APP_ENV: production
+    APP_URL: ${STAGING_ORIGIN:?Set STAGING_ORIGIN}/ternaku
+    ALLOWED_ORIGINS: ${STAGING_ORIGIN:?Set STAGING_ORIGIN}
+    DB_HOST: db
+    DB_PORT: "3306"
+    DB_NAME: ternaku
+    DB_USER: ternaku
+    DB_PASSWORD: ${STAGING_DB_PASSWORD:?Set a staging-only DB password}
+    SETUP_TOKEN: ${STAGING_SETUP_TOKEN:-}
+  networks: [app, data]
+  volumes:
+    - api_logs:/srv/ternaku/application/logs
+  depends_on:
+    db:
+      condition: service_healthy
+
+services:
+  web:
+    build:
+      <<: *build
+      target: web
+    restart: unless-stopped
+    networks: [app]
+    ports:
+      - "127.0.0.1:${STAGING_PORT:-18182}:8080"
+    depends_on:
+      api:
+        condition: service_healthy
+        restart: true
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          wget -q -O /dev/null http://127.0.0.1:8080/ &&
+          wget -q -O - http://127.0.0.1:8080/ternaku/auth/registration-status |
+          grep -Eq '"first_admin_required":(true|false)'
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  api:
+    <<: *php
+    healthcheck:
+      test: [CMD, php, -r, "exit((json_decode(@file_get_contents('http://127.0.0.1/health'), true)['data']['status'] ?? '') === 'ok' ? 0 : 1);"]
+      interval: 20s
+      timeout: 5s
+      retries: 5
+
+  db:
+    image: ternaku-staging-db:local
+    build:
+      <<: *build
+      target: db
+    restart: unless-stopped
+    networks: [data]
+    environment:
+      MYSQL_DATABASE: ternaku
+      MYSQL_USER: ternaku
+      MYSQL_PASSWORD: ${STAGING_DB_PASSWORD:?Set a staging-only DB password}
+      MYSQL_ROOT_PASSWORD: ${STAGING_DB_ROOT_PASSWORD:?Set a separate staging root password}
+    volumes:
+      - mysql_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD-SHELL", "MYSQL_PWD=\"$$MYSQL_PASSWORD\" mysql --protocol=TCP --user=\"$$MYSQL_USER\" --database=\"$$MYSQL_DATABASE\" --execute='SELECT 1' >/dev/null"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+
+  worker:
+    <<: *php
+    profiles: [push]
+    user: www-data
+    init: true
+    command: ["/bin/sh", "-c", "while :; do php scripts/push-worker.php --limit=50; sleep 60; done"]
+
+networks:
+  app: {}
+  data:
+    internal: true
+volumes:
+  mysql_data: {}
+  api_logs: {}
