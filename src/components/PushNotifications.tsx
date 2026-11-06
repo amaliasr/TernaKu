@@ -10,8 +10,14 @@ import {
   type PushConfig,
 } from "@/lib/push-client";
 import styles from "./PushNotifications.module.css";
+import { NativeNotificationPanel, useNativePanel } from "./NativeNotifications";
 
 export default function PushNotifications() {
+  const panel = useNativePanel();
+  return panel ? <NativeNotificationPanel panel={panel} /> : <WebPushNotifications />;
+}
+
+function WebPushNotifications() {
   const { user, mode, pushRequest } = useFarm();
   const [supported, setSupported] = useState(false);
   const [needsInstall, setNeedsInstall] = useState(false);

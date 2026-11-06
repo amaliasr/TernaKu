@@ -1,8 +1,10 @@
 <?php
-/** Private Web Push subscriptions and a transactional price-update outbox. */
+require_once __DIR__.'/NativePushTransport.php';
+/** Private device subscriptions and the transactional price-update outbox. */
 class PushService {
     private PDO $db;
     private ?Closure $sender;
+    private ?NativePushTransport $nativeSender=null;
     private array $config;
     public function __construct(PDO $db, ?callable $sender=null, ?array $config=null) {
         $this->db=$db; $this->sender=$sender ? Closure::fromCallable($sender) : null;
@@ -29,7 +31,7 @@ class PushService {
     public static function ready(): bool { return self::validConfig(self::configuration()); }
     public function status(): array {
         $ready=self::validConfig($this->config);
-        return ['enabled'=>$ready,'public_key'=>$ready?$this->config['publicKey']:null];
+        return ['enabled'=>$ready,'public_key'=>$ready?$this->config['publicKey']:null,'native'=>NativePushTransport::status()];
     }
     private function query(string $sql,array $values=[]): PDOStatement { $s=$this->db->prepare($sql); $s->execute($values); return $s; }
     private static function json(array $data): string { return json_encode($data,JSON_THROW_ON_ERROR|JSON_UNESCAPED_UNICODE|JSON_UNESCAPED_SLASHES); }
@@ -73,16 +75,54 @@ class PushService {
     }
     public function subscribe(string $userId,string $token,array $input): array {
         $this->requireEnabled(); $subscription=self::subscription($input); $id=self::subscriptionId($subscription['endpoint']);
+        return $this->bind($userId,$token,$subscription,$id);
+    }
+    private static function nativeId(array $input): string {
+        if(!in_array($input['platform']??null,['android','ios'],true) || !is_string($input['installation_id']??null) || !preg_match('/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/iD',$input['installation_id']))
+            throw new ApiProblem('Identitas pemasangan aplikasi tidak valid.');
+        return 'pn_'.substr(hash('sha256',$input['platform'].'|'.strtolower($input['installation_id'])),0,32);
+    }
+    public function subscribeNative(string $userId,string $token,array $input): array {
+        $id=self::nativeId($input);
+        $ios=$input['platform']==='ios';
+        $fields=$ios?['installation_id','platform','token','environment']:['installation_id','platform','token'];
+        if(array_diff(array_keys($input),$fields) || !is_string($input['token']??null) ||
+            !preg_match($ios?'/^(?:[a-f0-9]{2}){16,256}$/iD':'/^[a-zA-Z0-9.:_-]{20,4096}$/D',$input['token']) ||
+            ($ios && !in_array($input['environment']??null,['sandbox','production'],true)))
+            throw new ApiProblem('Token notifikasi perangkat tidak valid.');
+        if(!NativePushTransport::ready($input['platform'])) throw new ApiProblem('Layanan notifikasi untuk perangkat ini belum diaktifkan oleh pengelola.',503);
+        // Store only the opaque hash of the installation UUID in the record ID.
+        $subscription=['platform'=>$input['platform'],'token'=>$ios?strtolower($input['token']):$input['token']];
+        if($ios) $subscription['environment']=$input['environment'];
+        return $this->bind($userId,$token,$subscription,$id);
+    }
+    private function bind(string $userId,string $token,array $subscription,string $id): array {
         return $this->transaction(function()use($userId,$token,$subscription,$id){
             if(!$this->active($userId)) throw new ApiProblem('Akun belum disetujui atau tidak aktif.',401);
-            if(!$this->query('SELECT user_id FROM tokens WHERE token_hash=? AND user_id=? AND expires_at>NOW()',[hash('sha256',$token),$userId])->fetchColumn()) throw new ApiProblem('Sesi berakhir. Silakan masuk kembali.',401);
+            if(!$this->liveSession($userId,hash('sha256',$token))) throw new ApiProblem('Sesi berakhir. Silakan masuk kembali.',401);
+            if(isset($subscription['platform'])) {
+                // A reinstall/restore can change the installation ID while keeping a delivery token.
+                $this->query("DELETE FROM records WHERE kind='push_subscription' AND id<>? AND JSON_UNQUOTE(JSON_EXTRACT(data,'$.subscription.platform'))=? AND BINARY JSON_UNQUOTE(JSON_EXTRACT(data,'$.subscription.token'))=?",[$id,$subscription['platform'],$subscription['token']]);
+            }
             $old=$this->query("SELECT data FROM records WHERE id=? AND kind='push_subscription'",[$id])->fetchColumn(); $old=$old?json_decode($old,true):null;
-            if(!$old && (int)$this->query("SELECT COUNT(*) FROM records WHERE kind='push_subscription' AND user_id=?",[$userId])->fetchColumn()>=20) throw new ApiProblem('Batas perangkat notifikasi tercapai. Nonaktifkan perangkat lama dahulu.',429);
-            $same=$old && $old['user_id']===$userId && $old['subscription']===$subscription && hash_equals($old['session_hash'],hash('sha256',$token));
+            if((!$old || $old['user_id']!==$userId) && (int)$this->query("SELECT COUNT(*) FROM records WHERE kind='push_subscription' AND user_id=?",[$userId])->fetchColumn()>=20) throw new ApiProblem('Batas perangkat notifikasi tercapai. Nonaktifkan perangkat lama dahulu.',429);
+            // A native token may rotate within the same installation/session.
+            // Keep its queued prices, but always invalidate them on an account switch.
+            $same=$old && $old['user_id']===$userId && hash_equals($old['session_hash'],hash('sha256',$token)) &&
+                (isset($subscription['platform']) || $old['subscription']===$subscription);
             $record=['id'=>$id,'user_id'=>$userId,'subscription'=>$subscription,'session_hash'=>hash('sha256',$token),'binding_id'=>$same?$old['binding_id']:bin2hex(random_bytes(16)),'last_test_at'=>$same?($old['last_test_at']??0):0];
             $this->query("INSERT INTO records(id,kind,user_id,occurred_at,data) VALUES(?,'push_subscription',?,NOW(),?) ON DUPLICATE KEY UPDATE user_id=VALUES(user_id),occurred_at=NOW(),data=VALUES(data)",[$id,$userId,self::json($record)]);
             return ['subscribed'=>true,'binding_id'=>$record['binding_id']];
         });
+    }
+    private function liveSession(string $userId,string $hash): bool {
+        return (bool)$this->query('SELECT 1 FROM tokens WHERE user_id=? AND token_hash=? AND expires_at>NOW() AND created_at>DATE_SUB(NOW(),INTERVAL 90 DAY)',[$userId,$hash])->fetchColumn();
+    }
+    public function unsubscribeNative(string $userId,string $token,array $input): array {
+        if(array_diff(array_keys($input),['platform','installation_id'])) throw new ApiProblem('Identitas perangkat tidak valid.');
+        $id=self::nativeId($input);
+        $this->transaction(fn()=>$this->query("DELETE FROM records WHERE id=? AND kind='push_subscription' AND user_id=? AND JSON_UNQUOTE(JSON_EXTRACT(data,'$.session_hash'))=?",[$id,$userId,hash('sha256',$token)]));
+        return ['subscribed'=>false];
     }
     public function unsubscribe(string $userId,array $input): array {
         if(array_keys($input)!==['endpoint'] || !is_string($input['endpoint'])) throw new ApiProblem('Alamat notifikasi wajib diisi.');
@@ -110,6 +150,10 @@ class PushService {
             'url'=>'/','effective_at'=>$price['effective_at'],'good_price'=>$price['good_price'],'cracked_price'=>$price['cracked_price']];
         foreach($this->query("SELECT data FROM records WHERE kind='push_subscription'")->fetchAll(PDO::FETCH_COLUMN) as $raw) {
             $sub=json_decode($raw,true,512,JSON_THROW_ON_ERROR);
+            if(isset($sub['subscription']['platform']) && !$this->liveSession($sub['user_id'],$sub['session_hash'])) {
+                $this->query("DELETE FROM records WHERE id=? AND kind='push_subscription' AND data=?",[$sub['id'],$raw]);
+                continue;
+            }
             if($this->active($sub['user_id'])) $this->enqueue($sub,$price['id'],$payload);
         }
     }
@@ -121,12 +165,21 @@ class PushService {
     }
     public function test(string $userId,array $input): array {
         $this->requireEnabled(); if(array_keys($input)!==['endpoint'] || !is_string($input['endpoint'])) throw new ApiProblem('Pilih perangkat notifikasi.');
-        $id=self::subscriptionId(self::endpoint($input['endpoint']));
-        return $this->transaction(function()use($userId,$id){
+        return $this->testDevice($userId,self::subscriptionId(self::endpoint($input['endpoint'])));
+    }
+    public function testNative(string $userId,string $token,array $input): array {
+        if(array_diff(array_keys($input),['platform','installation_id'])) throw new ApiProblem('Identitas perangkat tidak valid.');
+        $id=self::nativeId($input);
+        if(!NativePushTransport::ready($input['platform'])) throw new ApiProblem('Layanan notifikasi perangkat belum aktif.',503);
+        return $this->testDevice($userId,$id,hash('sha256',$token));
+    }
+    private function testDevice(string $userId,string $id,?string $sessionHash=null): array {
+        return $this->transaction(function()use($userId,$id,$sessionHash){
             if(!$this->active($userId)) throw new ApiProblem('Akun belum aktif.',401);
             $raw=$this->query("SELECT data FROM records WHERE id=? AND kind='push_subscription' AND user_id=?",[$id,$userId])->fetchColumn();
             if(!$raw) throw new ApiProblem('Aktifkan notifikasi pada perangkat ini dahulu.',404);
             $sub=json_decode($raw,true,512,JSON_THROW_ON_ERROR);
+            if($sessionHash!==null && !hash_equals($sub['session_hash'],$sessionHash)) throw new ApiProblem('Aktifkan notifikasi pada sesi ini dahulu.',404);
             if(time()-($sub['last_test_at']??0)<60) throw new ApiProblem('Tunggu satu menit sebelum mencoba notifikasi lagi.',429);
             $sub['last_test_at']=time(); $this->query('UPDATE records SET data=? WHERE id=?',[self::json($sub),$id]);
             $eventId='test_'.bin2hex(random_bytes(12));
@@ -136,6 +189,8 @@ class PushService {
     }
     private function deliver(array $sub,array $payload): array {
         if($this->sender) return ($this->sender)($sub,$payload);
+        if(isset($sub['platform'])) return ($this->nativeSender ??= new NativePushTransport())->send($sub,$payload);
+        if(!self::validConfig($this->config)) throw new RuntimeException('Web Push unavailable');
         $endpoint=self::endpoint($sub['endpoint']); $host=parse_url($endpoint,PHP_URL_HOST); $addresses=[];
         foreach(dns_get_record($host,DNS_A|DNS_AAAA) ?: [] as $record) {
             $ip=$record['ip']??$record['ipv6']??null;
@@ -153,7 +208,6 @@ class PushService {
     /** Bounded delivery. A cron worker retries independently of any open browser. */
     public function drain(int $limit=20,float $seconds=8): array {
         $counts=['sent'=>0,'retry'=>0,'cancelled'=>0,'failed'=>0];
-        if(!self::validConfig($this->config)) return $counts;
         $lock='ternaku-push-'.substr(hash('sha256',(string)$this->query('SELECT DATABASE()')->fetchColumn()),0,32);
         if((int)$this->query('SELECT GET_LOCK(?,0)',[$lock])->fetchColumn()!==1) return $counts;
         $deadline=microtime(true)+max(1,min(50,$seconds));
@@ -165,7 +219,8 @@ class PushService {
                 $raw=$this->query("SELECT data FROM records WHERE id=? AND kind='push_subscription' AND user_id=?",[$job['subscription_id'],$job['user_id']])->fetchColumn();
                 $sub=$raw?json_decode($raw,true,512,JSON_THROW_ON_ERROR):null;
                 $kind='push_cancelled';
-                if($sub && $sub['binding_id']===$job['binding_id'] && $this->active($job['user_id']) && $job['expires_at']>time()) {
+                if($sub && $sub['binding_id']===$job['binding_id'] && $this->active($job['user_id']) && $job['expires_at']>time() &&
+                    (!isset($sub['subscription']['platform']) || $this->liveSession($job['user_id'],$sub['session_hash']))) {
                     try { $report=$this->deliver($sub['subscription'],$job['payload']); }
                     catch(Throwable $e) { $report=['success'=>false,'expired'=>false,'status'=>0]; }
                     $job['attempts']++; $job['last_status']=(int)$report['status'];

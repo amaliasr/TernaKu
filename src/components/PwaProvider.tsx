@@ -1,6 +1,7 @@
 "use client";
 
 import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from "react";
+import { nativePlatform } from "@/lib/native-push";
 
 interface InstallPromptEvent extends Event {
   prompt: () => Promise<void>;
@@ -20,6 +21,10 @@ export function PwaProvider({ children }: { children: ReactNode }) {
   const [canPrompt, setCanPrompt] = useState(false);
   const [ios, setIos] = useState(false);
   useEffect(() => {
+    if (nativePlatform()) {
+      setInstalled(true);
+      return;
+    }
     const displayMode = window.matchMedia("(display-mode: standalone)");
     const appleStandalone = () => Boolean((navigator as Navigator & { standalone?: boolean }).standalone);
     const detectInstalled = () => setInstalled(displayMode.matches || appleStandalone());

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Download, Share, Smartphone } from "lucide-react";
 import { Dialog } from "./ModuleUI";
 import { usePwa } from "./PwaProvider";
@@ -11,8 +11,21 @@ export default function InstallApp() {
   const [help, setHelp] = useState(false);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
+  const [apk, setApk] = useState(false);
+  useEffect(() => {
+    if (!help || ios || !/Android/i.test(navigator.userAgent)) return;
+    const controller = new AbortController();
+    void fetch("/mobile/android-release.json", { cache: "no-store", signal: controller.signal })
+      .then(async response => {
+        if (!response.ok) return;
+        const version = await response.json();
+        if (!controller.signal.aborted) setApk(Number.isInteger(version.versionCode) && version.versionCode > 0);
+      }).catch(() => {});
+    return () => controller.abort();
+  }, [help, ios]);
   if (installed) return null;
   async function startInstall() {
+    if (/Android/i.test(navigator.userAgent)) { setHelp(true); return; }
     if (!canPrompt) { setHelp(true); return; }
     setBusy(true);
     const result = await install();
@@ -35,7 +48,10 @@ export default function InstallApp() {
           <ol><li>Buka <strong>ternaku.rstudiohub.com</strong> di Safari.</li><li>Tekan tombol <strong>Bagikan</strong> <Share size={18} aria-hidden="true" />.</li><li>Pilih <strong>Tambahkan ke Layar Utama</strong>, lalu <strong>Tambah</strong>.</li></ol>
         </> : <>
           <h3>Di HP Android</h3>
-          <ol><li>Buka <strong>ternaku.rstudiohub.com</strong> di Chrome.</li><li>Tekan menu <strong>⋮</strong> di pojok atas.</li><li>Pilih <strong>Instal aplikasi</strong> atau <strong>Tambahkan ke layar utama</strong>, lalu ikuti petunjuknya.</li></ol>
+          {apk && <><a className="btn btn-primary" href="/mobile/TernaKu.apk" download>Unduh aplikasi Android (APK)</a>
+            <p>Buka file unduhan, pasang TernaKu, lalu masuk dengan akun Anda.</p></>}
+          {canPrompt ? <button type="button" className="btn btn-light" onClick={() => void install()}>Pasang versi web</button> :
+            <ol><li>Buka <strong>ternaku.rstudiohub.com</strong> di Chrome.</li><li>Tekan menu <strong>⋮</strong> di pojok atas.</li><li>Pilih <strong>Instal aplikasi</strong> atau <strong>Tambahkan ke layar utama</strong> untuk memasang versi web.</li></ol>}
           <details><summary>Menggunakan iPhone?</summary><p>Buka di Safari → Bagikan → Tambahkan ke Layar Utama → Tambah.</p></details>
         </>}
         <p className={styles.note}>Jika dibuka dari WhatsApp, buka dulu tautannya di browser. Draf panen dan penjualan tersimpan di HP ini. Sambungkan internet untuk melihat harga terbaru dan mengirim catatan.</p>

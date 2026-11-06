@@ -59,6 +59,7 @@ final class PushBridge {
         }
         switch (action) {
             case "enable":
+                prefs.edit().putBoolean("opted_out", false).apply();
                 if (Build.VERSION.SDK_INT >= 33 && activity.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)
                         != PackageManager.PERMISSION_GRANTED) {
                     if (permissionReply != null) { send(reply, id, "default", null); return; }
@@ -71,7 +72,7 @@ final class PushBridge {
                 }
                 break;
             case "disable":
-                prefs.edit().remove("user").remove("binding").commit();
+                prefs.edit().remove("user").remove("binding").putBoolean("opted_out", true).commit();
                 setEnabled(false);
                 notifications.cancelAll();
                 FirebaseMessaging.getInstance().deleteToken();
@@ -117,7 +118,8 @@ final class PushBridge {
     private void send(JavaScriptReplyProxy reply, String id, String status, String token) {
         try {
             JSONObject payload = new JSONObject().put("requestId", id).put("platform", "android")
-                    .put("installation_id", TernaKuApp.installationId(activity)).put("status", status);
+                    .put("installation_id", TernaKuApp.installationId(activity)).put("status", status)
+                    .put("optedOut", prefs.getBoolean("opted_out", false));
             if (token != null) payload.put("token", token);
             // The reply proxy belongs to the exact origin-verified document that made this request.
             reply.postMessage(payload.toString());

@@ -37,6 +37,7 @@ Lihat [panduan produksi VPS](deploy/vps/production/README.md) untuk merilis kode
 - Login tetap tersimpan setelah aplikasi ditutup. Sesi berlaku selama 30 hari sejak aktivitas terakhir, dengan batas 90 hari sejak login. Koneksi terputus tidak otomatis mengeluarkan akun.
 - Tombol kembali mengikuti menu yang dikunjungi. Saat foto atau formulir terbuka, tombol kembali menutup tampilan tersebut lebih dahulu.
 - Notifikasi harga ke HP melalui Web Push setelah perangkat memberi izin, termasuk ketika admin menyimpan nominal harga yang sama. Penyiapan server dan cron dijelaskan dalam [panduan notifikasi HP](api/PUSH.md).
+- Versi [Android dan iPhone](mobile/README.md) memakai akun TernaKu yang sama. Pengiriman notifikasi aplikasi menggunakan Firebase Cloud Messaging untuk Android dan Apple Push Notification service untuk iOS.
 - Laporan PDF dan Excel (`.xlsx`) serta peringkat penjualan. Export dibuat di browser menggunakan jsPDF dan ExcelJS.
 - **Insentif karyawan dan manajemen kandang sapi ditampilkan sebagai Coming Soon**, sesuai perubahan cakupan.
 

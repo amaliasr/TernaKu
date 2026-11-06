@@ -47,5 +47,8 @@ class Api extends CI_Controller {
     public function push_subscribe(): void { $this->run('POST',true,fn()=>$this->push()->subscribe($this->actor['id'],$this->token(),$this->body())); }
     public function push_unsubscribe(): void { $this->run('POST',true,fn()=>$this->push()->unsubscribe($this->actor['id'],$this->body())); }
     public function push_test(): void { $this->run('POST',true,function(){ $result=$this->push()->test($this->actor['id'],$this->body()); $this->drainPush(); return $result; }); }
+    public function push_native_subscribe(): void { $this->run('POST',true,fn()=>$this->push()->subscribeNative($this->actor['id'],$this->token(),$this->body())); }
+    public function push_native_unsubscribe(): void { $this->run('POST',true,fn()=>$this->push()->unsubscribeNative($this->actor['id'],$this->token(),$this->body())); }
+    public function push_native_test(): void { $this->run('POST',true,function(){ $result=$this->push()->testNative($this->actor['id'],$this->token(),$this->body()); $this->drainPush(); return $result; }); }
     public function missing(): void { $this->respond(['error'=>'Endpoint tidak ditemukan.'],404); }
 }

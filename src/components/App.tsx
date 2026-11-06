@@ -44,6 +44,7 @@ import EmployeeWorkspace from "./EmployeeWorkspace";
 import ThemeToggle from "./ThemeToggle";
 import InstallApp from "./InstallApp";
 import PushNotifications from "./PushNotifications";
+import { NativePushProvider } from "./NativeNotifications";
 import ProfileSettings from "./ProfileSettings";
 import Avatar from "./Avatar";
 import { useBackLayer, usePageNavigation } from "@/lib/navigation";
@@ -716,7 +717,7 @@ function Workspace() {
         <Sprout size={36} />
         <strong>Sambungkan kembali ke TernaKu</strong>
         <p>
-          Akun Anda masih tersimpan. Periksa koneksi internet, lalu coba lagi.
+          {notice || "Akun Anda masih tersimpan. Periksa koneksi internet, lalu coba lagi."}
         </p>
         <button
           className="btn btn-primary"
@@ -728,7 +729,7 @@ function Workspace() {
         <button
           className="btn btn-link"
           disabled={loading}
-          onClick={() => void logout()}
+          onClick={() => void logout().catch((cause: unknown) => setNotice(cause instanceof Error ? cause.message : "Belum dapat keluar."))}
         >
           Masuk dengan akun lain
         </button>
@@ -1113,7 +1114,7 @@ function AccountWorkspace() {
 export default function App() {
   return (
     <FarmProvider>
-      <AccountWorkspace />
+      <NativePushProvider><AccountWorkspace /></NativePushProvider>
     </FarmProvider>
   );
 }
