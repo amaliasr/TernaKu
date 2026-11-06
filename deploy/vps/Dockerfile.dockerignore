@@ -28,6 +28,7 @@
 !api/application/libraries/
 !api/application/libraries/FarmService.php
 !api/application/libraries/PushService.php
+!api/application/libraries/NativePushTransport.php
 !api/scripts/
 !api/scripts/env.php
 !api/scripts/install.php

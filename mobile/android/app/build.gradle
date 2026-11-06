@@ -1,0 +1,53 @@
+plugins { id 'com.android.application' }
+
+def firebaseConfig = file('google-services.json')
+if (firebaseConfig.isFile()) {
+    apply plugin: 'com.google.gms.google-services'
+}
+
+android {
+    namespace 'com.rstudiohub.ternaku'
+    compileSdk 36
+    defaultConfig {
+        applicationId 'com.rstudiohub.ternaku'
+        minSdk 26
+        targetSdk 36
+        versionCode 1
+        versionName '1.0.0'
+        testInstrumentationRunner 'androidx.test.runner.AndroidJUnitRunner'
+    }
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+    signingConfigs {
+        if (System.getenv('TERNAKU_KEYSTORE')) {
+            release {
+                storeFile file(System.getenv('TERNAKU_KEYSTORE'))
+                storePassword System.getenv('TERNAKU_KEYSTORE_PASSWORD')
+                keyAlias System.getenv('TERNAKU_KEY_ALIAS')
+                keyPassword System.getenv('TERNAKU_KEY_PASSWORD')
+            }
+        }
+    }
+    buildTypes {
+        release {
+            if (System.getenv('TERNAKU_KEYSTORE')) signingConfig signingConfigs.release
+        }
+    }
+}
+
+tasks.register('requireReleaseFirebase') {
+    doLast {
+        if (!firebaseConfig.isFile()) throw new GradleException('Tambahkan app/google-services.json dari Firebase untuk membuat rilis TernaKu dengan notifikasi.')
+    }
+}
+tasks.matching { it.name == 'preReleaseBuild' }.configureEach { dependsOn 'requireReleaseFirebase' }
+
+dependencies {
+    implementation 'androidx.webkit:webkit:1.14.0'
+    implementation 'androidx.core:core:1.13.1'
+    implementation 'com.google.firebase:firebase-messaging:25.0.1'
+    androidTestImplementation 'androidx.test:runner:1.6.2'
+    androidTestImplementation 'androidx.test.ext:junit:1.2.1'
+}

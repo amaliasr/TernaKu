@@ -36,7 +36,7 @@ try {
     $encrypted=$crypto->sendOneNotification(Minishlink\WebPush\Subscription::create(PushService::subscription($subscription)),json_encode(['body'=>'Harga rahasia pengujian']));
     checkPush($encrypted->isSuccess() && $history[0]['request']->getHeaderLine('Content-Encoding')==='aes128gcm' && !str_contains((string)$history[0]['request']->getBody(),'Harga rahasia'),'library encrypts modern browser payload and signs VAPID without real network');
     checkPush($push->status()['enabled'] && $push->status()['public_key']===$keys['publicKey'],'configured VAPID status exposes only public key');
-    checkPush((new PushService($db,null,[]))->status()===['enabled'=>false,'public_key'=>null],'missing setup is disabled');
+    checkPush(!(new PushService($db,null,[]))->status()['enabled'],'missing VAPID setup is disabled');
     foreach(['https://127.0.0.1/private','http://fcm.googleapis.com/fcm/send/x','https://fcm.googleapis.com.evil.test/x','https://fcm.googleapis.com@evil.test/x','https://fcm.googleapis.com:8443/x','https://fcm.googleapis.com/x#fragment','https://localhost/x'] as $endpoint) rejectsPush(fn()=>PushService::endpoint($endpoint),422);
     foreach(['https://fcm.googleapis.com/fcm/send/x','https://updates.push.services.mozilla.com/wpush/v2/x','https://web.push.apple.com/x','https://wns2-test.notify.windows.com/w/?token=x'] as $endpoint) checkPush(PushService::endpoint($endpoint)===$endpoint,'official browser push origin accepted');
     rejectsPush(fn()=>PushService::subscription(array_replace($subscription,['keys'=>['p256dh'=>'bad','auth'=>'bad']])),422);
@@ -80,14 +80,15 @@ try {
     $root=dirname(__DIR__); $server=proc_open([PHP_BINARY,'-S','127.0.0.1:'.$port,'-t',$root,$root.'/router.php'],[0=>['pipe','r'],1=>['pipe','w'],2=>['pipe','w']],$serverPipes);
     if(!is_resource($server)) throw new RuntimeException('Cannot start isolated HTTP API');
     for($i=0;$i<50;$i++){ $probe=@fsockopen('127.0.0.1',$port,$errno,$error,0.1); if($probe){fclose($probe);break;} usleep(100000); }
-    foreach(['/push/status'=>'GET','/push/subscribe'=>'POST','/push/unsubscribe'=>'POST','/push/test'=>'POST'] as $path=>$method) rawPush($path,[],'',$method,401);
+    foreach(['/push/status'=>'GET','/push/subscribe'=>'POST','/push/unsubscribe'=>'POST','/push/test'=>'POST','/push/native/subscribe'=>'POST','/push/native/unsubscribe'=>'POST','/push/native/test'=>'POST'] as $path=>$method) rawPush($path,[],'',$method,401);
     checkPush(true,'all push HTTP endpoints require an authenticated active user');
     $status=rawPush('/push/status',[],$tokens['push_employee'],'GET'); checkPush($status['enabled'] && !str_contains(json_encode($status),$keys['privateKey']),'HTTP status exposes no private VAPID material');
     rawPush('/push/subscribe',$subscription+['user_id'=>'push_other'],$tokens['push_employee'],'POST',422);
     rawPush('/push/subscribe',$subscription,$tokens['push_employee']); rawPush('/push/unsubscribe',['endpoint'=>$subscription['endpoint']],$tokens['push_other']);
     checkPush(countPush('push_subscription')===1,'HTTP subscription owner comes from bearer user, never request body');
     rawPush('/auth/logout',[],$tokens['push_employee']); checkPush(countPush('push_subscription')===0,'HTTP logout removes bound device subscription');
-    echo "Completed $checks Web Push checks with mock delivery.\n";
+    require __DIR__.'/native-push-checks.php';
+    echo "Completed $checks web and native push checks with mock delivery.\n";
 } finally {
     if(is_resource($server)) { proc_terminate($server); foreach($serverPipes as $pipe) if(is_resource($pipe)) fclose($pipe); proc_close($server); }
 }

@@ -37,3 +37,22 @@ API mencoba pengiriman terbatas setelah harga tersimpan. Cron melanjutkan antrea
 Endpoint pengiriman hanya mengizinkan layanan HTTPS milik Google, Mozilla, Apple, dan Windows. Pengalihan HTTP dinonaktifkan; alamat DNS harus publik dan dipasangkan ke koneksi TLS. Payload dienkripsi menggunakan `minishlink/web-push`, bukan kriptografi buatan aplikasi.
 
 Jalankan pengujian hanya pada database khusus `_test`: `php api/tests/push.php`. Pengujian pengiriman menggunakan mock dan tidak mengirim ke perangkat nyata.
+
+## Notifikasi dari aplikasi Android dan iOS
+
+Satu penyimpanan harga membuat satu kejadian dengan ID tersendiri, termasuk saat nominalnya sama dengan harga sebelumnya. Ketiga kanal menggunakan antrean yang sama. Pemasangan kredensial setiap kanal bisa dilakukan secara terpisah.
+
+- **Android** memakai Firebase Cloud Messaging HTTP v1. Aktifkan Firebase Cloud Messaging API di proyek yang digunakan oleh aplikasi `com.rstudiohub.ternaku`. Beri akun layanan izin mengirim pesan FCM dan pasang JSON akun layanan sebagai berkas privat. Isi `FCM_SERVICE_ACCOUNT_FILE` dengan path berkas tersebut. Pesan Android membawa ID harga, judul, dan isi sebagai data berprioritas tinggi. Aplikasi menampilkan setiap kejadian melalui kanal harga.
+- **iOS** memakai APNs melalui HTTP/2. Aktifkan Push Notifications untuk App ID TernaKu, pasang kunci penandatanganan APNs berformat `.p8` sebagai berkas privat, lalu isi `APNS_PRIVATE_KEY_FILE`, `APNS_KEY_ID`, `APNS_TEAM_ID`, dan `APNS_BUNDLE_ID` (default `com.rstudiohub.ternaku`). PHP cURL harus mendukung HTTP/2. Aplikasi menyertakan lingkungan APNs saat mendaftar agar build pengembangan menggunakan sandbox dan build distribusi menggunakan produksi.
+
+Pasang berkas di luar document root. Berikan akun proses API dan worker akses baca. Pada VPS Docker gunakan mount hanya-baca untuk keduanya. Uji dari HP melalui **Coba notifikasi**. Status kredensial lokal terlihat di `GET /push/status` pada `native.android` dan `native.ios`. Pengiriman ke HP membuktikan bahwa izin akun layanan, lingkungan, dan konfigurasi aplikasi sesuai.
+
+Ketiga endpoint berikut menggunakan bearer token sesi pengguna. Pengguna ditentukan oleh server.
+
+| Endpoint POST | Data |
+|---|---|
+| `/push/native/subscribe` | `platform` (`android` atau `ios`), `installation_id` (UUID), `token`, dan khusus iOS `environment` (`sandbox` atau `production`). Respons `subscribed` dan `binding_id`. |
+| `/push/native/unsubscribe` | `platform` dan `installation_id` |
+| `/push/native/test` | `platform` dan `installation_id`. Maksimal sekali per menit per perangkat. |
+
+Karyawan perlu mengizinkan notifikasi. Android dan iOS mengikuti pengaturan banner, suara, dan mode fokus pada masing-masing HP. Untuk uji perangkat, simpan dua pembaruan harga dengan nominal sama di lingkungan uji, tutup aplikasi secara biasa, lalu cocokkan kedua notifikasi dan waktu berlakunya.

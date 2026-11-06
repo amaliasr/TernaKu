@@ -26,6 +26,7 @@ import { isReceiptDelta, mergeReceiptDelta } from "./receipt-delta";
 import { MediaCache, mediaPath } from "./media-cache";
 import { readPendingRequestIds } from "./request-retries";
 import { detachBrowserPush } from "./push-client";
+import { deviceRequest, nativePlatform, type PushRoute } from "./native-push";
 import { demoPasswordMatches, parseDemoCredentials, persistDemoData, renameDemoCredential, type DemoCredentials } from "./demo-credentials";
 import { applyDemoWrite, withDemoWriteLock } from "./demo-writes";
 import {
@@ -82,7 +83,7 @@ interface FarmContextValue {
   loadMedia: (reference: MediaReference) => Promise<Blob>;
   refresh: () => Promise<void>;
   pushRequest: <T>(
-    action: "status" | "subscribe" | "unsubscribe" | "test",
+    action: PushRoute,
     body?: unknown,
     expectedUserId?: string,
   ) => Promise<T>;
@@ -594,7 +595,18 @@ export function FarmProvider({ children }: { children: ReactNode }) {
   );
   const logout = useCallback(async () => {
     const token = tokenRef.current;
-    // Clear credentials and invalidate pending requests before waiting for network/browser cleanup.
+    // The server must remove this session's native push bindings before another
+    // employee takes over the device, even if the HTTP request needs a retry.
+    const native = mode === "live" && token && nativePlatform();
+    if (native) {
+      try { await request("/auth/logout", token, {}); }
+      catch (cause) {
+        if (!isExpiredSession(cause)) throw new Error("Sambungkan HP ke internet agar bisa keluar dan menghentikan notifikasi akun ini.");
+      }
+      if (tokenRef.current !== token) return;
+      if (native === "android") await deviceRequest(native, "unbound").catch(() => {});
+      if (tokenRef.current !== token) return;
+    }
     invalidateSession();
     setError(null);
     setLoading(false);
@@ -604,7 +616,7 @@ export function FarmProvider({ children }: { children: ReactNode }) {
     } else {
       // The server revokes every push binding belonging to this token; it must
       // not wait for a browser's subscription API, which can stall offline.
-      const revoke = token
+      const revoke = token && !native
         ? request("/auth/logout", token, {}).catch(() => {
             /* Local credentials are removed even if the network is unavailable. */
           })
@@ -614,7 +626,7 @@ export function FarmProvider({ children }: { children: ReactNode }) {
   }, [invalidateSession]);
   const pushRequest = useCallback(
     async <T,>(
-      action: "status" | "subscribe" | "unsubscribe" | "test",
+      action: PushRoute,
       body?: unknown,
       expectedUserId?: string,
     ): Promise<T> => {

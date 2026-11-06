@@ -1,0 +1,15 @@
+# Include after the production compose file when provisioning native push.
+# This directory contains only mobile provider keys and must be readable by www-data.
+x-mobile: &mobile
+  volumes:
+    - ${PROD_MOBILE_PUSH_DIR:?Set the private mobile keys directory}:/run/ternaku-mobile:ro
+  environment:
+    FCM_SERVICE_ACCOUNT_FILE: /run/ternaku-mobile/fcm.json
+    APNS_PRIVATE_KEY_FILE: /run/ternaku-mobile/apns.p8
+    APNS_KEY_ID: ${APNS_KEY_ID:-}
+    APNS_TEAM_ID: ${APNS_TEAM_ID:-}
+    APNS_BUNDLE_ID: com.rstudiohub.ternaku
+
+services:
+  api: *mobile
+  worker: *mobile
