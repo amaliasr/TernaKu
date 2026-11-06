@@ -1,5 +1,13 @@
 # Menjalankan TernaKu di VPS produksi
 
+Domain `ternaku.rstudiohub.com` sudah beralih dari hosting bersama ke project Docker `ternaku-prod`. Arsip JavaScript, CSS, dan font dari hosting sebelumnya tersedia sebagai cadangan untuk HP yang masih membuka versi lama.
+
+## Merilis versi berikutnya
+
+Push ke GitHub memulai pemeriksaan kode. Untuk mengganti versi yang dilayani karyawan, pilih SHA commit yang lulus CI lalu jalankan build dan pembaruan Compose di VPS dengan file Compose produksi dan environment privat yang terpasang. Jika memakai build dari Git, arahkan `PROD_BUILD_CONTEXT` ke repo dan SHA yang dipilih. Gunakan tag image baru per rilis. Pertahankan volume database, kunci push, dan kedua mount arsip aset saat membuat ulang container. Periksa status `web`, `api`, `db`, dan `worker`, lalu buka situs serta `/ternaku/health` melalui domain publik.
+
+## Pemasangan atau pemulihan pada volume baru
+
 Project Compose `ternaku-prod` memiliki volume MySQL dan log sendiri. Frontend memanggil `/ternaku` di `https://ternaku.rstudiohub.com`. Web juga dapat diperiksa di VPS melalui port loopback `18183`. Sambungkan reverse proxy HTTPS ke jaringan Docker `ternaku-prod-ingress` dan arahkan hostname TernaKu ke `ternaku-prod-origin:8080`.
 
 Simpan file environment di direktori privat dengan izin `0600`. Isi `PROD_DB_PASSWORD` dan `PROD_DB_ROOT_PASSWORD` dengan dua password khusus volume produksi. Salin `WEB_PUSH_PUBLIC_KEY`, `WEB_PUSH_PRIVATE_KEY`, dan `WEB_PUSH_SUBJECT` yang sudah dipakai API lama agar langganan notifikasi di HP tetap berfungsi. Compose membaca `PROD_BUILD_CONTEXT` bila source build berasal dari commit Git, serta `PROD_IMAGE_TAG` untuk memilih tag image lokal. Jika memakai checkout, jalankan dari root repo:
