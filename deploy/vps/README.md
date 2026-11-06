@@ -101,3 +101,12 @@ curl -fsS http://127.0.0.1:18182/ternaku/health
 ```
 
 API melaporkan `push_ready: true` saat kunci dan dependensi tersedia. Worker memproses antrean per menit. Untuk mematikan push, hentikan worker dengan `"${dcp[@]}" stop worker`, lalu buat ulang API memakai konfigurasi dasar dengan `"${dc[@]}" up -d --force-recreate api web`. Untuk menghentikan staging sambil mempertahankan data, gunakan `"${dcp[@]}" stop` bila push aktif atau `"${dc[@]}" stop` pada konfigurasi dasar.
+
+## Sebelum memindahkan pengguna
+
+Salinan staging tidak mengikuti transaksi baru di hosting asal. Saat jadwal pindah disepakati:
+
+1. Siapkan project produksi TernaKu dengan volume terpisah dari staging. Siapkan HTTPS untuk hostname frontend yang sama agar PWA dan draf pada HP tetap memakai origin yang sama.
+2. Batasi sementara input di hosting lama, lalu ambil salinan database terakhir. Cocokkan akun, stok, penjualan, nota, foto, serta penanda transaksi yang mencegah simpan ganda. Untuk produksi, pertahankan sesi yang masih berlaku dan tujuan push sesuai kebijakan akun. Pasang kunci VAPID lama melalui konfigurasi privat jika langganan HP lama ingin dipertahankan.
+3. Uji frontend, login, dan jalur API pada target sebelum mengubah rute publik. Frontend baru memakai `/ternaku` pada domain web. Versi aplikasi lama masih bisa menghubungi `api.buildmanagement.id/ternaku`; arahkan **hanya path TernaKu** ke sumber data produksi yang sama. Domain API tersebut juga melayani aplikasi lain.
+4. Aktifkan hanya satu penerima transaksi dan satu pengirim push. Setelah peralihan, cek login, harga, satu penjualan beserta nota, dan satu notifikasi. Simpan hosting lama untuk pemulihan. Jika perlu kembali setelah ada transaksi baru, salin dahulu perubahan terbaru sebelum membuka kembali input di hosting lama.
