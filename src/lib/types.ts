@@ -186,6 +186,7 @@ export interface Activity {
   demo_write?: { request_id: string; fingerprint: string; record_id: string };
 }
 export type RecordEntity = "production" | "pickup" | "sale";
+export type StockAdjustmentMethod = "count" | "add" | "subtract";
 export interface StockMovement {
   id: string;
   date: string;
@@ -193,9 +194,11 @@ export interface StockMovement {
   user_id: string;
   category: Category;
   kind: "production" | "pickup" | "return" | "correction" | "reconcile";
-  /** One stock count has one reference ID and two category rows. */
-  expected?: Pick<Quantity, "eggs" | "kg">;
-  physical?: Pick<Quantity, "eggs" | "kg">;
+  /** Older reconcile movements always came from a physical count. */
+  method?: StockAdjustmentMethod;
+  /** Older physical counts recorded only eggs and kilograms. */
+  expected?: StockCountQuantity;
+  physical?: StockCountQuantity;
   reference_id: string;
   eggs: number;
   kg: number;
@@ -253,6 +256,7 @@ export interface Quantity {
   kg: number;
   trays: number;
 }
+export type StockCountQuantity = Pick<Quantity, "eggs" | "kg"> & { trays?: number };
 export type PickupStatus =
   "Dibawa" | "Sebagian terjual" | "Terjual" | "Dikembalikan";
 export interface PickupBalance extends Quantity {

@@ -1,239 +1,253 @@
 "use client";
 
-import { useRef, useState } from "react";
-import { useFarm } from "@/lib/store";
+import { useRef, useState, type FormEvent } from "react";
+import { ClipboardList } from "lucide-react";
 import { dateLabel, eggStock, number } from "@/lib/domain";
-import {
-  categoryLabel,
-  Dialog,
-  errorMessage,
-  Field,
-  LoadingButton,
-} from "./ModuleUI";
-import type { Category } from "@/lib/types";
+import { useFarm } from "@/lib/store";
+import type { Category, Quantity, State, StockAdjustmentMethod, StockMovement } from "@/lib/types";
+import { adjustmentMethodLabel, categoryLabel, Dialog, errorMessage, Field, LoadingButton } from "./ModuleUI";
 
 const categories = ["good", "cracked"] as const;
-const blank = () => ({
-  good: { eggs: "", kg: "" },
-  cracked: { eggs: "", kg: "" },
-});
-const signed = (n: number) => (n > 0 ? "+" : "") + number(n, 3);
+const units = [
+  { key: "eggs", label: "Butir", unit: "butir" },
+  { key: "kg", label: "Berat (kg)", unit: "kg" },
+  { key: "trays", label: "Krat", unit: "krat" },
+] as const;
+const signed = (value: number) => (value > 0 ? "+" : "") + number(value, 3);
+type CountScope = Category | "both";
+const methods: StockAdjustmentMethod[] = ["count", "add", "subtract"];
+
+function snapshot(state: State) {
+  return { good: eggStock(state, "good"), cracked: eggStock(state, "cracked") };
+}
+
+function initialInputs(stock: ReturnType<typeof snapshot>, method: StockAdjustmentMethod) {
+  const fields = (q: Quantity) => method === "count"
+    ? { eggs: String(q.eggs), kg: String(q.kg), trays: String(q.trays ?? 0) }
+    : { eggs: "", kg: "", trays: "" };
+  return { good: fields(stock.good), cracked: fields(stock.cracked) };
+}
+
+function applyAmount(before: Quantity, input: Record<keyof Quantity, string>, method: StockAdjustmentMethod): Quantity {
+  const amount = (key: keyof Quantity) => {
+    const entered = Number(input[key]);
+    if (method === "count") return entered;
+    return Number(((before[key] ?? 0) + (method === "add" ? entered : -entered)).toFixed(3));
+  };
+  return { eggs: amount("eggs"), kg: amount("kg"), trays: amount("trays") };
+}
+
+function quantityText(value: Partial<Quantity>, showSign = false) {
+  const format = showSign ? signed : (n: number) => number(n, 3);
+  return units.map(({ key, unit }) => {
+    const n = value[key];
+    return n == null ? `${unit} belum dicatat` : `${format(n)} ${unit}`;
+  }).join(" · ");
+}
+
+function AdjustmentHistory({ rows }: { rows: StockMovement[] }) {
+  const { state } = useFarm();
+  const [limit, setLimit] = useState(5);
+  return (
+    <details className="mt-3">
+      <summary className="fw-semibold">Riwayat penyesuaian</summary>
+      {!rows.length && <p className="text-muted mt-2 mb-0">Belum ada penyesuaian stok.</p>}
+      {rows.slice(0, limit).map((row) => (
+        <article key={row.id} className="border-top py-3 small">
+          <strong>{adjustmentMethodLabel(row.method)} · {categoryLabel(row.category)}</strong>
+          <div className="text-muted">
+            {dateLabel(row.created_at, true)} WIB · {state.users.find(u => u.id === row.user_id)?.name || "Admin"}
+          </div>
+          <dl className="row gx-2 gy-1 mb-1 mt-2">
+            {row.expected && <><dt className="col-3">Sebelum</dt><dd className="col-9 mb-0">{quantityText(row.expected)}</dd></>}
+            {row.physical && <><dt className="col-3">Sesudah</dt><dd className="col-9 mb-0">{quantityText(row.physical)}</dd></>}
+            <dt className="col-3">Selisih</dt>
+            <dd className="col-9 mb-0">{quantityText({ eggs: row.eggs, kg: row.kg, trays: row.physical?.trays == null ? undefined : row.trays }, true)}</dd>
+            <dt className="col-3">Alasan</dt><dd className="col-9 mb-0 text-break">{row.notes || "Belum dicatat"}</dd>
+          </dl>
+        </article>
+      ))}
+      {rows.length > limit && <button type="button" className="btn btn-outline-secondary btn-sm" onClick={() => setLimit(limit + 5)}>Tampilkan lebih banyak</button>}
+    </details>
+  );
+}
 
 export default function StockCount() {
-  const { state, user } = useFarm();
+  const { state, user, refresh } = useFarm();
   const [open, setOpen] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   if (user?.role !== "admin") return null;
-  const last = (state.stock_movements || [])
-    .filter((m) => m.kind === "reconcile")
-    .sort((a, b) => b.created_at.localeCompare(a.created_at))[0];
+  const history = (state.stock_movements ?? []).filter(m => m.kind === "reconcile")
+    .sort((a, b) => b.created_at.localeCompare(a.created_at));
+  async function start() {
+    setError("");
+    setNotice("");
+    setLoading(true);
+    try {
+      await refresh();
+      setOpen(true);
+    } catch (e) {
+      setError(errorMessage(e));
+    } finally {
+      setLoading(false);
+    }
+  }
   return (
-    <section className="panel p-3 mb-3">
+    <section className="panel p-3 mb-3" aria-label="Penyesuaian stok gudang">
       <div className="d-flex align-items-start justify-content-between flex-wrap gap-2">
         <div>
-          <h2 className="h5">Cocokkan stok gudang</h2>
-          <p className="small text-muted mb-1">
-            Hitung telur yang masih ada di gudang. Telur yang sedang dibawa
-            karyawan tidak ikut dihitung.
-          </p>
-          {last && (
-            <small>
-              Terakhir dicocokkan {dateLabel(last.created_at, true)} WIB.
-            </small>
-          )}
+          <h2 className="h5">Penyesuaian stok gudang</h2>
+          <p className="small text-muted mb-0">Tambah, kurangi, atau cocokkan stok dengan hasil hitung fisik.</p>
         </div>
-        <button
-          type="button"
-          className="btn btn-outline-primary"
-          onClick={() => {
-            setNotice("");
-            setOpen(true);
-          }}
-        >
-          Cocokkan stok
+        <button type="button" className="btn btn-primary" disabled={loading} onClick={() => void start()}>
+          <ClipboardList size={17} aria-hidden /> {loading ? "Memuat stok…" : "Sesuaikan stok"}
         </button>
       </div>
-      {notice && (
-        <p className="alert alert-success mt-2 mb-0" role="status">
-          {notice}
-        </p>
-      )}
-      {open && (
-        <CountDialog
-          close={() => setOpen(false)}
-          saved={() => {
-            setOpen(false);
-            setNotice(
-              "Hitungan fisik sudah tersimpan. Selisih tercatat di Pergerakan stok.",
-            );
-          }}
-        />
-      )}
+      {error && <p className="alert alert-danger mt-2 mb-0" role="alert">{error}</p>}
+      {notice && <p className="alert alert-success mt-2 mb-0" role="status">{notice}</p>}
+      <AdjustmentHistory rows={history} />
+      {open && <CountDialog close={() => setOpen(false)} saved={() => {
+        setOpen(false);
+        setNotice("Penyesuaian stok sudah tersimpan.");
+      }} />}
     </section>
   );
 }
-function CountDialog({
-  close,
-  saved,
-}: {
-  close: () => void;
-  saved: () => void;
-}) {
+
+function CountDialog({ close, saved }: { close: () => void; saved: () => void }) {
   const { state, command, refresh } = useFarm();
-  const [expected] = useState(() => ({
-    good: eggStock(state, "good"),
-    cracked: eggStock(state, "cracked"),
-  }));
-  const [counts, setCounts] = useState(blank);
+  const [expected, setExpected] = useState(() => snapshot(state));
+  const [scope, setScope] = useState<CountScope>("good");
+  const [method, setMethod] = useState<StockAdjustmentMethod>("count");
+  const [counts, setCounts] = useState(() => initialInputs(expected, method));
   const [reason, setReason] = useState("");
   const [busy, setBusy] = useState(false);
-  const guard = useRef(false);
+  const [conflict, setConflict] = useState(false);
+  const [needsRefresh, setNeedsRefresh] = useState(false);
   const [error, setError] = useState("");
-  const rows = categories.map((category) => ({
+  const guard = useRef(false);
+  const selected = scope === "both" ? categories : [scope];
+  const rows = selected.map(category => ({
     category,
-    expected: { eggs: expected[category].eggs, kg: expected[category].kg },
-    physical: {
-      eggs: Number(counts[category].eggs),
-      kg: Number(counts[category].kg),
-    },
+    expected: expected[category],
+    physical: applyAmount(expected[category], counts[category], method),
   }));
-  const changed = rows.some(
-    (r) =>
-      r.expected.eggs !== r.physical.eggs || r.expected.kg !== r.physical.kg,
-  );
-  const stale = rows.some((r) => {
-    const live = eggStock(state, r.category);
-    return live.eggs !== r.expected.eggs || live.kg !== r.expected.kg;
+  const saveRows = method === "count" ? rows : rows.filter(row => units.some(({ key }) => row.physical[key] !== row.expected[key]));
+  const stale = rows.some(row => {
+    const live = eggStock(state, row.category);
+    return units.some(({ key }) => live[key] !== row.expected[key]);
   });
-  const update = (c: Category, key: "eggs" | "kg", value: string) =>
-    setCounts((all) => ({ ...all, [c]: { ...all[c], [key]: value } }));
-  const safeClose = () => {
+  async function loadLatest() {
+    try {
+      await refresh();
+      setNeedsRefresh(false);
+      setError("");
+    } catch (e) {
+      setNeedsRefresh(true);
+      setError(errorMessage(e));
+    }
+  }
+  async function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (guard.current || stale || conflict) return;
+    if (!saveRows.length) { setError("Isi jumlah stok yang ingin diubah."); return; }
+    if (!reason.trim()) { setError("Isi alasan penyesuaian stok."); return; }
+    if (saveRows.some(row => units.some(({ key }) => row.physical[key] < 0))) {
+      setError("Jumlah yang dikurangi melebihi stok gudang.");
+      return;
+    }
+    const incomplete = saveRows.find(({ physical }) => (physical.eggs === 0) !== (physical.kg === 0));
+    if (incomplete) {
+      setError(`${categoryLabel(incomplete.category)}: isi jumlah butir dan berat. Jika telur habis, isi keduanya dengan 0.`);
+      return;
+    }
+    guard.current = true;
+    setBusy(true);
+    setError("");
+    try {
+      await command("stock.reconcile", { items: saveRows, reason: reason.trim(), method });
+      saved();
+    } catch (e) {
+      const message = errorMessage(e);
+      setError(message);
+      if (message.includes("Stok berubah")) {
+        setConflict(true);
+        await loadLatest();
+      }
+    } finally {
+      guard.current = false;
+      setBusy(false);
+    }
+  }
+  function safeClose() {
     if (guard.current) return false;
     close();
-  };
+  }
   return (
-    <Dialog
-      title="Cocokkan stok fisik"
-      subtitle="Jumlah hasil hitung menjadi saldo gudang yang baru."
-      onClose={safeClose}
-    >
-      <form
-        onSubmit={async (e) => {
-          e.preventDefault();
-          if (guard.current || stale) return;
-          if (
-            rows.some((r) => (r.physical.eggs === 0) !== (r.physical.kg === 0))
-          ) {
-            setError(
-              "Jika telur habis, isi 0 pada butir dan kilogram sekaligus.",
-            );
-            return;
-          }
-          if (changed && !reason.trim()) {
-            setError("Jelaskan penyebab selisih.");
-            return;
-          }
-          guard.current = true;
-          setBusy(true);
-          setError("");
-          try {
-            await command("stock.reconcile", {
-              items: rows,
-              reason: reason.trim() || "Stok sesuai dengan hitungan fisik.",
-            });
-            saved();
-          } catch (err) {
-            setError(errorMessage(err));
-            if (errorMessage(err).includes("Stok berubah"))
-              await refresh().catch(() => {});
-          } finally {
-            guard.current = false;
-            setBusy(false);
-          }
-        }}
-      >
+    <Dialog title="Sesuaikan stok gudang" onClose={safeClose}>
+      <form onSubmit={submit}>
         <fieldset disabled={busy} className="modal-body-custom">
-          <p>
-            Masukkan hasil hitung dan timbang hari ini, termasuk angka 0 jika
-            kosong.
-          </p>
-          {rows.map((r) => (
-            <fieldset className="border rounded p-3 mb-3" key={r.category}>
-              <legend className="float-none w-auto h6 mb-0 px-1">
-                {categoryLabel(r.category)}
-              </legend>
-              <small className="d-block mb-2">
-                Menurut aplikasi: {number(r.expected.eggs)} butir ·{" "}
-                {number(r.expected.kg, 3)} kg
-              </small>
+          <div className="row g-2 mb-3">
+          <Field label="Jenis penyesuaian" className="col-12 col-sm-6">
+            <select className="form-select" value={method} onChange={e => {
+              const next = e.target.value as StockAdjustmentMethod;
+              setMethod(next);
+              setCounts(initialInputs(expected, next));
+              setError("");
+            }}>
+              {methods.map(value => <option key={value} value={value}>{adjustmentMethodLabel(value)}</option>)}
+            </select>
+          </Field>
+          <Field label="Kategori telur" className="col-12 col-sm-6">
+            <select className="form-select" value={scope} onChange={e => { setScope(e.target.value as CountScope); setError(""); }}>
+              <option value="good">Telur bagus</option>
+              <option value="cracked">Telur bentes</option>
+              <option value="both">Telur bagus dan bentes</option>
+            </select>
+          </Field>
+          </div>
+          {rows.map(({ category, expected: before, physical }) => (
+            <fieldset key={category} className="border rounded-3 p-3 mb-3">
+              <legend className="float-none w-auto h6 mb-0 px-1">{categoryLabel(category)}</legend>
+              <p className="small mb-3"><strong>Stok tercatat</strong><br />{quantityText(before)}</p>
+              <p className="small fw-semibold mb-1">{method === "count" ? "Jumlah hasil hitung" : method === "add" ? "Jumlah yang ditambah" : "Jumlah yang dikurangi"}</p>
               <div className="row g-2">
-                {(["eggs", "kg"] as const).map((k) => (
-                  <Field
-                    key={k}
-                    className="col-6"
-                    label={k === "eggs" ? "Butir fisik" : "Berat fisik (kg)"}
-                  >
-                    <input
-                      className="form-control"
-                      aria-label={
-                        categoryLabel(r.category) +
-                        (k === "eggs" ? " butir fisik" : " kg fisik")
-                      }
-                      type="number"
-                      inputMode={k === "eggs" ? "numeric" : "decimal"}
-                      min="0"
-                      step={k === "eggs" ? "1" : "0.001"}
-                      required
-                      value={counts[r.category][k]}
-                      onChange={(e) => update(r.category, k, e.target.value)}
-                    />
+                {units.map(({ key, label, unit }) => (
+                  <Field key={key} className="col-6 col-sm-4" label={label}>
+                    <input className="form-control" type="number" inputMode={key === "kg" ? "decimal" : "numeric"}
+                      min="0" step={key === "kg" ? "0.001" : "1"} required={method === "count"} placeholder="0" value={counts[category][key]}
+                      aria-label={`${categoryLabel(category)} ${unit} ${method === "count" ? "fisik" : method === "add" ? "ditambah" : "dikurangi"}`}
+                      onChange={e => {
+                        const value = e.target.value;
+                        setCounts(all => ({ ...all, [category]: { ...all[category], [key]: value } }));
+                      }} />
                   </Field>
                 ))}
               </div>
-              {counts[r.category].eggs !== "" &&
-                counts[r.category].kg !== "" && (
-                  <small className="d-block mt-2" aria-live="polite">
-                    Selisih: {signed(r.physical.eggs - r.expected.eggs)} butir ·{" "}
-                    {signed(r.physical.kg - r.expected.kg)} kg
-                  </small>
-                )}
+              {(method !== "count" || units.every(({ key }) => counts[category][key] !== "")) && (
+                <div className="border-top small mt-3 pt-2" aria-live="polite">
+                  <p className="mb-1"><strong>Selisih</strong><br />{quantityText({ eggs: physical.eggs - before.eggs, kg: Number((physical.kg - before.kg).toFixed(3)), trays: physical.trays - (before.trays ?? 0) }, true)}</p>
+                  <p className="mb-0"><strong>Stok setelah disimpan</strong><br />{quantityText(physical)}</p>
+                </div>
+              )}
             </fieldset>
           ))}
-          <Field className="d-block" label="Catatan (wajib jika ada selisih)">
-            <textarea
-              className="form-control"
-              rows={2}
-              maxLength={2000}
-              placeholder="Contoh: 2 butir pecah saat dipindahkan."
-              value={reason}
-              onChange={(e) => setReason(e.target.value)}
-              required={changed}
-            />
+          <Field label="Alasan penyesuaian (wajib)" className="d-block">
+            <textarea className="form-control" rows={2} maxLength={2000} required value={reason}
+              placeholder="Contoh: 2 butir pecah saat dipindahkan." onChange={e => setReason(e.target.value)} />
           </Field>
-          {stale && (
-            <p role="alert" className="alert alert-warning mt-3">
-              Stok berubah saat dihitung. Tutup formulir, lalu cocokkan kembali
-              dengan jumlah terbaru.
-            </p>
-          )}
-          {error && (
-            <p role="alert" className="alert alert-danger mt-3">
-              {error}
-            </p>
-          )}
+          {(stale || conflict) && <div role="alert" className="alert alert-warning mt-3 mb-0">
+            <p className="mb-2">Stok berubah selama penghitungan. Periksa saldo terbaru dan hitung kembali sebelum menyimpan.</p>
+            {needsRefresh ? <button className="btn btn-light btn-sm" type="button" onClick={() => void loadLatest()}>Muat ulang stok</button> :
+              <button className="btn btn-light btn-sm" type="button" onClick={() => { setExpected(snapshot(state)); setConflict(false); setError(""); }}>Bandingkan dengan stok terbaru</button>}
+          </div>}
+          {error && <p role="alert" className="alert alert-danger mt-3 mb-0">{error}</p>}
         </fieldset>
         <div className="modal-footer-custom">
-          <button
-            className="btn btn-light"
-            type="button"
-            disabled={busy}
-            onClick={safeClose}
-          >
-            Batal
-          </button>
-          <LoadingButton disabled={stale} busy={busy}>
-            Simpan hasil hitung
-          </LoadingButton>
+          <button className="btn btn-light" type="button" disabled={busy} onClick={safeClose}>Batal</button>
+          <LoadingButton disabled={stale || conflict} busy={busy}>Simpan penyesuaian</LoadingButton>
         </div>
       </form>
     </Dialog>

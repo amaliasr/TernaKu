@@ -20,7 +20,7 @@ Lihat [panduan produksi VPS](deploy/vps/production/README.md) untuk merilis kode
 
 - Dashboard produksi, omzet, stok, grafik, target, dan performa karyawan dengan filter tanggal.
 - Satu formulir panen mencatat telur bagus dan bentes sekaligus. Jumlah butir, berat aktual, dan krat diisi per kategori. Tanggal, kandang, catatan, dan foto cukup diisi sekali. Pengaturan admin menentukan apakah hasil panen langsung tersedia di gudang atau menunggu penerimaan.
-- Di menu Gudang, admin dapat membandingkan hitungan fisik dengan stok aplikasi untuk kedua kategori. Selisih beserta alasannya masuk riwayat. Laporan admin menampilkan saldo gudang pada akhir tanggal pilihan berdasarkan pergerakan stok dalam WIB.
+- Di menu **Stok & pengambilan → Sesuaikan stok**, admin bisa menambah stok, mengurangi stok, atau memasukkan hasil hitung fisik untuk telur bagus dan bentes. Form menampilkan saldo awal, perubahan, dan saldo akhir dalam butir, kg, dan krat. Alasan, nama admin, tanggal, dan jam tersimpan di riwayat dan laporan penyesuaian gudang.
 - Pengambilan telur per karyawan, sisa telur yang dibawa, pengembalian, dan riwayat pergerakan stok bertanggal. Validasi mencegah saldo butir/kilogram negatif dan sisa yang hanya mempunyai salah satu satuan.
 - Penjualan beberapa item dalam satu transaksi, pelanggan, harga otomatis, Tunai/Transfer/QRIS/Piutang, pembayaran sebagian/pelunasan, dan nota penjualan PDF.
 - Telur bentes dapat dibagikan gratis dengan nama penerima wajib diisi. Harga bentes Rp0 ditampilkan sebagai **Gratis**; jumlah telur tetap mengurangi stok, tanpa menambah omzet. Telur bagus tetap mengikuti harga jual.

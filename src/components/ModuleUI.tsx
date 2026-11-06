@@ -4,12 +4,15 @@ import { createContext, useContext, useEffect, useLayoutEffect, useRef, type Rea
 import { createPortal } from "react-dom";
 import { X, Inbox, Search, LoaderCircle } from "lucide-react";
 import { businessDate, dateLabel } from "@/lib/domain";
+import type { StockAdjustmentMethod } from "@/lib/types";
 import { useBackLayer } from "@/lib/navigation";
 import { lockBodyScroll } from "@/lib/scroll-lock";
 export { businessDate } from "@/lib/domain";
 
 export const categoryLabel = (value: string) =>
   value === "good" ? "Telur bagus" : "Telur bentes";
+export const adjustmentMethodLabel = (method: StockAdjustmentMethod = "count") =>
+  ({ add: "Tambah stok", subtract: "Kurangi stok", count: "Hasil hitung fisik" })[method];
 export const methodLabel = (value: string) =>
   ({ cash: "Tunai", transfer: "Transfer", qris: "QRIS", credit: "Piutang" })[
     value

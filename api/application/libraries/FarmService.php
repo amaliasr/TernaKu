@@ -43,7 +43,7 @@ class FarmService {
     }
     private function number(array $p, string $key, float $minimum = 0, bool $integer = false, float $maximum = 1000000000000): float {
         $v = $p[$key] ?? null;
-        if (!is_numeric($v) || is_bool($v) || !is_finite((float)$v) || (float)$v < $minimum || (float)$v > $maximum || ($integer && floor((float)$v) != (float)$v) || (!$integer && abs((float)$v * 1000 - round((float)$v * 1000)) > 0.000001)) throw new ApiProblem("Nilai $key tidak valid (berat maksimal 3 angka desimal).");
+        if (!is_numeric($v) || is_bool($v) || !is_finite((float)$v) || (float)$v < $minimum || (float)$v > $maximum || ($integer && floor((float)$v) != (float)$v) || (!$integer && abs((float)$v - round((float)$v, 3)) > 0.000000001)) throw new ApiProblem("Nilai $key tidak valid (berat maksimal 3 angka desimal).");
         return round((float)$v, $integer ? 0 : 3);
     }
     private function enum(array $p, string $key, array $choices): string { $v = $this->text($p,$key,50,true); if (!in_array($v,$choices,true)) throw new ApiProblem("Pilihan $key tidak valid."); return $v; }
@@ -369,6 +369,79 @@ class FarmService {
         return json_decode($price,true,512,JSON_THROW_ON_ERROR);
     }
     private function reason(array $p): string { $reason=$this->text($p,'reason',1000,true); if(mb_strlen($reason)<5) throw new ApiProblem('Alasan koreksi minimal 5 karakter.'); return $reason; }
+    private function countedEggStock(array $values): array {
+        $eggs = (int)$this->number($values, 'eggs', 0, true);
+        $kg = $this->number($values, 'kg', 0, false, 999999999999.999);
+        $quantity = ['eggs' => $eggs, 'kg' => $kg];
+        if (array_key_exists('trays', $values)) {
+            $quantity['trays'] = (int)$this->number($values, 'trays', 0, true);
+        }
+        return $quantity;
+    }
+
+    private function reconcileStock(array $payload): void {
+        $this->admin();
+        $reason = $this->text($payload, 'reason', 2000, true);
+        $method = $this->enum($payload + ['method' => 'count'], 'method', ['count', 'add', 'subtract']);
+        $rows = $payload['items'] ?? null;
+        if (!is_array($rows) || !array_is_list($rows) || count($rows) < 1 || count($rows) > 2) {
+            throw new ApiProblem('Pilih satu atau dua kategori telur untuk dicocokkan.');
+        }
+
+        $counts = [];
+        foreach ($rows as $row) {
+            if (!is_array($row) || !is_array($row['expected'] ?? null) || !is_array($row['physical'] ?? null)) {
+                throw new ApiProblem('Isi stok tercatat dan hasil hitung fisik.');
+            }
+            $category = $this->enum($row, 'category', ['good', 'cracked']);
+            if (isset($counts[$category])) throw new ApiProblem('Kategori telur tidak boleh berulang.');
+            $expected = $this->countedEggStock($row['expected']);
+            $physical = $this->countedEggStock($row['physical']);
+            if (($physical['eggs'] === 0) !== ($physical['kg'] === 0.0)) {
+                throw new ApiProblem('Jumlah butir dan berat akhir harus sama-sama nol atau sama-sama terisi.');
+            }
+            if (isset($expected['trays']) !== isset($physical['trays'])) {
+                throw new ApiProblem('Isi jumlah krat tercatat dan jumlah krat hasil hitung.');
+            }
+
+            $stock = $this->query('SELECT eggs,kg,trays FROM stock WHERE stock_key=? FOR UPDATE', ['egg:'.$category])->fetch(PDO::FETCH_ASSOC);
+            if (!$stock) throw new ApiProblem('Stok tidak ditemukan.', 404);
+            if ($expected['eggs'] !== (int)$stock['eggs'] || $expected['kg'] !== (float)$stock['kg']
+                || (isset($expected['trays']) && $expected['trays'] !== (int)$stock['trays'])) {
+                throw new ApiProblem('Stok berubah saat dihitung. Cek stok terbaru, lalu cocokkan lagi.', 409);
+            }
+            $counts[$category] = ['category' => $category, 'expected' => $expected, 'physical' => $physical];
+        }
+
+        $date = $this->now();
+        $reference = $this->id('count');
+        foreach ($counts as $category => $count) {
+            $expected = $count['expected'];
+            $physical = $count['physical'];
+            $eggs = $physical['eggs'] - $expected['eggs'];
+            $kg = round($physical['kg'] - $expected['kg'], 3);
+            // Older devices count eggs and weight only. Preserve their current tray balance.
+            $trays = isset($physical['trays']) ? $physical['trays'] - $expected['trays'] : 0;
+            if ($method === 'add' && (min($eggs, $kg, $trays) < 0 || max($eggs, $kg, $trays) == 0)) {
+                throw new ApiProblem('Isi jumlah yang ditambahkan. Stok akhir harus lebih banyak dari stok tercatat.');
+            }
+            if ($method === 'subtract' && (max($eggs, $kg, $trays) > 0 || min($eggs, $kg, $trays) == 0)) {
+                throw new ApiProblem('Isi jumlah yang dikurangi. Stok akhir harus lebih sedikit dari stok tercatat.');
+            }
+            // Persist the verified end balance directly while the row is locked.
+            // An explicit decimal string keeps PDO from truncating large weights.
+            $this->query('UPDATE stock SET eggs=?, kg=?, trays=COALESCE(?,trays) WHERE stock_key=?', [
+                $physical['eggs'], number_format($physical['kg'], 3, '.', ''), $physical['trays'] ?? null, 'egg:'.$category,
+            ]);
+            $this->insert('stock_movement', $count + [
+                'kind' => 'reconcile', 'method' => $method, 'reference_id' => $reference, 'date' => $date, 'created_at' => $date,
+                'user_id' => $this->actor['id'], 'eggs' => $eggs, 'kg' => $kg, 'trays' => $trays, 'notes' => $reason,
+            ]);
+        }
+        $this->audit('stock.reconcile', 'Menyesuaikan stok gudang: '.$reason, null, [
+            'id' => $reference, 'method' => $method, 'counts' => array_values($counts), 'reason' => $reason,
+        ]);
+    }
     private function changes(string $entity,array $changes): array {
         $allowed=['production'=>['eggs','kg','trays','notes'],'pickup'=>['eggs','kg','trays','notes','area'],'sale'=>['notes','customer','items']];
         if(!isset($allowed[$entity]) || !$changes || array_diff(array_keys($changes),$allowed[$entity])) throw new ApiProblem('Kolom koreksi tidak didukung. Nilai penjualan dan snapshot harga tidak dapat diubah.');
@@ -500,31 +573,8 @@ class FarmService {
                 }
                 $this->audit($action,$automatic?'Mencatat panen dan menambah stok':'Mencatat panen yang menunggu penerimaan stok',null,['harvest_id'=>$common['harvest_id'],'date'=>$common['date'],'items'=>$items]); break;
             case 'stock.reconcile':
-                $this->admin();
-                $rows=$p['items']??null; $reason=$this->text($p,'reason',2000,true);
-                if(!is_array($rows) || array_keys($rows)!==[0,1]) throw new ApiProblem('Hitung kedua kategori telur satu kali.');
-                $counts=[]; $ref=$this->id('count'); $now=$this->now();
-                foreach($rows as $row) {
-                    if(!is_array($row)) throw new ApiProblem('Baris stok tidak valid.');
-                    $category=$this->enum($row,'category',['good','cracked']); if(isset($counts[$category])) throw new ApiProblem('Kategori telur tidak boleh berulang.');
-                    $stored=$this->query('SELECT eggs,kg FROM stock WHERE stock_key=? FOR UPDATE',['egg:'.$category])->fetch(PDO::FETCH_ASSOC);
-                    if(!$stored) throw new ApiProblem('Stok tidak ditemukan.',404);
-                    $count=['category'=>$category];
-                    foreach(['expected','physical'] as $key) {
-                        $q=$row[$key]??null; if(!is_array($q)) throw new ApiProblem('Isi jumlah butir dan berat untuk kedua kategori.');
-                        $eggs=(int)$this->number($q,'eggs',0,true); $kg=$this->number($q,'kg');
-                        if(($eggs===0)!==($kg==0)) throw new ApiProblem('Jumlah butir dan berat harus sama-sama kosong atau sama-sama berisi.');
-                        $count[$key]=['eggs'=>$eggs,'kg'=>$kg];
-                    }
-                    if($count['expected']['eggs']!==(int)$stored['eggs'] || $count['expected']['kg']!==(float)$stored['kg']) throw new ApiProblem('Stok berubah saat dihitung. Tutup formulir, cek stok terbaru, lalu cocokkan lagi.',409);
-                    $counts[$category]=$count;
-                }
-                foreach($counts as $category=>$count) {
-                    $eggs=$count['physical']['eggs']-$count['expected']['eggs']; $kg=round($count['physical']['kg']-$count['expected']['kg'],3);
-                    $this->stock('egg:'.$category,$eggs,$kg);
-                    $this->insert('stock_movement',$count+['reference_id'=>$ref,'kind'=>'reconcile','date'=>$now,'created_at'=>$now,'user_id'=>$this->actor['id'],'eggs'=>$eggs,'kg'=>$kg,'trays'=>0,'notes'=>$reason]);
-                }
-                $this->audit($action,'Mencocokkan stok fisik: '.$reason,null,['id'=>$ref,'counts'=>array_values($counts),'reason'=>$reason]); break;
+                $this->reconcileStock($p);
+                break;
             case 'production.receive':
                 if(array_diff(array_keys($p),['id'])) throw new ApiProblem('Penerimaan stok harus mencakup seluruh panen.');
                 $r=$this->record('production',$this->text($p,'id',40,true),true); $this->owned($r);

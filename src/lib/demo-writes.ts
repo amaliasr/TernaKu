@@ -32,6 +32,8 @@ export function applyDemoWrite(source: State, userId: string, action: string, pa
 ): { state: State; result?: State["command_result"] } {
   const user = source.users.find(row => row.id === userId);
   if (!user || accountAccessError(user)) throw new ApiError("Akun ini belum dapat digunakan.", 403);
+  if (action === "stock.reconcile" && user.role !== "admin")
+    throw new ApiError("Penyesuaian stok hanya dapat dilakukan oleh admin.", 403);
   if (attempt) {
     const earlier = source.activity.find(row => row.user_id === userId && row.demo_write?.request_id === attempt.request_id);
     if (earlier?.demo_write) {
@@ -43,12 +45,17 @@ export function applyDemoWrite(source: State, userId: string, action: string, pa
   let next: State;
   try { next = executeCommand(source, userId, action, payload, now); }
   catch (error) {
+    if (error instanceof ApiError) throw error;
     // Domain validation runs before any local write, so the form can be edited.
     throw new ApiError(error instanceof Error ? error.message : "Periksa isian dan coba lagi.", 422);
   }
-  if (action !== "sale.create" && action !== "production.create") return { state: next };
-  const row = action === "sale.create" ? next.sales[source.sales.length] : next.productions[source.productions.length];
-  const result = { action, record_id: row.id, request_id: attempt?.request_id ?? "" };
-  if (attempt) next.activity[0].demo_write = { ...attempt, record_id: row.id };
+  let recordId: string;
+  if (action === "sale.create") recordId = next.sales[source.sales.length].id;
+  else if (action === "production.create") recordId = next.productions[source.productions.length].id;
+  else if (action === "stock.reconcile" && attempt)
+    recordId = next.stock_movements![source.stock_movements?.length ?? 0].reference_id;
+  else return { state: next };
+  const result = { action, record_id: recordId, request_id: attempt?.request_id ?? "" };
+  if (attempt) next.activity[0].demo_write = { ...attempt, record_id: recordId };
   return { state: next, result };
 }

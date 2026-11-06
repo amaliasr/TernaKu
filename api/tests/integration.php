@@ -451,8 +451,67 @@ try {
     req('/commands',$rc,$a); $counted=req('/commands',$rc,$a);
     $ledger=array_values(array_filter($counted['stock_movements'],fn($m)=>$m['kind']==='reconcile' && $m['notes']===$op['reason']));
     check(count($ledger)===2 && $ledger[0]['reference_id']===$ledger[1]['reference_id'] && $counted['inventory']['good']['eggs']===$physical[0]['physical']['eggs'] && $counted['inventory']['good']['kg']==$physical[0]['physical']['kg'],'opname is all-or-nothing, admin-only, and replay does not adjust stock twice');
-    check($ledger[0]['physical']['eggs']-$ledger[0]['expected']['eggs']===$ledger[0]['eggs'] && $ledger[1]['physical']['eggs']-$ledger[1]['expected']['eggs']===$ledger[1]['eggs'],'warehouse count preserves physical and expected snapshots in each movement');
+    check($ledger[0]['physical']['eggs']-$ledger[0]['expected']['eggs']===$ledger[0]['eggs'] && $ledger[1]['physical']['eggs']-$ledger[1]['expected']['eggs']===$ledger[1]['eggs'] && $ledger[0]['method']==='count','warehouse count preserves physical and expected snapshots in each movement');
     cmd('stock.reconcile',$op,$a,409); check(true,'count rejects an outdated expected warehouse balance');
+    $prior = $counted['inventory']['good'];
+    check($prior['trays'] === $s['inventory']['good']['trays'], 'older counts without trays keep warehouse trays intact');
+    $repacked = $prior;
+    $repacked['trays'] += 3;
+    $oneCategory = ['method' => 'add', 'items' => [['category' => 'good', 'expected' => $prior, 'physical' => $repacked]], 'reason' => 'Telur dikemas ulang di gudang'];
+    $beforeRejected = businessSnapshot();
+    cmd('stock.reconcile', $oneCategory, $e, 403);
+    cmd('stock.reconcile', array_replace($oneCategory, ['reason' => ' ']), $a, 422);
+    $bad = $oneCategory;
+    unset($bad['items'][0]['expected']['trays']);
+    cmd('stock.reconcile', $bad, $a, 422);
+    $bad['items'][0]['expected'] = $prior;
+    $bad['items'][0]['physical']['trays'] = -1;
+    cmd('stock.reconcile', $bad, $a, 422);
+    cmd('stock.reconcile', array_replace($oneCategory, ['method' => 'subtract']), $a, 422);
+    $bad = $oneCategory;
+    $bad['items'][0]['physical']['eggs'] -= 1;
+    cmd('stock.reconcile', $bad, $a, 422);
+    $bad['items'][0]['physical'] = $prior;
+    cmd('stock.reconcile', $bad, $a, 422);
+    check($beforeRejected === businessSnapshot(), 'unauthorized and invalid warehouse adjustments cannot change inventory or history');
+    $adjusted = req('/commands', ['action'=>'stock.reconcile', 'payload'=>$oneCategory, 'response_mode'=>'compact'], $a);
+    $movement = first($adjusted, 'stock_movements', fn($m) => $m['notes'] === $oneCategory['reason']);
+    check($adjusted['inventory']['good'] === $repacked && $adjusted['inventory']['cracked'] === $counted['inventory']['cracked']
+        && $adjusted['pickups'] === $counted['pickups'] && $adjusted['sales'] === $counted['sales'],
+        'counting only warehouse trays changes just the selected category and keeps employee stock and invoices intact');
+    check($movement['expected'] === $prior && $movement['physical'] === $repacked
+        && $movement['method'] === 'add' && $movement['eggs'] === 0 && $movement['kg'] == 0 && $movement['trays'] === 3,
+        'warehouse adjustment records the expected and counted quantities and signed tray difference');
+    $stale = $oneCategory;
+    array_unshift($stale['items'], ['category' => 'cracked', 'expected' => $adjusted['inventory']['cracked'], 'physical' => ['eggs'=>0, 'kg'=>0, 'trays'=>0]]);
+    $beforeConflict = businessSnapshot();
+    cmd('stock.reconcile', $stale, $a, 409);
+    check($beforeConflict === businessSnapshot(), 'a stale tray balance rejects the whole count including the other category');
+    $decrease = ['method' => 'subtract', 'items' => [['category' => 'good', 'expected' => $repacked, 'physical' => $prior]], 'reason' => 'Krat kosong sudah dikeluarkan'];
+    $afterRemoval = cmd('stock.reconcile', $decrease, $a);
+    $movement = first($afterRemoval, 'stock_movements', fn($m) => $m['notes'] === $decrease['reason']);
+    check($afterRemoval['inventory']['good'] === $prior && $movement['method'] === 'subtract' && $movement['trays'] === -3,
+        'outgoing adjustments preserve their method and signed delta in the ledger');
+    // Earlier imports can contain a weight with no eggs. Repair the observed row without losing its audit trail.
+    $db->exec("UPDATE stock SET eggs=0, kg=0.300, trays=2 WHERE stock_key='egg:cracked'");
+    $observed = ['eggs'=>0, 'kg'=>0.3, 'trays'=>2];
+    $corrected = ['eggs'=>5, 'kg'=>0.3, 'trays'=>0];
+    $repair = ['items'=>[['category'=>'cracked', 'expected'=>$observed, 'physical'=>$corrected]], 'reason'=>'Hitung ulang saldo lama'];
+    $fixed = cmd('stock.reconcile', $repair, $a);
+    $movement = first($fixed, 'stock_movements', fn($m) => $m['notes'] === $repair['reason']);
+    check($fixed['inventory']['cracked'] === $corrected && $movement['expected'] === $observed && $movement['physical'] === $corrected,
+        'an admin can repair a legacy weight-only warehouse balance and preserve its original quantities');
+    $maxStock = ['eggs'=>5, 'kg'=>999999999999.999, 'trays'=>0];
+    $boundary = ['items'=>[['category'=>'cracked', 'expected'=>$corrected, 'physical'=>$maxStock]], 'reason'=>'Uji ketelitian desimal'];
+    $tooLarge = $boundary;
+    $tooLarge['items'][0]['physical']['kg'] = 1000000000000;
+    cmd('stock.reconcile', $tooLarge, $a, 422);
+    $atLimit = cmd('stock.reconcile', $boundary, $a);
+    check($atLimit['inventory']['cracked'] === $maxStock, 'warehouse reconciliation preserves all three decimals up to the SQL column limit');
+    $measured = ['eggs'=>5, 'kg'=>1091067335.08, 'trays'=>0];
+    $boundary['items'][0] = ['category'=>'cracked', 'expected'=>$maxStock, 'physical'=>$measured];
+    $reduced = cmd('stock.reconcile', $boundary, $a);
+    check($reduced['inventory']['cracked'] === $measured, 'large decimal balances round-trip through HTTP, PDO, and the stock ledger');
     cmd('user.update',['id'=>$sari['id'],'active'=>false],$a); req('/bootstrap',[],$e,'GET',401); req('/sync/prices',[],$e,'GET',401); mediaReq('/media/production/'.$pendingHarvest['id'],$e,401); check(true,'deactivation immediately revokes bootstrap, five-second sync, and media access');
     req('/auth/logout',[],$other); req('/bootstrap',[],$other,'GET',401); check(true,'logout invalidates token');
     req('/application/config/config.php',[],'','GET',404); check(true,'internal files not exposed by dev router');
