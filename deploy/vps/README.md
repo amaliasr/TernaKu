@@ -37,6 +37,19 @@ Gunakan Docker Engine Linux dengan BuildKit dan Docker Compose 2.20+ pada VPS. B
 
    Untuk Docker Manager yang menerima Compose tanpa checkout lokal, gunakan isi `compose.yaml` dan set `STAGING_BUILD_CONTEXT=https://github.com/amaliasr/TernaKu.git#<SHA-commit-40-karakter>` di environment project. Commit harus berisi folder `deploy/vps` dan dapat dibaca oleh builder. Dengan checkout lokal, konteks build otomatis memakai root repo.
 
+   Di VPS Hostinger, Docker Manager dapat membuat project, tetapi gagal menjalankan container dengan pesan `No such image: ternaku-staging-db:local`. Image TernaKu memang dibangun dari repo. Dari terminal VPS, jalankan perintah berikut untuk project ini saja:
+
+   ```bash
+   cd /docker/ternaku-staging
+   chmod 600 .env
+   export COMPOSE_PROJECT_NAME=ternaku-staging COMPOSE_PARALLEL_LIMIT=1
+   docker compose config --quiet
+   docker compose build db api web
+   docker compose up -d --no-build --pull never --wait db
+   ```
+
+   Jika menyalin data, selesaikan dan periksa pemulihan sebelum membuka web. Untuk menyalakan web dan API, jalankan `docker compose up -d --no-build --pull never --wait web`. Pastikan `docker compose ps` menampilkan tiga container sehat dan port web hanya terikat ke `127.0.0.1`. Saat memperbarui kode, pilih SHA baru di `STAGING_BUILD_CONTEXT` lalu ulangi build; pertahankan volume dan password MySQL yang sudah ada.
+
 3. Untuk uji privat, dari laptop buka SSH tunnel dengan `ssh -L 18182:127.0.0.1:18182 user@VPS`, lalu buka `http://localhost:18182`. Untuk uji PWA dari HP melalui jaringan, gunakan hostname staging dengan HTTPS dan arahkan reverse proxy yang sudah tersedia ke `127.0.0.1:18182`, dengan path dan query utuh. Simpan domain staging terpisah dari domain produksi. Pemasangan PWA dan draf mengikuti origin perangkat.
 
 4. Pada volume kosong, MySQL membuat tabel dan saldo pembuka nol dari `api/schema.sql`. Pendaftaran pemilik pertama memakai `STAGING_SETUP_TOKEN`. Ambil kodenya dari konfigurasi privat di VPS. Setelah akun admin siap, kosongkan nilai token dan jalankan `"${dc[@]}" up -d api web`. Buat dan setujui akun karyawan khusus pengujian, lalu siapkan harga, panen, dan pengambilan telur contoh sebelum mencoba penjualan.
