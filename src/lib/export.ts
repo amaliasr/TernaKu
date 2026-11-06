@@ -1,4 +1,5 @@
 import type { FeedPurchase, Sale, State } from "./types";
+import { historicalPaid, type FarmInvoice } from "./invoice-ledger";
 import {
   dateLabel,
   isFreeSaleItem,
@@ -219,6 +220,7 @@ async function receiptDocument(
   notes: string,
   method?: string,
   createdAt?: string,
+  ledger?: FarmInvoice,
 ) {
   const [{ jsPDF }, { default: autoTable }] = await Promise.all([
     import("jspdf"),
@@ -283,6 +285,8 @@ async function receiptDocument(
   doc.text(money(balance), 193, y + 20, { align: "right" });
   doc.setDrawColor(218, 228, 211);
   doc.line(115, y + 24, 193, y + 24);
+  if (balance > 0 && ledger)
+    doc.text("Jatuh tempo: " + (ledger.due_date ? dateLabel(ledger.due_date) : "Belum diatur"), 17, y + 20);
   if (method) {
     doc.setFontSize(9);
     doc.text(`Pembayaran: ${method}`, 17, y + 10);
@@ -300,6 +304,21 @@ async function receiptDocument(
     styles: { fontSize: 9, textColor: [135, 150, 125] },
     margin: { left: 15, right: 15, bottom: 15 },
   });
+  if (ledger?.payments?.length || (ledger && historicalPaid(ledger) > 0)) {
+    const prior = historicalPaid(ledger);
+    const payments = (ledger.payments || []).map(p => [
+      p.kind === "initial" ? "Pembayaran awal" : "Cicilan",
+      dateLabel(p.recorded_at, true),
+      p.method ? {cash:"Tunai",transfer:"Transfer",qris:"QRIS"}[p.method] : "-",
+      money(p.amount),
+    ]);
+    if (prior > 0) payments.unshift(["Pembayaran lama", "Tidak tercatat", "-", money(prior)]);
+    autoTable(doc, {
+      head: [["Riwayat pembayaran", "Waktu input (WIB)", "Metode", "Nominal"]],
+      body: payments, theme: "grid", styles: {fontSize: 8, cellPadding: 2},
+      headStyles: {fillColor: [40,107,72]}, margin: {left:17,right:17,bottom:15},
+    });
+  }
   doc.save(id + ".pdf");
 }
 export function receiptDateLines(date: string, createdAt?: string): string[] {
@@ -343,6 +362,7 @@ export async function printReceipt(sale: Sale, state: State) {
           credit: "Piutang",
         }[sale.payment_method],
     sale.created_at,
+    sale,
   );
 }
 export async function printPurchase(purchase: FeedPurchase, state: State) {
@@ -366,5 +386,6 @@ export async function printPurchase(purchase: FeedPurchase, state: State) {
     purchase.notes,
     undefined,
     purchase.created_at,
+    purchase,
   );
 }

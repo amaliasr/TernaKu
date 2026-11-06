@@ -264,7 +264,7 @@ export default function Dashboard({
           icon={<Egg size={22} />}
           color="green"
           detail={`${number(eggs, 0)} butir telur terkumpul`}
-          foot={`${dailyProduction.length} pencatatan panen`}
+          foot={`${new Set(dailyProduction.map((row) => row.harvest_id || row.id)).size} pencatatan panen`}
           onClick={() => go("production")}
         />
         <Metric

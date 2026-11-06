@@ -13,7 +13,6 @@ import {
 import {
   accountAccessError,
   emptyState,
-  executeCommand,
   registerDemoEmployee,
   visibleState,
 } from "./domain";
@@ -22,11 +21,13 @@ import { refreshInterval, SessionSync } from "./session-sync";
 import { ApiError } from "./request-errors";
 import { readApiResponse } from "./api-response";
 import { requestTimeout } from "./request-timeout";
-import { isPriceSyncResponse, mergePriceSync, refreshKind } from "./price-sync";
+import { isPriceSyncResponse, mergePriceSync, refreshKind, validPriceCursor } from "./price-sync";
+import { isReceiptDelta, mergeReceiptDelta } from "./receipt-delta";
 import { MediaCache, mediaPath } from "./media-cache";
 import { readPendingRequestIds } from "./request-retries";
 import { detachBrowserPush } from "./push-client";
 import { demoPasswordMatches, parseDemoCredentials, persistDemoData, renameDemoCredential, type DemoCredentials } from "./demo-credentials";
+import { applyDemoWrite, withDemoWriteLock } from "./demo-writes";
 import {
   AUTH_SESSION_KEY,
   clearSession,
@@ -207,12 +208,15 @@ export function FarmProvider({ children }: { children: ReactNode }) {
   const tokenRef = useRef<string | null>(null);
   const sessionUserId = useRef<string | null>(null);
   const authEpoch = useRef(0);
+  // Preserve command order within one browser session: a slower full response
+  // must never replace a newly merged invoice or its confirmed carried balance.
+  const liveCommandTail = useRef(Promise.resolve());
   const lastFullRefresh = useRef(0);
   const mediaCache = useRef(new MediaCache());
-  const commit = useCallback((next: State) => {
+  const commit = useCallback((next: State, checkedPrices = true) => {
     stateRef.current = next;
     setAllState(next);
-    setPriceSync((previous) => ({
+    if (checkedPrices) setPriceSync((previous) => ({
       ...previous,
       lastSuccessAt: Date.now(),
       error: null,
@@ -233,6 +237,7 @@ export function FarmProvider({ children }: { children: ReactNode }) {
   const setSessionUser = useCallback((next: User | null) => {
     if (userRef.current?.id !== next?.id || userRef.current?.role !== next?.role) {
       sync.current.invalidate();
+      liveCommandTail.current = Promise.resolve();
       mediaCache.current.clear();
       lastFullRefresh.current = 0;
     }
@@ -277,18 +282,24 @@ export function FarmProvider({ children }: { children: ReactNode }) {
             if (!isState(parsed)) throw new Error("Data demo tidak valid.");
             next = parsed;
           } else if (kind === "prices") {
-            const snapshot = await request<PriceSyncResponse>("/sync/prices", refreshToken);
-            if (!isPriceSyncResponse(snapshot)) throw new Error("Data harga belum dapat dibaca. Coba muat kembali.");
-            if (!canApply() || tokenRef.current !== refreshToken || authEpoch.current !== refreshEpoch) return;
-            if (snapshot.user.id !== sessionUserId.current) throw new Error("Data akun tidak sesuai. Silakan muat ulang aplikasi.");
-            const accessError = accountAccessError(snapshot.user);
-            if (accessError) throw new ApiError(accessError, 401);
-            if (snapshot.user.role !== userRef.current?.role) {
-              next = await request<State>("/bootstrap?compact=1", refreshToken);
-              full = true;
-              if (!isState(next)) throw new Error("Struktur data API tidak sesuai.");
-            } else {
-              next = mergePriceSync(stateRef.current, snapshot, sessionUserId.current!);
+            next = stateRef.current;
+            for (let page=0; ; page++) {
+              const cursor = next.price_cursor;
+              const path = validPriceCursor(cursor) ? `/sync/prices?since=${cursor}` : "/sync/prices";
+              const snapshot = await request<PriceSyncResponse>(path, refreshToken);
+              if (!isPriceSyncResponse(snapshot)) throw new Error("Data harga belum dapat dibaca. Coba muat kembali.");
+              if (!canApply() || tokenRef.current !== refreshToken || authEpoch.current !== refreshEpoch) return;
+              if (snapshot.user.id !== sessionUserId.current) throw new Error("Data akun tidak sesuai. Silakan muat ulang aplikasi.");
+              const accessError = accountAccessError(snapshot.user);
+              if (accessError) throw new ApiError(accessError, 401);
+              if (snapshot.user.role !== userRef.current?.role || (snapshot.more && page >= 7)) {
+                next = await request<State>("/bootstrap?compact=1", refreshToken);
+                full = true;
+                if (!isState(next)) throw new Error("Struktur data API tidak sesuai.");
+                break;
+              }
+              next = mergePriceSync(next, snapshot, sessionUserId.current!);
+              if (!snapshot.more) break;
             }
           } else {
             next = await request<State>("/bootstrap?compact=1", refreshToken);
@@ -348,20 +359,21 @@ export function FarmProvider({ children }: { children: ReactNode }) {
     async function init() {
       try {
         if (mode === "demo") {
-          let next: State | undefined;
-          const stored = localStorage.getItem(STORAGE_KEY);
-          if (stored) {
-            try {
-              const parsed: unknown = JSON.parse(stored);
-              if (isState(parsed)) next = parsed;
-            } catch {
-              /* Rebuild damaged demo data only; real data never falls back. */
+          const next = await withDemoWriteLock(() => {
+            const stored = localStorage.getItem(STORAGE_KEY);
+            if (stored) {
+              try {
+                const parsed: unknown = JSON.parse(stored);
+                if (isState(parsed)) return parsed;
+              } catch {
+                /* Rebuild damaged demo data only; real data never falls back. */
+              }
             }
-          }
-          if (!next) {
-            next = createDemoState();
-            localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
-          }
+            const seeded = createDemoState();
+            localStorage.setItem(STORAGE_KEY, JSON.stringify(seeded));
+            return seeded;
+          });
+          if (!mounted || initEpoch !== authEpoch.current) return;
           const storedUser =
             localStorage.getItem(DEMO_USER_KEY) ??
             sessionStorage.getItem(DEMO_USER_KEY);
@@ -493,16 +505,17 @@ export function FarmProvider({ children }: { children: ReactNode }) {
       const email = input.email.trim().toLowerCase();
       const registrationEpoch = authEpoch.current;
       const hashedPassword = await passwordHash(email, input.password);
-      if (authEpoch.current !== registrationEpoch) throw new Error("Sesi berubah. Silakan buka kembali pendaftaran.");
-      // Read after hashing so simultaneous submissions in this tab see the latest registered email.
-      const stored = localStorage.getItem(STORAGE_KEY);
-      const source = stored ? (JSON.parse(stored) as State) : stateRef.current;
-      const registration = registerDemoEmployee(source, input);
-      const credentials = parseDemoCredentials(localStorage.getItem(DEMO_AUTH_KEY));
-      credentials[email] = hashedPassword;
-      persistDemoData(localStorage, STORAGE_KEY, registration.state, DEMO_AUTH_KEY, credentials);
-      commit(registration.state);
-      return registration.result;
+      return withDemoWriteLock(() => {
+        if (authEpoch.current !== registrationEpoch) throw new Error("Sesi berubah. Silakan buka kembali pendaftaran.");
+        const stored = localStorage.getItem(STORAGE_KEY);
+        const source = stored ? (JSON.parse(stored) as State) : stateRef.current;
+        const registration = registerDemoEmployee(source, input);
+        const credentials = parseDemoCredentials(localStorage.getItem(DEMO_AUTH_KEY));
+        credentials[email] = hashedPassword;
+        persistDemoData(localStorage, STORAGE_KEY, registration.state, DEMO_AUTH_KEY, credentials);
+        commit(registration.state);
+        return registration.result;
+      });
     },
     [commit],
   );
@@ -635,45 +648,51 @@ export function FarmProvider({ children }: { children: ReactNode }) {
     async (action: string, payload: CommandPayload, requestId?: string): Promise<State> => {
       const currentUser = userRef.current;
       if (!currentUser) throw new Error("Silakan masuk terlebih dahulu.");
+      if (requestId !== undefined && !/^[A-Za-z0-9_-]{8,80}$/.test(requestId))
+        throw new ApiError("ID percobaan penyimpanan tidak valid.", 400);
       const sessionToken = tokenRef.current;
       const commandEpoch = authEpoch.current;
-      const sessionUnchanged = () => tokenRef.current === sessionToken && userRef.current?.id === currentUser.id && authEpoch.current === commandEpoch;
+      const sessionUnchanged = () => tokenRef.current === sessionToken && userRef.current?.id === currentUser.id && userRef.current?.role === currentUser.role && authEpoch.current === commandEpoch;
+      let release: (() => void) | undefined;
+      if (mode === "live") {
+        const previous = liveCommandTail.current;
+        liveCommandTail.current = new Promise<void>(resolve => { release = resolve; });
+        await previous;
+        if (!sessionUnchanged()) { release?.(); throw new Error("Sesi berubah. Silakan masuk kembali."); }
+      }
       const finishMutation = sync.current.beginMutation();
       try {
         let next: State;
+        let receiptOnly = false;
         let commandResult: State["command_result"];
         if (mode === "demo") {
-          // Hash before reading state so another completed command cannot be overwritten while hashing.
+          // Hash before taking the cross-tab lock to keep other saves responsive.
           const createdPassword = action === "user.create" ? await passwordHash(String(payload.email).trim().toLowerCase(), String(payload.password)) : undefined;
-          if (!sessionUnchanged()) throw new Error("Sesi berubah. Silakan masuk kembali.");
-          // Always calculate on complete demo data, then expose only the signed-in user's permitted rows.
-          const stored = localStorage.getItem(STORAGE_KEY);
-          const source = stored
-            ? (JSON.parse(stored) as State)
-            : stateRef.current;
-          next = executeCommand(source, currentUser.id, action, payload);
-          if (action === "sale.create") {
-            const added = next.sales.find((sale) => !source.sales.some((previous) => previous.id === sale.id));
-            if (added) commandResult = { action, record_id: added.id, request_id: requestId ?? "" };
-          }
-          let credentials: DemoCredentials | undefined;
-          if (createdPassword !== undefined) {
-            credentials = parseDemoCredentials(localStorage.getItem(DEMO_AUTH_KEY));
-            const email = String(payload.email).trim().toLowerCase();
-            credentials[email] = createdPassword;
-          } else if (action === "user.update" && Object.hasOwn(payload, "email")) {
-            const previous = source.users.find((member) => member.id === payload.id)!;
-            const updated = next.users.find((member) => member.id === previous.id)!;
-            credentials = renameDemoCredential(parseDemoCredentials(localStorage.getItem(DEMO_AUTH_KEY)), previous.email, updated.email);
-          }
-          if (!sessionUnchanged()) throw new Error("Sesi berubah. Silakan masuk kembali.");
-          persistDemoData(localStorage, STORAGE_KEY, next, DEMO_AUTH_KEY, credentials);
+          const attempt = requestId && (action === "sale.create" || action === "production.create")
+            ? { request_id: requestId, fingerprint: await digest(JSON.stringify({ action, payload })) } : undefined;
+          const saved = await withDemoWriteLock(() => {
+            if (!sessionUnchanged() || (localStorage.getItem(DEMO_USER_KEY) ?? "admin") !== currentUser.id)
+              throw new ApiError("Sesi berubah. Silakan masuk kembali.", 403);
+            const stored = localStorage.getItem(STORAGE_KEY);
+            const source = stored ? JSON.parse(stored) as State : stateRef.current;
+            const applied = applyDemoWrite(source, currentUser.id, action, payload, attempt);
+            if (applied.state === source) return applied;
+            let credentials: DemoCredentials | undefined;
+            if (createdPassword !== undefined) {
+              credentials = parseDemoCredentials(localStorage.getItem(DEMO_AUTH_KEY));
+              const email = String(payload.email).trim().toLowerCase();
+              credentials[email] = createdPassword;
+            } else if (action === "user.update" && Object.hasOwn(payload, "email")) {
+              const previous = source.users.find((member) => member.id === payload.id)!;
+              const updated = applied.state.users.find((member) => member.id === previous.id)!;
+              credentials = renameDemoCredential(parseDemoCredentials(localStorage.getItem(DEMO_AUTH_KEY)), previous.email, updated.email);
+            }
+            persistDemoData(localStorage, STORAGE_KEY, applied.state, DEMO_AUTH_KEY, credentials);
+            return applied;
+          });
+          next = saved.state;
+          commandResult = saved.result;
         } else {
-          if (
-            requestId !== undefined &&
-            !/^[A-Za-z0-9_-]{8,80}$/.test(requestId)
-          )
-            throw new ApiError("ID percobaan penyimpanan tidak valid.", 400);
           // A persisted sale owns its UUID alongside its exact payload, so a
           // reload between confirmation and local cleanup cannot create a new sale.
           // Other commands keep the existing fingerprint-based retry map.
@@ -692,14 +711,19 @@ export function FarmProvider({ children }: { children: ReactNode }) {
           }
           if (!sessionUnchanged())
             throw new Error("Sesi berubah. Silakan masuk kembali.");
-          next = await request<State>("/commands", sessionToken, {
+          const response = await request<unknown>("/commands", sessionToken, {
             action,
             payload,
             request_id,
             response_mode: "compact",
+            ...(action === "sale.create" ? { receipt_for_role: currentUser.role } : {}),
           });
-          if (!isState(next))
-            throw new Error("Struktur data API tidak sesuai.");
+          if (!sessionUnchanged()) throw new Error("Sesi berubah. Buka kembali riwayat setelah masuk.");
+          if (action === "sale.create" && isReceiptDelta(response, currentUser.id, request_id)) {
+            next = mergeReceiptDelta(stateRef.current, response);
+            receiptOnly = true;
+          } else if (isState(response)) next = response; // Compatible with servers before receipt deltas.
+          else throw new Error("Struktur data API tidak sesuai.");
           if (fingerprint) {
             try {
               const remaining = readPendingRequestIds(
@@ -720,8 +744,8 @@ export function FarmProvider({ children }: { children: ReactNode }) {
         // command result in general state where a later poll could make it stale.
         const state = { ...next };
         delete state.command_result;
-        commit(state);
-        lastFullRefresh.current = Date.now();
+        commit(state, !receiptOnly);
+        if (!receiptOnly) lastFullRefresh.current = Date.now();
         setError(null);
         const confirmed = mode === "demo" ? visibleState(state, currentUser) : state;
         return commandResult ? { ...confirmed, command_result: commandResult } : confirmed;
@@ -735,6 +759,7 @@ export function FarmProvider({ children }: { children: ReactNode }) {
         throw cause;
       } finally {
         finishMutation();
+        release?.();
       }
     },
     [commit, invalidateSession],

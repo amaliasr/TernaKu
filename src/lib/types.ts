@@ -25,6 +25,18 @@ export interface RegistrationResult {
   message: string;
 }
 export type PaymentMethod = "cash" | "transfer" | "qris" | "credit";
+export interface InvoicePayment {
+  kind: "initial" | "installment";
+  amount: number;
+  recorded_at: string;
+  user_id: string;
+  method?: Exclude<PaymentMethod, "credit">;
+}
+export interface InvoiceLedger {
+  /** Old invoices can omit both fields. Never guess their due date or payment times. */
+  due_date?: string | null;
+  payments?: InvoicePayment[];
+}
 export interface User {
   id: string;
   name: string;
@@ -46,6 +58,7 @@ export interface Barn {
 }
 export interface Production {
   id: string;
+  harvest_id?: string;
   date: string;
   user_id: string;
   barn_id: string;
@@ -91,7 +104,7 @@ export interface SaleItem {
   is_free?: boolean;
   total: number;
 }
-export interface Sale {
+export interface Sale extends InvoiceLedger {
   id: string;
   number: string;
   date: string;
@@ -130,7 +143,7 @@ export interface FeedPurchaseItem {
   unit_price: number;
   total: number;
 }
-export interface FeedPurchase {
+export interface FeedPurchase extends InvoiceLedger {
   id: string;
   number: string;
   date: string;
@@ -169,6 +182,8 @@ export interface Activity {
   created_at: string;
   before?: unknown;
   after?: unknown;
+  /** Demo-only replay metadata, saved atomically with the new sale or harvest. */
+  demo_write?: { request_id: string; fingerprint: string; record_id: string };
 }
 export type RecordEntity = "production" | "pickup" | "sale";
 export interface StockMovement {
@@ -177,7 +192,10 @@ export interface StockMovement {
   created_at: string;
   user_id: string;
   category: Category;
-  kind: "production" | "pickup" | "return" | "correction";
+  kind: "production" | "pickup" | "return" | "correction" | "reconcile";
+  /** One stock count has one reference ID and two category rows. */
+  expected?: Pick<Quantity, "eggs" | "kg">;
+  physical?: Pick<Quantity, "eggs" | "kg">;
   reference_id: string;
   eggs: number;
   kg: number;
@@ -197,6 +215,10 @@ export interface Correction {
   reviewed_by?: string;
 }
 export interface State {
+  /** Present only for an API snapshot/delta; never used to timestamp a transaction. */
+  price_cursor?: string;
+  /** Server-confirmed carried stock for pickups involved in the last live receipts. */
+  pickup_balances?: Record<string, PickupBalance>;
   settings?: FarmSettings;
   command_result?: { action: string; record_id: string; request_id: string };
   users: User[];
@@ -216,6 +238,11 @@ export interface State {
   feed_inventory?: Record<string, number>;
 }
 export interface PriceSyncResponse {
+  mode?: "delta";
+  since?: string;
+  cursor?: string;
+  more?: boolean;
+  read_notices?: string[];
   prices: Price[];
   notifications: Notification[];
   user: Omit<User, "photo" | "photo_ref">;

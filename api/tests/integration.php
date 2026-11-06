@@ -205,8 +205,14 @@ try {
     cmd('sale.create',array_replace($salePayload,['expected_price_id'=>'stale-price']),$e,409); check(true,'stale price displayed to client requires refresh before sale');
     cmd('sale.create',array_replace($salePayload,['items'=>[['pickup_id'=>$pickup,'category'=>'good','eggs'=>600,'kg'=>18,'trays'=>1]]]),$e,422); check(true,'sale cannot strand a weight-only pickup remainder');
     $s=cmd('sale.create',$salePayload,$e); $sale=$s['sales'][0]; check($sale['total']===504000 && $sale['balance']===404000,'server computes sale total and debt');
-    // Represent a historical transaction saved before customer/photo became mandatory.
-    $legacySale=array_replace($sale,['customer'=>'','photo'=>'']); $db->prepare("UPDATE records SET data=? WHERE id=? AND kind='sale'")->execute([json_encode($legacySale),$sale['id']]);
+    check($sale['payments'][0]['kind']==='initial' && $sale['payments'][0]['amount']===100000 && !isset($sale['payments'][0]['method']), 'initial payment records amount and time without inventing a method for credit sales');
+    cmd('sale.due',['id'=>$sale['id'],'due_date'=>date('Y-m-d',strtotime('+3 days'))],$other,403);
+    cmd('sale.due',['id'=>$sale['id'],'due_date'=>'2037-02-30'],$e,422);
+    cmd('sale.due',['id'=>$sale['id'],'due_date'=>'2000-01-01'],$e,422);
+    $dueSale=cmd('sale.due',['id'=>$sale['id'],'due_date'=>date('Y-m-d',strtotime('+3 days'))],$e);
+    check(first($dueSale,'sales',fn($r)=>$r['id']===$sale['id'])['due_date']===date('Y-m-d',strtotime('+3 days')),'owner can set a real future due date; another employee cannot update it');
+    // Represent a historical transaction saved before customer/photo/payment breakdowns were available.
+    $legacySale=array_replace($sale,['customer'=>'','photo'=>'']); unset($legacySale['payments'],$legacySale['due_date']); $db->prepare("UPDATE records SET data=? WHERE id=? AND kind='sale'")->execute([json_encode($legacySale),$sale['id']]);
     $legacyRead=first(req('/bootstrap',[],$e,'GET'),'sales',fn($r)=>$r['id']===$sale['id']);
     check($legacyRead['customer']==='' && $legacyRead['photo']==='' && $legacyRead['total']===504000,'historical sales without customer/photo remain readable');
     $snapshot=businessSnapshot();
@@ -228,6 +234,7 @@ try {
     $returns=array_values(array_filter($s['stock_movements'],fn($m)=>$m['kind']==='return')); check(count($returns)===1 && $returns[0]['reference_id']===$pickup && $returns[0]['kg']==12 && substr($returns[0]['date'],0,10)===date('Y-m-d'),'returns have individually dated stock ledger entries');
     cmd('pickup.return',['id'=>$pickup,'eggs'=>1,'kg'=>0.1,'trays'=>0],$e,422); check(true,'repeat/excess return rejected');
     $s=cmd('sale.payment',['id'=>$sale['id'],'amount'=>404000],$e); $paid=first($s,'sales',fn($r)=>$r['id']===$sale['id']); check($paid['payment_status']==='paid' && $paid['balance']===0 && $paid['photo']==='' && $paid['customer']==='','debt repayment settles legacy transaction without requiring new documentation');
+    check(count($paid['payments'])===1 && $paid['payments'][0]['amount']===404000 && $paid['paid']-array_sum(array_column($paid['payments'],'amount'))===100000, 'legacy paid total is retained without fictitious historical payment entries');
     cmd('sale.payment',['id'=>$sale['id'],'amount'=>1],$e,422); check(true,'overpayment rejected');
     cmd('correction.apply',['entity'=>'production','id'=>$prod,'reason'=>'','changes'=>['kg'=>61]],$e,422); check(true,'mandatory correction reason');
     $s=cmd('correction.apply',['entity'=>'production','id'=>$prod,'reason'=>'Timbangan dikalibrasi','changes'=>['kg'=>61]],$e); check($s['inventory']['good']['kg']==37,'unlocked own production correction adjusts stock');
@@ -260,6 +267,18 @@ try {
     $s=cmd('feed.purchase',['date'=>date('Y-m-d'),'supplier'=>'Toko Pakan','items'=>[['feed_id'=>$feed,'quantity'=>100,'unit_price'=>9000]],'paid'=>900000,'notes'=>''],$a); check($s['feed_purchases'][0]['total']===900000 && $s['feed_inventory'][$feed]==100,'feed purchase total, receipt number and stock');
     $s=cmd('feed.use',['date'=>date('Y-m-d'),'feed_id'=>$feed,'barn_id'=>$barn,'quantity'=>25,'notes'=>'Pagi'],$e); check($s['feed_inventory'][$feed]==75,'feed use reduces shared stock');
     cmd('feed.use',['date'=>date('Y-m-d'),'feed_id'=>$feed,'barn_id'=>$barn,'quantity'=>80,'notes'=>''],$e,422); check(true,'feed overuse rejected');
+    $feedInvoice=['date'=>date('Y-m-d'),'supplier'=>'Toko Cicilan','items'=>[['feed_id'=>$feed,'quantity'=>1,'unit_price'=>20000]],'paid'=>2000,'due_date'=>date('Y-m-d',strtotime('+7 days'))];
+    $prior=businessSnapshot(); cmd('feed.purchase',array_replace($feedInvoice,['due_date'=>'2037-02-30']),$a,422); check(businessSnapshot()===$prior,'invalid purchase due date rolls back both purchase and stock');
+    $ledgerState=cmd('feed.purchase',$feedInvoice,$a); $inv=first($ledgerState,'feed_purchases',fn($r)=>$r['supplier']==='Toko Cicilan');
+    $qtyBefore=$ledgerState['feed_inventory'][$feed]; $payment=['id'=>$inv['id'],'amount'=>3000,'expected_paid'=>2000,'method'=>'transfer'];
+    cmd('feed.payment',$payment,$e,403); cmd('feed.due',['id'=>$inv['id'],'due_date'=>date('Y-m-d')],$e,403); cmd('feed.payment',array_replace($payment,['amount'=>18001]),$a,422);
+    $idempotent=['action'=>'feed.payment','payload'=>$payment,'request_id'=>'installment-'.bin2hex(random_bytes(10)),'response_mode'=>'compact'];
+    req('/commands',$idempotent,$a); $again=req('/commands',$idempotent,$a); $inv=first($again,'feed_purchases',fn($r)=>$r['id']===$payment['id']);
+    check($inv['paid']===5000 && $inv['balance']===15000 && count($inv['payments'])===2 && $inv['payments'][1]['method']==='transfer' && isset($inv['payments'][1]['recorded_at']) && $again['feed_inventory'][$feed]===$qtyBefore,'replaying supplier installment records it once with history, no stock change');
+    cmd('feed.payment',$payment,$a,409); cmd('feed.payment',array_diff_key($payment,['expected_paid'=>1]),$a,422); check(true,'stale or missing supplier balance guard rejects a duplicate payment');
+    $settled=cmd('feed.payment',array_replace($payment,['amount'=>15000,'expected_paid'=>5000]),$a);
+    $inv=first($settled,'feed_purchases',fn($r)=>$r['id']===$payment['id']);
+    check($inv['balance']===0 && array_sum(array_column($inv['payments'],'amount'))===20000 && $settled['feed_inventory'][$feed]===$qtyBefore,'supplier settlement closes exact balance without purchasing goods twice');
     $s=req('/bootstrap',[],$other,'GET'); check(count($s['productions'])===0 && count($s['sales'])===0 && count($s['activity'])===0 && count($s['users'])===1 && $s['inventory']['good']['kg']==37,'employee row-level isolation and shared inventory');
     check(count($s['notifications'])>=3,'price notifications delivered per employee');
     $s=cmd('notification.read',['id'=>'all'],$other); check(count(array_filter($s['notifications'],fn($n)=>!$n['read']))===0,'mark own notifications read');
@@ -358,6 +377,27 @@ try {
     $sync=req('/sync/prices',[],$e,'GET'); $syncKeys=array_keys($sync); sort($syncKeys);
     check($syncKeys===['notifications','prices','settings','user'] && !array_key_exists('photo',$sync['user']) && !array_key_exists('photo_ref',$sync['user']) && !str_contains(json_encode($sync),'data:image/') && strlen(json_encode($sync))<50000,'five-second sync only includes prices, own notifications, safe user, settings');
     echo 'MEASURE price sync '.strlen(json_encode($sync))." bytes\n";
+    $cursor=$compactTrue['price_cursor'];
+    $nothing=req('/sync/prices?since='.$cursor,[],$e,'GET');
+    check($nothing['mode']==='delta' && $nothing['since']===$cursor && $nothing['cursor']===$cursor && !$nothing['more'] && $nothing['prices']===[] && $nothing['notifications']===[],'unchanged five-second poll sends no price or notification history');
+    req('/sync/prices?since=oops',[],$e,'GET',400); req('/sync/prices?since=0',[],'','GET',401);
+    $scheduled=['good_price'=>37000,'cracked_price'=>19000,'effective_at'=>date('c',strtotime('+15 days'))];
+    cmd('price.create',$scheduled,$a); cmd('price.create',$scheduled,$a);
+    $changed=req('/sync/prices?since='.$cursor,[],$e,'GET');
+    check(count($changed['prices'])===2 && $changed['prices'][0]['id']!==$changed['prices'][1]['id'] && $changed['prices'][0]['effective_at']===$scheduled['effective_at'] && count($changed['notifications'])===2 && count(array_unique(array_column($changed['notifications'],'user_id')))===1 && $changed['notifications'][0]['user_id']===$sari['id'],'both same-value scheduled updates and only own alerts arrive incrementally');
+    cmd('notification.read',['id'=>$changed['notifications'][0]['id']],$e);
+    $reads=req('/sync/prices?since='.$changed['cursor'],[],$e,'GET');
+    check($reads['read_notices']===[$changed['notifications'][0]['id']] && !$reads['prices'] && !$reads['notifications'],'another device can apply a read marker without re-fetching notification history');
+    cmd('notification.read',['id'=>'all'],$other);
+    check(req('/sync/prices?since='.$reads['cursor'],[],$e,'GET')['read_notices']===[],'other employees cannot leak notification-read markers into the stream');
+    cmd('notification.read',['id'=>'all'],$e);
+    $allRead=req('/sync/prices?since='.$reads['cursor'],[],$e,'GET');
+    check($allRead['read_notices']===['all'] && !$allRead['prices'],'mark-all propagates as a single change');
+    $fixture=$db->prepare("INSERT INTO records(id,kind,user_id,occurred_at,data) VALUES(?,'notification',?,NOW(),?)");
+    for($n=0;$n<101;$n++) { $id='page_fixture_'.$n; $fixture->execute([$id,$sari['id'],json_encode(['id'=>$id,'user_id'=>$sari['id'],'message'=>'halaman','title'=>'Harga','created_at'=>date('c'),'read'=>false])]); }
+    $page1=req('/sync/prices?since='.$allRead['cursor'],[],$e,'GET');
+    $page2=req('/sync/prices?since='.$page1['cursor'],[],$e,'GET');
+    check($page1['more'] && count($page1['notifications'])===100 && !$page2['more'] && count($page2['notifications'])===1 && $page2['notifications'][0]['id']==='page_fixture_100','change pages are bounded and resume after the last delivered event without gaps');
     $budiId=first($full,'users',fn($u)=>$u['email']==='budi@test.local')['id'];
     $broken=$db->prepare('INSERT INTO records(id,kind,user_id,occurred_at,data) VALUES(?,?,?,NOW(),?)');
     $broken->execute(['fixture_hidden_production','production',$budiId,'invalid JSON']); $broken->execute(['fixture_hidden_purchase','feed_purchase','admin_test','invalid JSON']); $broken->execute(['fixture_hidden_audit','activity','admin_test','invalid JSON']);
@@ -369,10 +409,50 @@ try {
     $confirmed=req('/commands',$receiptRequest,$e); $confirmation=$confirmed['command_result'];
     $confirmedSale=first($confirmed,'sales',fn($sale)=>$sale['id']===$confirmation['record_id']);
     check($confirmation['action']==='sale.create' && $confirmation['request_id']===$receiptRequest['request_id'] && $confirmedSale['customer']==='Exact receipt fixture' && $confirmedSale['total']===9600 && $confirmedSale['photo']==='' && $confirmedSale['photo_ref']['kind']==='sale','first sale response contains exact committed sale ID and compact media ref');
-    $another=cmd('sale.create',array_replace($receiptPayload,['customer'=>'Later sale fixture']),$e);
+    $fastRequest=array_replace($receiptRequest,['payload'=>array_replace($receiptPayload,['customer'=>'Later sale fixture']),'request_id'=>'receipt-fast-'.bin2hex(random_bytes(8)),'receipt_for_role'=>'employee']);
+    $broken->execute(['fixture_unrelated_history','production',$sari['id'],'invalid JSON']);
+    $started=microtime(true); $fast=req('/commands',$fastRequest,$e); $receiptMs=round((microtime(true)-$started)*1000);
+    $replayFast=req('/commands',$fastRequest,$e); $pickupId=$receiptPayload['items'][0]['pickup_id'];
+    check($fast['mode']==='sale_receipt' && !array_intersect(['productions','sales','activity'],array_keys($fast)) && $fast['sale']['id']===$fast['command_result']['record_id'] && $fast['command_result']['request_id']===$fastRequest['request_id'] && $fast['sale']['customer']==='Later sale fixture' && $fast['sale']['photo_ref']['kind']==='sale' && !str_contains(json_encode($fast),'data:image/'),'first save returns just the committed receipt and compact media without reading unrelated production history');
+    check($replayFast===$fast && count($fast['pickups'])===1 && $fast['pickups'][0]['id']===$pickupId && $fast['pickups'][0]['user_id']===$sari['id'] && isset($fast['pickup_balances'][$pickupId]['kg']),'request replay returns the original invoice and carried balances without deducting again');
+    $db->exec("DELETE FROM records WHERE id='fixture_unrelated_history'");
+    $another=req('/bootstrap?compact=1',[],$e,'GET');
+    $pickup=$fast['pickups'][0]; $expectedEggs=$pickup['eggs']-$pickup['returned_eggs']; $expectedKg=$pickup['kg']-$pickup['returned_kg'];
+    foreach($another['sales'] as $sold) foreach($sold['items'] as $item) if($item['pickup_id']===$pickupId){ $expectedEggs-=$item['eggs']; $expectedKg-=$item['kg']; }
+    check($fast['pickup_balances'][$pickupId]['eggs']===$expectedEggs && abs($fast['pickup_balances'][$pickupId]['kg']-$expectedKg)<0.00001 && strlen(json_encode($fast))<strlen(json_encode($another)),'bounded receipt includes authoritative employee balance and is smaller than full history');
+    echo 'MEASURE first local receipt '.$receiptMs.' ms; '.strlen(json_encode($fast)).' bytes vs compact full '.strlen(json_encode($another))."; unchanged price poll ".strlen(json_encode($nothing))." bytes\n";
+    $priorFast=req('/commands',array_replace($receiptRequest,['receipt_for_role'=>'employee']),$e);
+    check($priorFast['command_result']===$confirmation && $priorFast['pickup_balances']===$fast['pickup_balances'],'replay of older sale after another sale returns the original receipt and current carried stock');
+    $roleFallback=req('/commands',array_replace($receiptRequest,['receipt_for_role'=>'admin']),$e);
+    check(isset($roleFallback['sales']) && $roleFallback['users'][0]['id']===$sari['id'] && count($roleFallback['users'])===1,'role change negotiates a full currently authorized snapshot rather than merging stale role data');
     $replayed=req('/commands',array_replace($receiptRequest,['response_mode'=>'full']),$e);
     check($replayed['command_result']===$confirmation && count($replayed['sales'])===count($another['sales']) && first($replayed,'sales',fn($sale)=>$sale['id']===$confirmation['record_id'])['photo']===$profilePhoto,'idempotent retry returns original sale confirmation even after another sale and response mode change');
     mediaReq('/media/sale/'.$confirmation['record_id'],$e); mediaReq('/media/sale/'.$confirmation['record_id'],$other,403); check(true,'sale receipt photos use the same owner-scoped media endpoint');
+    // Both harvest lines are one idempotent transaction; legacy flat harvests remain supported.
+    $batch=['date'=>date('Y-m-d'),'notes'=>'Mixed harvest fixture','photo'=>$profilePhoto,'items'=>[['category'=>'good','eggs'=>1240,'kg'=>70,'trays'=>8],['category'=>'cracked','eggs'=>35,'kg'=>2.1,'trays'=>0]]];
+    $before=req('/bootstrap?compact=1',[],$a,'GET');
+    $bad=$batch; $bad['items'][1]['kg']=0; cmd('production.create',$bad,$e,422);
+    $bad=$batch; $bad['items'][1]['category']='good'; cmd('production.create',$bad,$e,422);
+    $batchReq=['action'=>'production.create','payload'=>$batch,'request_id'=>'batch-'.bin2hex(random_bytes(8)),'response_mode'=>'compact'];
+    $s=req('/commands',$batchReq,$e); $s=req('/commands',$batchReq,$e);
+    $lines=array_values(array_filter($s['productions'],fn($p)=>$p['notes']==='Mixed harvest fixture'));
+    check(count($lines)===2 && $lines[0]['harvest_id']===$lines[1]['harvest_id'] && $lines[0]['photo_ref']===$lines[1]['photo_ref'],'mixed harvest commits two linked categories once, with one shared photo');
+    check($s['inventory']['good']['eggs']===$before['inventory']['good']['eggs']+1240 && $s['inventory']['cracked']['kg']==round($before['inventory']['cracked']['kg']+2.1,3),'invalid second line/duplicate category and repeated batch do not leave extra stock');
+    $physical=[]; foreach(['good','cracked'] as $cat){
+        $expected=['eggs'=>$s['inventory'][$cat]['eggs'],'kg'=>$s['inventory'][$cat]['kg']];
+        $counted=$expected; if($cat==='good'){ $counted['eggs']-=2; $counted['kg']=round($counted['kg']-0.12,3); }
+        $physical[]=['category'=>$cat,'expected'=>$expected,'physical'=>$counted];
+    }
+    $op=['items'=>$physical,'reason'=>'Pecah saat dipindah ke rak'];
+    cmd('stock.reconcile',$op,$e,403);
+    $bad=$op; $bad['items'][1]['physical']['kg']=0; cmd('stock.reconcile',$bad,$a,422);
+    $bad=$op; $bad['items'][1]['expected']['kg']+=1; cmd('stock.reconcile',$bad,$a,409);
+    $rc=['action'=>'stock.reconcile','payload'=>$op,'request_id'=>'count-'.bin2hex(random_bytes(8)),'response_mode'=>'compact'];
+    req('/commands',$rc,$a); $counted=req('/commands',$rc,$a);
+    $ledger=array_values(array_filter($counted['stock_movements'],fn($m)=>$m['kind']==='reconcile' && $m['notes']===$op['reason']));
+    check(count($ledger)===2 && $ledger[0]['reference_id']===$ledger[1]['reference_id'] && $counted['inventory']['good']['eggs']===$physical[0]['physical']['eggs'] && $counted['inventory']['good']['kg']==$physical[0]['physical']['kg'],'opname is all-or-nothing, admin-only, and replay does not adjust stock twice');
+    check($ledger[0]['physical']['eggs']-$ledger[0]['expected']['eggs']===$ledger[0]['eggs'] && $ledger[1]['physical']['eggs']-$ledger[1]['expected']['eggs']===$ledger[1]['eggs'],'warehouse count preserves physical and expected snapshots in each movement');
+    cmd('stock.reconcile',$op,$a,409); check(true,'count rejects an outdated expected warehouse balance');
     cmd('user.update',['id'=>$sari['id'],'active'=>false],$a); req('/bootstrap',[],$e,'GET',401); req('/sync/prices',[],$e,'GET',401); mediaReq('/media/production/'.$pendingHarvest['id'],$e,401); check(true,'deactivation immediately revokes bootstrap, five-second sync, and media access');
     req('/auth/logout',[],$other); req('/bootstrap',[],$other,'GET',401); check(true,'logout invalidates token');
     req('/application/config/config.php',[],'','GET',404); check(true,'internal files not exposed by dev router');

@@ -7,7 +7,8 @@ import {
   type FormEvent,
   type ReactNode,
 } from "react";
-import { Plus, Trash2, AlertTriangle, MapPin, Egg, Info } from "lucide-react";
+import { Plus, Trash2, Egg, Info } from "lucide-react";
+import HarvestForm from "./HarvestForm";
 import {
   isUncertainWriteError,
   shouldPreserveUnconfirmedWrite,
@@ -19,18 +20,21 @@ import {
   feedStock,
   money,
   number as formatNumber,
-  pickupBalance,
   today,
 } from "@/lib/domain";
 import type { Category, CommandPayload, Sale } from "@/lib/types";
 import { findSavedSale } from "@/lib/sale-receipt";
+import { availableSalePickups, saleStockIssues } from "@/lib/sale-availability";
 import EmployeeEntry from "./EmployeeEntry";
+import { DraftBoundary, DraftFields, useDraftField, useEntryDraft } from "./DraftBoundary";
+import { draftKey, type DraftAttempt } from "@/lib/entry-drafts";
 import Photo from "./PhotoUpload";
 import { SaleDetail } from "./RecordDialogs";
 import {
   categoryLabel,
   dataFrom,
   Dialog,
+  DialogSession,
   errorMessage,
   Field,
   LoadingButton,
@@ -91,189 +95,6 @@ function FormShell({
       <div className="modal-body-custom">{children}</div>
       <Footer busy={busy} disabled={disabled} onClose={onClose} label={label} />
     </form>
-  );
-}
-function ProductionForm({ onSave, busy, onClose }: FormProps) {
-  const { state, user } = useFarm();
-  const [kg, setKg] = useState("");
-  const [eggs, setEggs] = useState("");
-  const [trays, setTrays] = useState("");
-  const [photo, setPhoto] = useState("");
-  const [photoBusy, setPhotoBusy] = useState(false);
-  const [location, setLocation] = useState("");
-  const [locating, setLocating] = useState(false);
-  const [locationError, setLocationError] = useState("");
-  const estimate = Number(trays) * 10,
-    difference =
-      estimate > 0 && Math.abs(Number(kg) - estimate) / estimate > 0.3;
-  return (
-    <FormShell
-      busy={busy}
-      onClose={onClose}
-      label={photoBusy ? "Memproses foto…" : "Simpan produksi"}
-      disabled={photoBusy}
-      onSubmit={(e) => {
-        e.preventDefault();
-        if (photoBusy) return;
-        const data = dataFrom(e.currentTarget);
-        void onSave("production.create", {
-          ...data,
-          kg: Number(kg),
-          eggs: Number(eggs),
-          trays: Number(trays),
-          photo: photo || undefined,
-          location: location || undefined,
-        });
-      }}
-    >
-      <p className="text-muted">
-        Catat hasil panen dari kandang. {state.settings?.harvest_auto_stock !== false
-          ? "Setelah disimpan, panen langsung menambah stok gudang."
-          : "Setelah disimpan, panen menunggu diterima di menu Gudang."}
-      </p>
-      <div className="row g-3">
-        <Field className="col-sm-6" label="Tanggal produksi">
-          <input
-            name="date"
-            className="form-control"
-            type="date"
-            defaultValue={today()}
-            max={today()}
-            required
-          />
-        </Field>
-        <Field className="col-sm-6" label="Karyawan pencatat">
-          <input className="form-control" value={user?.name || ""} disabled />
-        </Field>
-        <Field className="col-sm-6" label="Sumber kandang (opsional)">
-          <select name="barn_id" className="form-select">
-            <option value="">Tanpa kelompok kandang</option>
-            {state.barns.map((b) => (
-              <option key={b.id} value={b.id}>
-                {b.name}
-              </option>
-            ))}
-          </select>
-        </Field>
-        <Field className="col-sm-6" label="Kategori telur">
-          <select name="category" className="form-select">
-            <option value="good">Telur bagus</option>
-            <option value="cracked">Telur bentes</option>
-          </select>
-        </Field>
-        <Field className="col-sm-4" label="Jumlah butir">
-          <input
-            className="form-control"
-            type="number"
-            min="1"
-            step="1"
-            placeholder="0"
-            value={eggs}
-            onChange={(e) => setEggs(e.target.value)}
-            required
-          />
-        </Field>
-        <Field className="col-sm-4" label="Berat hasil timbangan (kg)">
-          <input
-            className="form-control"
-            type="number"
-            min="0.001"
-            step="0.001"
-            placeholder="0,00"
-            value={kg}
-            onChange={(e) => setKg(e.target.value)}
-            required
-          />
-        </Field>
-        <Field className="col-sm-4" label="Jumlah krat">
-          <input
-            className="form-control"
-            type="number"
-            min="0"
-            step="1"
-            placeholder="0"
-            value={trays}
-            onChange={(e) => setTrays(e.target.value)}
-            required
-          />
-        </Field>
-      </div>
-      <div className="info-note mt-3">
-        <Info size={17} />
-        <span>
-          Perkiraan {number(estimate)} kg untuk {Number(trays) || 0} krat.
-          Gunakan berat hasil timbangan untuk menghitung stok dan penjualan.
-        </span>
-      </div>
-      {difference && Number(kg) > 0 && (
-        <div className="alert alert-warning mt-3 d-flex gap-2">
-          <AlertTriangle size={18} />
-          <small>
-            Berat ini berbeda lebih dari 30% dari perkiraan. Periksa lagi hasil
-            timbangan. Jika sudah benar, data tetap bisa disimpan.
-          </small>
-        </div>
-      )}
-      <div className="form-summary mt-3">
-        <Egg size={21} />
-        <span>Total telur</span>
-        <strong>
-          {number(Number(eggs))} butir · {number(Number(kg))} kg
-        </strong>
-      </div>
-      <Field className="d-block mt-3" label="Catatan (opsional)">
-        <textarea
-          name="notes"
-          className="form-control"
-          rows={2}
-          placeholder="Tambahkan informasi panen hari ini…"
-          maxLength={2000}
-        />
-      </Field>
-      <Photo value={photo} onChange={setPhoto} onBusyChange={setPhotoBusy} disabled={busy} />
-      <div className="mt-3">
-        <button
-          type="button"
-          className="btn btn-sm btn-outline-secondary"
-          disabled={locating}
-          onClick={() => {
-            setLocating(true);
-            setLocationError("");
-            if (!navigator.geolocation) {
-              setLocationError("Perangkat ini tidak mendukung lokasi.");
-              setLocating(false);
-              return;
-            }
-            navigator.geolocation.getCurrentPosition(
-              (p) => {
-                setLocation(
-                  `${p.coords.latitude.toFixed(6)},${p.coords.longitude.toFixed(6)}`,
-                );
-                setLocating(false);
-              },
-              () => {
-                setLocationError(
-                  "Lokasi tidak tersedia. Anda tetap dapat menyimpan produksi.",
-                );
-                setLocating(false);
-              },
-              { timeout: 10000 },
-            );
-          }}
-        >
-          <MapPin size={15} />
-          {locating
-            ? "Mengambil lokasi…"
-            : location
-              ? "Perbarui lokasi"
-              : "Tambahkan lokasi (opsional)"}
-        </button>
-        {location && <small className="text-muted ms-2">{location}</small>}
-        {locationError && (
-          <small className="text-muted d-block mt-1">{locationError}</small>
-        )}
-      </div>
-    </FormShell>
   );
 }
 function PickupForm({ onSave, busy, onClose }: FormProps) {
@@ -399,22 +220,23 @@ type SaleLine = {
 function SaleForm({ onSave, busy, onClose }: FormProps) {
   const { state, user } = useFarm();
   const price = activePrice(state);
-  const available = state.pickups.filter(
-    (p) =>
-      p.user_id === user?.id &&
-      pickupBalance(state, p).kg > 0 &&
-      pickupBalance(state, p).eggs > 0,
-  );
-  const [items, setItems] = useState<SaleLine[]>([
+  const available = availableSalePickups(state, user?.id);
+  const [items, setItems] = useDraftField<SaleLine[]>("items", [
     { pickup_id: "", kg: "", eggs: "", trays: "0", is_free: false },
   ]);
-  const [method, setMethod] = useState("cash");
-  const [isFull, setIsFull] = useState(true);
-  const [paid, setPaid] = useState("");
-  const [photo, setPhoto] = useState("");
+  const [method, setMethod] = useDraftField("method", "cash");
+  const [isFull, setIsFull] = useDraftField("fullyPaid", true);
+  const [paid, setPaid] = useDraftField("paid", "");
+  const [dueDate, setDueDate] = useDraftField("dueDate", "");
+  const [photo, setPhoto] = useDraftField("photo", "");
   const [photoBusy, setPhotoBusy] = useState(false);
+  const [reviewedPriceId, setReviewedPriceId] = useDraftField("reviewedPriceId", price?.id);
+  const stockIssues = saleStockIssues(items, available);
+  const showTotal = !!price && stockIssues.size === 0 && items.every(item => item.pickup_id);
+  const needsPriceReview = !!price && reviewedPriceId !== price.id && items.some(line => line.kg !== "" || line.eggs !== "");
   const linePrice = (line: SaleLine) => {
-    const pickup = state.pickups.find((p) => p.id === line.pickup_id);
+    const pickup = available.find((p) => p.id === line.pickup_id);
+    if (!pickup) return 0;
     if (
       pickup?.category === "cracked" &&
       (line.is_free || price?.cracked_price === 0)
@@ -431,7 +253,7 @@ function SaleForm({ onSave, busy, onClose }: FormProps) {
     payment = total === 0 ? 0 : isFull ? total : Number(paid);
   const hasFree = items.some(
     (line) =>
-      state.pickups.find((p) => p.id === line.pickup_id)?.category ===
+      available.find((p) => p.id === line.pickup_id)?.category ===
         "cracked" &&
       (line.is_free || price?.cracked_price === 0),
   );
@@ -441,7 +263,7 @@ function SaleForm({ onSave, busy, onClose }: FormProps) {
     value: string | boolean,
   ) =>
     setItems((old) =>
-      old.map((line, i) => (i === index ? { ...line, [key]: value } : line)),
+      old.map((line, i) => (i === index ? { ...line, ...(key === "pickup_id" ? {is_free: false} : {}), [key]: value } : line)),
     );
   if (!available.length)
     return (
@@ -449,6 +271,7 @@ function SaleForm({ onSave, busy, onClose }: FormProps) {
         <div className="empty-state">
           <Egg size={36} />
           <h3>Belum ada telur yang dibawa</h3>
+          {stockIssues.size > 0 && <p className="alert alert-warning">Pengambilan pada draf ini sudah habis. Setelah mengambil telur lagi, buka draf dan pilih pengambilan yang baru.</p>}
           <p>
             Catat pengambilan telur terlebih dahulu melalui menu Stok Telur.
             Penjualan harus berasal dari persediaan milik Anda.
@@ -462,12 +285,12 @@ function SaleForm({ onSave, busy, onClose }: FormProps) {
   return (
     <FormShell
       busy={busy}
-      disabled={!price || photoBusy || !photo}
+      disabled={!showTotal || photoBusy || !photo || needsPriceReview}
       onClose={onClose}
       label={photoBusy ? "Memproses foto…" : "Simpan penjualan"}
       onSubmit={(e) => {
         e.preventDefault();
-        if (photoBusy || !photo) return;
+        if (photoBusy || !photo || !showTotal || needsPriceReview) return;
         const data = dataFrom(e.currentTarget);
         void onSave("sale.create", {
           ...data,
@@ -475,13 +298,13 @@ function SaleForm({ onSave, busy, onClose }: FormProps) {
           expected_price_id: price?.id,
           items: items.map((item) => ({
             pickup_id: item.pickup_id,
-            category: state.pickups.find((p) => p.id === item.pickup_id)
+            category: available.find((p) => p.id === item.pickup_id)
               ?.category,
             kg: Number(item.kg),
             eggs: Number(item.eggs),
             trays: Number(item.trays),
             is_free:
-              state.pickups.find((p) => p.id === item.pickup_id)?.category ===
+              available.find((p) => p.id === item.pickup_id)?.category ===
                 "cracked" &&
               (item.is_free || price?.cracked_price === 0),
           })),
@@ -551,7 +374,8 @@ function SaleForm({ onSave, busy, onClose }: FormProps) {
         </div>
         {items.map((item, index) => {
           const pickup = available.find((p) => p.id === item.pickup_id),
-            balance = pickup ? pickupBalance(state, pickup) : null;
+            balance = pickup?.balance;
+          const issue = stockIssues.get(item.pickup_id);
           return (
             <div className="sale-line" key={index}>
               <div className="d-flex gap-2 align-items-end">
@@ -561,7 +385,7 @@ function SaleForm({ onSave, busy, onClose }: FormProps) {
                 >
                   <select
                     className="form-select"
-                    value={item.pickup_id}
+                    value={pickup?.id || ""}
                     onChange={(e) => update(index, "pickup_id", e.target.value)}
                     required
                   >
@@ -569,7 +393,7 @@ function SaleForm({ onSave, busy, onClose }: FormProps) {
                     {available.map((p) => (
                       <option key={p.id} value={p.id}>
                         {categoryLabel(p.category)} · {p.area} ·{" "}
-                        {number(pickupBalance(state, p).kg)} kg
+                        {number(p.balance.kg)} kg
                       </option>
                     ))}
                   </select>
@@ -587,6 +411,7 @@ function SaleForm({ onSave, busy, onClose }: FormProps) {
                   </button>
                 )}
               </div>
+              {issue && <p className="alert alert-warning my-2" role="alert">{issue}</p>}
               {balance && (
                 <small className="text-muted d-block my-2">
                   Tersedia {number(balance.eggs)} butir / {number(balance.kg)}{" "}
@@ -653,7 +478,7 @@ function SaleForm({ onSave, busy, onClose }: FormProps) {
                 </Field>
               </div>
               <div className="text-end mt-2 fw-semibold">
-                {pickup?.category === "cracked" &&
+                {!price || !pickup || issue ? "—" : pickup.category === "cracked" &&
                 (item.is_free || price?.cracked_price === 0)
                   ? "Gratis"
                   : money(Math.round(Number(item.kg) * linePrice(item)))}
@@ -668,6 +493,7 @@ function SaleForm({ onSave, busy, onClose }: FormProps) {
             Perubahan harga berikutnya tidak mengubah penjualan ini.
           </span>
         </div>
+        {showTotal && needsPriceReview && <div className="alert alert-warning" role="alert">Harga dari atasan berubah. Total baru: <strong>{money(total)}</strong>. <button type="button" className="btn btn-warning" onClick={() => setReviewedPriceId(price?.id)}>Gunakan harga baru</button></div>}
         {!price && (
           <div className="alert alert-warning mt-2">
             Belum ada harga aktif. Minta atasan menetapkan harga sebelum
@@ -725,18 +551,23 @@ function SaleForm({ onSave, busy, onClose }: FormProps) {
           </Field>
         )}
       </div>
+      {payment < total && (
+        <Field className="d-block mt-3" label="Jatuh tempo pelanggan" hint="Pilih tanggal yang disepakati untuk melunasi sisa tagihan.">
+          <input type="date" name="due_date" className="form-control" value={dueDate} onChange={e => setDueDate(e.target.value)} required />
+        </Field>
+      )}
       <div className="invoice-summary mt-3">
         <div>
           <span>Total penjualan</span>
-          <strong>{money(total)}</strong>
+          <strong>{showTotal ? money(total) : "—"}</strong>
         </div>
         <div>
           <span>Nominal dibayar</span>
-          <span>{money(payment)}</span>
+          <span>{showTotal ? money(payment) : "—"}</span>
         </div>
         <div>
           <span>Sisa tagihan</span>
-          <strong>{money(Math.max(0, total - payment))}</strong>
+          <strong>{showTotal ? money(Math.max(0, total - payment)) : "—"}</strong>
         </div>
       </div>
       <Field className="d-block mt-3" label="Catatan (opsional)">
@@ -1237,6 +1068,11 @@ function FeedPurchaseForm({ onSave, busy, onClose }: FormProps) {
           Pembelian sudah lunas
         </label>
       </div>
+      {!full && Number(paid) < total && (
+        <Field className="d-block mb-3" label="Jatuh tempo ke pemasok">
+          <input type="date" name="due_date" className="form-control" required />
+        </Field>
+      )}
       {!full && (
         <Field className="d-block mb-3" label="Nominal dibayar (Rp)">
           <input
@@ -1281,7 +1117,7 @@ const config: Record<
   production: {
     title: "Catat panen telur",
     subtitle: "Panen hari ini, tercatat dengan rapi.",
-    form: ProductionForm,
+    form: HarvestForm,
   },
   pickup: {
     title: "Pengambilan telur",
@@ -1324,14 +1160,7 @@ const config: Record<
     form: FeedUseForm,
   },
 };
-type UnconfirmedSale = {
-  user_id: string;
-  request_id: string;
-  action: "sale.create";
-  payload: CommandPayload;
-  total: number | null;
-  previous_sale_ids?: string[];
-};
+type UnconfirmedSale = DraftAttempt;
 const unconfirmedSaleKey = (userId: string) =>
   `ternaku.sale.unconfirmed.v1.${userId}`;
 function readUnconfirmedSale(userId: string): UnconfirmedSale | null {
@@ -1354,25 +1183,30 @@ function readUnconfirmedSale(userId: string): UnconfirmedSale | null {
     return null;
   }
 }
-export function EntryModal({
-  kind,
-  onClose,
-  onSaved,
-}: {
-  kind: string | null;
-  onClose: () => void;
-  onSaved?: (action: string) => void;
-}) {
+type EntryProps = { kind: string | null; onClose: () => void; onSaved?: (action: string) => void };
+export function EntryModal(props: EntryProps) {
+  const { user, mode } = useFarm();
+  const kind = props.kind;
+  if (user && (kind === "production" || kind === "sale")) {
+    const scope = draftKey(mode, user.id, kind);
+    return <DialogSession key={scope} onClose={props.onClose}>
+      <DraftBoundary storageKey={scope} label={kind === "sale" ? "penjualan" : "panen"} onClose={props.onClose}>
+        <EntryBody {...props} />
+      </DraftBoundary>
+    </DialogSession>;
+  }
+  return <EntryBody {...props} />;
+}
+function EntryBody({kind, onClose, onSaved}: EntryProps) {
   const { command, user, refresh, mode, state } = useFarm();
+  const draft = useEntryDraft();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [savedSale, setSavedSale] = useState<{ sale: Sale | null } | null>(null);
   const savingRef = useRef(false);
   const [employeeKind, setEmployeeKind] = useState<"pickup" | null>(null);
   const [unconfirmed, setUnconfirmed] = useState<UnconfirmedSale | null>(() =>
-    mode === "live" && user && kind === "sale"
-      ? readUnconfirmedSale(user.id)
-      : null,
+    draft?.writer.record.attempt || (mode === "live" && user && kind === "sale" ? readUnconfirmedSale(user.id) : null),
   );
   const errorRef = useRef<HTMLDivElement>(null);
   const retryRef = useRef<HTMLDivElement>(null);
@@ -1399,7 +1233,7 @@ export function EntryModal({
     "feed.purchase",
   ].includes(kind);
   const clearUnconfirmed = () => {
-    if (user) {
+    if (user && kind === "sale") {
       try {
         sessionStorage.removeItem(unconfirmedSaleKey(user.id));
       } catch {
@@ -1409,11 +1243,11 @@ export function EntryModal({
     setUnconfirmed(null);
   };
   const close = () => {
-    if (busy) return false;
+    if (busy || savingRef.current) return false;
     if (
       unconfirmed &&
       !window.confirm(
-        "Penjualan belum dipastikan tersimpan. Data percobaan tetap disimpan di perangkat ini. Periksa riwayat, lalu buka Jual untuk mencoba data yang sama. Tutup sekarang?",
+        "Belum ada kepastian dari server. Data dan nomor percobaan tersimpan di HP ini. Tutup sekarang?",
       )
     )
       return false;
@@ -1427,13 +1261,17 @@ export function EntryModal({
     if (savingRef.current || savedSale) return;
     const action = unconfirmed?.action || requestedAction;
     const payload = unconfirmed?.payload || requestedPayload;
+    const isDraftAction = action === "sale.create" || action === "production.create";
+    if (mode === "live" && isDraftAction && !navigator.onLine) {
+      setError("HP sedang offline. Sambungkan internet, lalu coba simpan kembali."); return;
+    }
     let attempt = unconfirmed;
     let succeeded = false;
     let sending = false;
     let confirmedSale: Sale | null = null;
     const previousSaleIds = Array.isArray(attempt?.previous_sale_ids)
       ? attempt.previous_sale_ids.filter((id) => typeof id === "string")
-      : attempt
+      : attempt || action !== "sale.create" || state.price_cursor !== undefined
         ? undefined
         : state.sales
             .filter((sale) => sale.user_id === user?.id)
@@ -1442,7 +1280,7 @@ export function EntryModal({
     setBusy(true);
     setError("");
     try {
-      if (mode === "live" && user && action === "sale.create" && !attempt) {
+      if (user && isDraftAction && !attempt) {
         const snapshot = state.prices.find(
           (price) => price.id === payload.expected_price_id,
         );
@@ -1456,8 +1294,8 @@ export function EntryModal({
         attempt = {
           user_id: user.id,
           request_id: crypto.randomUUID(),
-          action: "sale.create",
-          previous_sale_ids: previousSaleIds,
+          action,
+          ...(action === "sale.create" ? { previous_sale_ids: previousSaleIds } : {}),
           payload: JSON.parse(JSON.stringify(payload)) as CommandPayload,
           total: snapshot
             ? lines.reduce(
@@ -1476,13 +1314,8 @@ export function EntryModal({
             : null,
         };
       }
-      if (attempt && user) {
-        // Save the exact payload before sending so reopening or refreshing can only retry
-        // the original fingerprint, even when the current price has since changed.
-        sessionStorage.setItem(
-          unconfirmedSaleKey(user.id),
-          JSON.stringify(attempt),
-        );
+      if (attempt && draft) {
+        await draft.writer.pending(attempt);
       }
       sending = true;
       const confirmed = await command(action, payload, attempt?.request_id);
@@ -1496,12 +1329,16 @@ export function EntryModal({
               previousSaleIds,
             )
           : null;
+      }
+      if (isDraftAction && draft) {
+        // If cleanup is interrupted, the frozen request is still safe to replay.
+        await draft.writer.finish().catch(() => {});
         clearUnconfirmed();
       }
       succeeded = true;
     } catch (e) {
       setError(
-        !sending && !unconfirmed
+        !sending && !unconfirmed && !errorMessage(e).includes("tab lain")
           ? "Data belum dikirim. Penyimpanan perangkat tidak tersedia atau penuh. Kosongkan ruang, lalu coba lagi."
           : errorMessage(e),
       );
@@ -1514,10 +1351,15 @@ export function EntryModal({
         setUnconfirmed(attempt);
         return;
       }
-      if (action === "sale.create") clearUnconfirmed();
+      if (isDraftAction && draft) {
+        clearUnconfirmed();
+        if (sending) {
+          await draft.writer.pending(null).catch(() => {});
+        } else if (!unconfirmed) draft.writer.record.attempt = null;
+      }
       if (
         action === "sale.create" &&
-        errorMessage(e).toLowerCase().includes("harga")
+        /harga|stok|dibawa|sisa|pengambilan/i.test(errorMessage(e))
       ) {
         try {
           await refresh();
@@ -1581,10 +1423,9 @@ export function EntryModal({
           className="alert alert-warning m-3"
           role="alert"
         >
-          <strong>Penjualan belum dipastikan tersimpan</strong>
+          <strong>{unconfirmed.action === "sale.create" ? "Penjualan" : "Panen"} belum dipastikan tersimpan</strong>
           <p className="mt-2 mb-2">
-            Coba lagi dengan data yang sama. Jumlah dan harga yang sudah dikirim
-            tetap dipertahankan agar tidak tercatat dua kali.
+            Coba lagi dengan data yang sama. Nomor percobaan tetap sama agar catatan tidak terhitung dua kali.
           </p>
           {unconfirmed.total !== null && Number.isFinite(unconfirmed.total) && (
             <p className="mb-2">
@@ -1633,6 +1474,7 @@ export function EntryModal({
         hidden={!!unconfirmed}
         style={{ border: 0, padding: 0, margin: 0, minWidth: 0 }}
       >
+        <DraftFields enabled={shownKind === "sale" || shownKind === "production"}>
         {adminOnly && user?.role !== "admin" ? (
           <div className="modal-body-custom">
             <div className="alert alert-warning">
@@ -1654,6 +1496,7 @@ export function EntryModal({
         ) : (
           <Form key={kind} onSave={save} busy={busy} onClose={close} />
         )}
+        </DraftFields>
       </fieldset>
     </Dialog>
   );

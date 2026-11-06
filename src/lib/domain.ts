@@ -15,6 +15,7 @@ import type {
   State,
   User,
 } from "./types";
+import { dueDate, paymentEntry } from "./invoice-ledger";
 
 export const money = (value: number) =>
   new Intl.NumberFormat("id-ID", {
@@ -106,8 +107,33 @@ export function eggStock(state: State, category?: Category): Quantity {
       stock.trays += p.returned_trays - p.trays;
     }
   stock.kg = round(stock.kg);
+  for (const movement of state.stock_movements || []) {
+    if (movement.kind !== "reconcile" || (category && movement.category !== category)) continue;
+    stock.eggs += movement.eggs;
+    stock.kg = round(stock.kg + movement.kg);
+  }
   stock.trays = Math.max(0, stock.trays);
   return stock;
+}
+/** Farm-wide history needs the full admin ledger: undo movements after the WIB day.
+ * This preserves opening stock and posts deferred receipts on their actual receipt day. */
+export function closingEggStock(state: State, category: Category, day: string, currentDay = today()): Pick<Quantity, "eggs" | "kg"> | null {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(day) || day > currentDay) return null;
+  const { eggs, kg } = eggStock(state, category);
+  if (day === currentDay) return { eggs, kg };
+  if (!state.stock_movements) return null;
+  const moves = state.stock_movements.filter(m => m.category === category);
+  const origins = new Set(moves.filter(m => m.kind === "pickup" || m.kind === "production").map(m => m.reference_id));
+  // A legacy receipt or pickup with no ledger entries cannot safely be dated.
+  const verified = moves.some(m => m.kind === "reconcile" && businessDate(m.date) <= day);
+  if (!verified && (state.productions.some(p => p.category === category && isProductionStocked(p) && !origins.has(p.id)) ||
+    state.pickups.some(p => p.category === category && !origins.has(p.id)))) return null;
+  const balance = { eggs, kg };
+  for (const move of moves) if (businessDate(move.date) > day) {
+    balance.eggs -= move.eggs;
+    balance.kg = round(balance.kg - move.kg);
+  }
+  return balance.eggs < 0 || balance.kg < 0 ? null : balance;
 }
 export function pickupBalance(
   state: State,
@@ -118,6 +144,8 @@ export function pickupBalance(
       ? state.pickups.find((row) => row.id === pickup)
       : pickup;
   if (!p) return { ...emptyQuantity(), status: "Dibawa" };
+  const confirmed = state.pickup_balances?.[p.id];
+  if (confirmed) return { ...confirmed };
   const sold = state.sales
     .flatMap((s) => s.items)
     .filter((item) => item.pickup_id === p.id)
@@ -617,16 +645,17 @@ export function executeCommand(
   let detail: { before?: unknown; after?: unknown } = {};
   switch (action) {
     case "production.create": {
-      const q = quantities(payload);
+      const entries = payload.items === undefined ? [payload] : list(payload.items);
+      assert(entries.length <= 2, "Satu panen maksimal dua jenis telur.");
+      assert(new Set(entries.map(item => item.category)).size === entries.length, "Kategori telur tidak boleh berulang.");
       const barnId = text(payload.barn_id);
       if (barnId) find(state.barns, barnId, "Kandang");
-      state.productions.push({
-        id: id("prod"),
+      const harvestId = id("harvest");
+      const common = {
+        harvest_id: harvestId,
         date: dateValue(payload.date, now),
         user_id: user.id,
         barn_id: barnId,
-        category: category(payload.category),
-        ...q,
         notes: text(payload.notes),
         photo: photo(payload.photo),
         location: text(payload.location),
@@ -634,7 +663,33 @@ export function executeCommand(
         locked: false,
         stocked_at: state.settings?.harvest_auto_stock === false ? null : stamp,
         ...(state.settings?.harvest_auto_stock === false ? {} : { stocked_by: user.id }),
+      };
+      for (const item of entries) state.productions.push({ ...common, id: id("prod"), category: category(item.category), ...quantities(item) });
+      break;
+    }
+    case "stock.reconcile": {
+      admin(user);
+      const items = list(payload.items);
+      assert(items.length === 2 && new Set(items.map(r => r.category)).size === 2, "Hitung kedua kategori telur satu kali.");
+      const reason = boundedName(payload.reason, "Catatan pencocokan", 2000);
+      const reference = id("count");
+      state.stock_movements ??= [];
+      const counts = items.map(item => {
+        const c = category(item.category), before = eggStock(state, c);
+        const count = (v: unknown) => {
+          assert(v && typeof v === "object" && !Array.isArray(v), "Jumlah stok tidak valid.");
+          const obj = v as CommandPayload;
+          const eggs = numeric(obj.eggs, "Butir fisik", false, true), kg = numeric(obj.kg, "Berat fisik");
+          completeBalance(eggs, kg);
+          return { eggs, kg };
+        };
+        const expected = count(item.expected), physical = count(item.physical);
+        assert(expected.eggs === before.eggs && expected.kg === before.kg, "Stok berubah saat dihitung. Tutup formulir, cek stok terbaru, lalu cocokkan lagi.");
+        return { category: c, expected, physical };
       });
+      for (const c of counts) state.stock_movements.push({ id: id("movement"), reference_id: reference, kind: "reconcile", date: stamp, created_at: stamp, user_id: user.id, ...c,
+        eggs: c.physical.eggs - c.expected.eggs, kg: round(c.physical.kg - c.expected.kg), trays: 0, notes: reason });
+      detail.after = { id: reference, counts, reason };
       break;
     }
     case "production.receive": {
@@ -774,10 +829,13 @@ export function executeCommand(
       const customer = boundedName(payload.customer, items.some(isFreeSaleItem) ? "Nama penerima telur gratis" : "Nama pelanggan", 190);
       const documentation = photo(payload.photo);
       assert(documentation !== "", "Foto dokumentasi penjualan wajib diisi.");
+      const saleDate = dateValue(payload.date, now);
       state.sales.push({
         id: id("sale"),
         number: invoice("TRX", state.sales.length),
-        date: dateValue(payload.date, now),
+        date: saleDate,
+        due_date: dueDate(payload.due_date, businessDate(saleDate)),
+        payments: paid ? [paymentEntry("initial", paid, stamp, user.id, method === "credit" ? undefined : method)] : [],
         user_id: user.id,
         customer,
         phone: text(payload.phone),
@@ -795,16 +853,33 @@ export function executeCommand(
       });
       break;
     }
+    case "sale.due":
+    case "feed.due":
+    case "feed.payment":
     case "sale.payment": {
-      const sale = find(state.sales, payload.id, "Penjualan");
-      own(user, sale);
+      const isFeed = action.startsWith("feed.");
+      if (isFeed) admin(user);
+      const record = isFeed ? find(state.feed_purchases, payload.id, "Pembelian pakan") : find(state.sales, payload.id, "Penjualan");
+      own(user, record);
+      if (action.endsWith(".due")) assert(record.balance > 0, "Nota ini sudah lunas.");
+      detail.before = { id: record.id, number: record.number, paid: record.paid, balance: record.balance, due_date: record.due_date ?? null };
+      if (action.endsWith(".due")) {
+        const due = dueDate(payload.due_date, businessDate(record.date));
+        assert(due, "Isi tanggal jatuh tempo.");
+        record.due_date = due;
+        detail.after = { id: record.id, due_date: due };
+        break;
+      }
+      if (isFeed || payload.expected_paid !== undefined)
+        assert(numeric(payload.expected_paid, "Pembayaran sebelumnya", false, true) === record.paid, "Pembayaran sudah berubah. Buka kembali nota dan periksa riwayatnya.");
       const amount = numeric(payload.amount, "Pembayaran", true, true);
-      assert(amount <= sale.balance, "Pembayaran melebihi sisa tagihan.");
-      detail.before = structuredClone(sale);
-      sale.paid += amount;
-      sale.balance -= amount;
-      sale.payment_status = sale.balance === 0 ? "paid" : "partial";
-      detail.after = structuredClone(sale);
+      assert(amount <= record.balance, "Pembayaran melebihi sisa tagihan.");
+      const entry = paymentEntry("installment", amount, stamp, user.id, payload.method);
+      (record.payments ??= []).push(entry);
+      record.paid += amount;
+      record.balance = record.total - record.paid;
+      if ("payment_status" in record) record.payment_status = record.balance === 0 ? "paid" : "partial";
+      detail.after = { id: record.id, number: record.number, paid: record.paid, balance: record.balance, payment: entry };
       break;
     }
     case "price.create": {
@@ -1033,10 +1108,13 @@ export function executeCommand(
       const total = totalAmount(items.reduce((sum, i) => sum + i.total, 0));
       const paid = numeric(payload.paid ?? 0, "Nominal dibayar", false, true);
       assert(paid <= total, "Pembayaran tidak boleh melebihi total pembelian.");
+      const purchaseDate = dateValue(payload.date, now);
       state.feed_purchases.push({
         id: id("purchase"),
         number: invoice("PO", state.feed_purchases.length),
-        date: dateValue(payload.date, now),
+        date: purchaseDate,
+        due_date: dueDate(payload.due_date, businessDate(purchaseDate)),
+        payments: paid ? [paymentEntry("initial", paid, stamp, user.id)] : [],
         supplier: requiredText(payload.supplier, "Nama pemasok"),
         items,
         total,

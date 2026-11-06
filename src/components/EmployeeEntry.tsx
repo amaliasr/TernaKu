@@ -16,7 +16,6 @@ import {
   eggStock,
   money,
   number,
-  pickupBalance,
   today,
 } from "@/lib/domain";
 import type {
@@ -35,6 +34,9 @@ import {
 } from "./ModuleUI";
 import styles from "./EmployeeEntry.module.css";
 import Photo from "./PhotoUpload";
+import { useDraftField } from "./DraftBoundary";
+import { availableSalePickups, saleStockIssues } from "@/lib/sale-availability";
+import HarvestForm from "./HarvestForm";
 
 type Props = {
   kind: "production" | "pickup" | "sale";
@@ -198,27 +200,23 @@ function Optional({
   );
 }
 
-function QuantityEntry({
-  kind,
+function PickupEntry({
   onSave,
   busy,
   onClose,
-}: Props & { kind: "production" | "pickup" }) {
+}: Props) {
   const { state, user } = useFarm();
   const [category, setCategory] = useState<Category>("good");
   const [eggs, setEggs] = useState("");
   const [kg, setKg] = useState("");
   const [trays, setTrays] = useState("");
-  const [photo, setPhoto] = useState("");
-  const [photoBusy, setPhotoBusy] = useState(false);
   const [date, setDate] = useState("");
-  const isPickup = kind === "pickup";
-  const [initialDate] = useState(() => (isPickup ? localNow() : today()));
+  const [initialDate] = useState(() => localNow());
   const stock = {
     good: eggStock(state, "good"),
     cracked: eggStock(state, "cracked"),
   };
-  const available = isPickup ? stock[category] : undefined;
+  const available = stock[category];
   const estimate = Number(trays) * 10;
   const weightWarning =
     estimate > 0 &&
@@ -228,39 +226,31 @@ function QuantityEntry({
     <SimpleForm
       busy={busy}
       onClose={onClose}
-      label={photoBusy ? "Memproses foto…" : isPickup ? "Simpan pengambilan" : "Simpan panen"}
-      disabled={photoBusy || (isPickup && (!available?.kg || !available.eggs))}
+      label="Simpan pengambilan"
+      disabled={!available.kg || !available.eggs}
       onSubmit={(event) => {
         event.preventDefault();
-        if (photoBusy) return;
         const data = dataFrom(event.currentTarget);
-        void onSave(`${kind}.create`, {
+        void onSave("pickup.create", {
           ...data,
-          date: isPickup
-            ? `${date || initialDate}:00+07:00`
-            : date || initialDate,
+          date: `${date || initialDate}:00+07:00`,
           category,
           eggs: Number(eggs),
           kg: Number(kg),
           trays: Number(trays || 0),
-          ...(isPickup ? {} : { photo: photo || undefined }),
         });
       }}
     >
       <p className={styles.caption}>
         {dateLabel(date || initialDate)} · {user?.name}.{" "}
-        {isPickup
-          ? "Telur diambil dari stok gudang."
-          : state.settings?.harvest_auto_stock !== false
-            ? "Setelah disimpan, panen langsung menambah stok gudang."
-            : "Setelah disimpan, panen belum menambah stok. Terima panen lewat menu Gudang."}
+        Telur diambil dari stok gudang.
       </p>
       <CategoryButtons
         value={category}
         onChange={setCategory}
-        stock={isPickup ? stock : undefined}
+        stock={stock}
       />
-      {isPickup && (!available?.kg || !available.eggs) && (
+      {(!available.kg || !available.eggs) && (
         <p className={styles.warning}>
           Stok {categoryLabel(category).toLowerCase()} belum tersedia. Pilih
           jenis lain atau pastikan panen sudah diterima di gudang.
@@ -276,8 +266,7 @@ function QuantityEntry({
       <p className={styles.hint}>
         Isi berat hasil timbangan, bukan perkiraan dari krat.
       </p>
-      {isPickup && (
-        <Field label="Mau dijual ke mana?">
+      <Field label="Mau dijual ke mana?">
           <input
             name="area"
             className="form-control"
@@ -285,8 +274,7 @@ function QuantityEntry({
             maxLength={150}
             required
           />
-        </Field>
-      )}
+      </Field>
       <Optional>
         <Field
           label="Jumlah krat"
@@ -315,29 +303,17 @@ function QuantityEntry({
           </p>
         )}
         <Field
-          label={isPickup ? "Waktu pengambilan (WIB)" : "Tanggal panen"}
+          label="Waktu pengambilan (WIB)"
           hint="Kosongkan untuk memakai hari ini."
         >
           <input
             className="form-control"
-            type={isPickup ? "datetime-local" : "date"}
-            max={isPickup ? localNow() : today()}
+            type="datetime-local"
+            max={localNow()}
             value={date}
             onChange={(e) => setDate(e.target.value)}
           />
         </Field>
-        {!isPickup && (
-          <Field label="Kandang asal">
-            <select className="form-select" name="barn_id" defaultValue="">
-              <option value="">Tidak perlu diisi</option>
-              {state.barns.map((barn) => (
-                <option key={barn.id} value={barn.id}>
-                  {barn.name}
-                </option>
-              ))}
-            </select>
-          </Field>
-        )}
         <Field label="Catatan">
           <textarea
             name="notes"
@@ -346,7 +322,6 @@ function QuantityEntry({
             maxLength={2000}
           />
         </Field>
-        {!isPickup && <Photo value={photo} onChange={setPhoto} onBusyChange={setPhotoBusy} disabled={busy} />}
       </Optional>
       <div className={styles.summary}>
         <span>{categoryLabel(category)}</span>
@@ -370,14 +345,8 @@ type SaleLine = {
 function SaleEntry({ onSave, busy, onClose, onSwitchKind }: Props) {
   const { state, user, priceSync, refresh } = useFarm();
   const price = activePrice(state);
-  const available = state.pickups.filter(
-    (pickup) =>
-      pickup.user_id === user?.id &&
-      pickupBalance(state, pickup).kg > 0 &&
-      pickupBalance(state, pickup).eggs > 0,
-  );
-  const nextKey = useRef(1);
-  const [items, setItems] = useState<SaleLine[]>(() => [
+  const available = availableSalePickups(state, user?.id);
+  const [items, setItems] = useDraftField<SaleLine[]>("items", () => [
     {
       key: 0,
       pickup_id: available.length === 1 ? available[0].id : "",
@@ -387,18 +356,21 @@ function SaleEntry({ onSave, busy, onClose, onSwitchKind }: Props) {
       is_free: false,
     },
   ]);
-  const [method, setMethod] = useState<PaymentMethod>("cash");
-  const [full, setFull] = useState(true);
-  const [paid, setPaid] = useState("0");
-  const [customer, setCustomer] = useState("");
-  const [photo, setPhoto] = useState("");
+  const [method, setMethod] = useDraftField<PaymentMethod>("method", "cash");
+  const [full, setFull] = useDraftField("fullyPaid", true);
+  const [paid, setPaid] = useDraftField("paid", "0");
+  const [dueDate, setDueDate] = useDraftField("dueDate", "");
+  const [customer, setCustomer] = useDraftField("customer", "");
+  const [photo, setPhoto] = useDraftField("photo", "");
   const [photoBusy, setPhotoBusy] = useState(false);
-  const [date, setDate] = useState("");
-  const [initialDate] = useState(localNow);
-  const [reviewedPriceId, setReviewedPriceId] = useState(price?.id);
+  const [date, setDate] = useDraftField("date", "");
+  const [initialDate] = useDraftField("initialDate", localNow);
+  const [reviewedPriceId, setReviewedPriceId] = useDraftField("reviewedPriceId", price?.id);
   const [reviewMessage, setReviewMessage] = useState(false);
   const priceReviewRef = useRef<HTMLDivElement>(null);
   const hasQuantity = items.some((item) => item.kg !== "" || item.eggs !== "");
+  const stockIssues = saleStockIssues(items, available);
+  const showTotal = !!price && stockIssues.size === 0 && items.every(item => item.pickup_id);
   const priceChanged = !!price && hasQuantity && reviewedPriceId !== price.id;
   const unitPrice = (item: SaleLine) => {
     const pickup = available.find((entry) => entry.id === item.pickup_id);
@@ -432,7 +404,7 @@ function SaleEntry({ onSave, busy, onClose, onSwitchKind }: Props) {
     if (!hasQuantity) setReviewedPriceId(price?.id);
     setItems((old) =>
       old.map((item) =>
-        item.key === key ? { ...item, [field]: value } : item,
+        item.key === key ? { ...item, ...(field === "pickup_id" ? {is_free: false} : {}), [field]: value } : item,
       ),
     );
   };
@@ -442,6 +414,7 @@ function SaleEntry({ onSave, busy, onClose, onSwitchKind }: Props) {
       <div className={`${styles.form} ${styles.empty}`}>
         <Warehouse size={36} />
         <h3>Belum ada telur yang Anda bawa</h3>
+        {stockIssues.size > 0 && <p className={styles.warning}>Telur yang dipilih pada draf ini sudah habis. Setelah mengambil telur lagi, buka draf dan pilih pengambilan yang baru.</p>}
         <p>
           Catat dulu telur yang diambil dari gudang. Setelah itu, buka Jual
           untuk mencatat penjualan.
@@ -464,10 +437,10 @@ function SaleEntry({ onSave, busy, onClose, onSwitchKind }: Props) {
       busy={busy}
       onClose={onClose}
       label={photoBusy ? "Memproses foto…" : "Simpan penjualan"}
-      disabled={!price || photoBusy || !photo}
+      disabled={!showTotal || photoBusy || !photo}
       onSubmit={(event) => {
         event.preventDefault();
-        if (photoBusy || !photo) return;
+        if (photoBusy || !photo || !showTotal) return;
         if (priceChanged) {
           setReviewMessage(true);
           priceReviewRef.current?.focus();
@@ -544,7 +517,8 @@ function SaleEntry({ onSave, busy, onClose, onSwitchKind }: Props) {
       )}
       {items.map((item, index) => {
         const pickup = available.find((entry) => entry.id === item.pickup_id);
-        const balance = pickup ? pickupBalance(state, pickup) : undefined;
+        const balance = pickup?.balance;
+        const issue = stockIssues.get(item.pickup_id);
         const choices = available;
         return (
           <section
@@ -581,7 +555,7 @@ function SaleEntry({ onSave, busy, onClose, onSwitchKind }: Props) {
               <Field label="Pilih telur yang Anda bawa">
                 <select
                   className="form-select"
-                  value={item.pickup_id}
+                  value={pickup?.id || ""}
                   onChange={(e) =>
                     update(item.key, "pickup_id", e.target.value)
                   }
@@ -592,12 +566,13 @@ function SaleEntry({ onSave, busy, onClose, onSwitchKind }: Props) {
                     <option key={entry.id} value={entry.id}>
                       {categoryLabel(entry.category)} · {entry.area} ·{" "}
                       {dateLabel(entry.date)} ·{" "}
-                      {quantity(pickupBalance(state, entry).kg)} kg
+                      {quantity(entry.balance.kg)} kg
                     </option>
                   ))}
                 </select>
               </Field>
             )}
+            {issue && <p className={styles.warning} role="alert">{issue}</p>}
             {balance && (
               <p className={styles.hint}>
                 Anda bawa {quantity(balance.eggs)} butir ·{" "}
@@ -654,7 +629,7 @@ function SaleEntry({ onSave, busy, onClose, onSwitchKind }: Props) {
             <div className={styles.lineTotal}>
               <span>Jumlah</span>
               <strong>
-                {pickup?.category === "cracked" &&
+                {!price || !pickup || issue ? "—" : pickup.category === "cracked" &&
                 (item.is_free || price?.cracked_price === 0)
                   ? "Gratis"
                   : money(Math.round(Number(item.kg) * unitPrice(item)))}
@@ -669,7 +644,7 @@ function SaleEntry({ onSave, busy, onClose, onSwitchKind }: Props) {
           className={`btn btn-outline-primary ${styles.add}`}
           onClick={() => {
             const remaining = available;
-            const key = nextKey.current++;
+            const key = Math.max(0, ...items.map(item => item.key)) + 1;
             setItems((old) => [
               ...old,
               {
@@ -758,6 +733,11 @@ function SaleEntry({ onSave, busy, onClose, onSwitchKind }: Props) {
           )}
         </Optional>
       )}
+      {payment < total && (
+        <Field label="Kapan sisa tagihan akan dibayar?">
+          <input type="date" name="due_date" className="form-control" value={dueDate} onChange={e => setDueDate(e.target.value)} required />
+        </Field>
+      )}
       <Photo value={photo} onChange={setPhoto} onBusyChange={setPhotoBusy} label="Foto dokumentasi penjualan" optional={false} disabled={busy} />
       <p className={styles.hint}>Foto wajib untuk setiap penjualan, termasuk telur gratis. Ambil langsung atau pilih dari galeri.</p>
       <Optional label="Nomor HP dan catatan (boleh kosong)">
@@ -793,9 +773,9 @@ function SaleEntry({ onSave, busy, onClose, onSwitchKind }: Props) {
       </Optional>
       <div className={styles.summary} aria-live="polite">
         <span>Total penjualan</span>
-        <strong>{money(total)}</strong>
+        <strong>{showTotal ? money(total) : "—"}</strong>
         <small>
-          {hasFree && total === 0 ? (
+          {!showTotal ? "Periksa pengambilan, jumlah, dan harga telur." : hasFree && total === 0 ? (
             "Gratis · tidak ada tagihan"
           ) : (
             <>
@@ -807,7 +787,7 @@ function SaleEntry({ onSave, busy, onClose, onSwitchKind }: Props) {
           )}
         </small>
       </div>
-      {priceChanged && (
+      {priceChanged && showTotal && (
         <div
           className={styles.warning}
           ref={priceReviewRef}
@@ -838,9 +818,10 @@ function SaleEntry({ onSave, busy, onClose, onSwitchKind }: Props) {
 }
 
 export default function EmployeeEntry(props: Props) {
+  if (props.kind === "production") return <HarvestForm {...props} />;
   return props.kind === "sale" ? (
     <SaleEntry {...props} />
   ) : (
-    <QuantityEntry {...props} kind={props.kind} />
+    <PickupEntry {...props} />
   );
 }

@@ -19,6 +19,7 @@ import {
 import { useFarm } from "@/lib/store";
 import {
   businessDate,
+  closingEggStock,
   dateLabel,
   eggStock,
   isFreeSaleItem,
@@ -204,6 +205,7 @@ export default function Reports() {
             pickup: "Pengambilan",
             return: "Pengembalian",
             correction: "Koreksi",
+            reconcile: "Hitung fisik gudang",
           }[m.kind],
           m.eggs,
           m.kg,
@@ -211,19 +213,26 @@ export default function Reports() {
           m.notes,
         ]),
     },
-    {
+    ...(user?.role === "admin" ? [{
+      name: "Saldo akhir gudang",
+      columns: ["Tanggal saldo", "Kategori", "Butir", "Berat (kg)", "Keterangan"],
+      rows: (["good","cracked"] as const).map(c => {
+        const stock = closingEggStock(state,c,to);
+        return [to, categoryLabel(c), stock?.eggs ?? "—", stock?.kg ?? "—",
+          !stock ? "Riwayat stok pada tanggal ini belum lengkap." : to === today() ? "Saldo berjalan hari ini (WIB)" : "Saldo pada akhir hari (WIB)"];
+      }),
+    }, {
+      name: "Hitung fisik",
+      columns: ["Tanggal & jam (WIB)", "Pencatat", "Kategori", "Butir aplikasi", "Butir fisik", "Selisih butir", "Kg aplikasi", "Kg fisik", "Selisih kg", "Catatan"],
+      rows: (state.stock_movements || []).filter(m=>m.kind==="reconcile" && inRange(m.date)).map(m=>[m.date,employee(m.user_id),categoryLabel(m.category),m.expected?.eggs??"—",m.physical?.eggs??"—",m.eggs,m.expected?.kg??"—",m.physical?.kg??"—",m.kg,m.notes]),
+    }] : [{
       name: "Stok saat ini",
       columns: ["Waktu pencatatan WIB", "Kategori", "Butir", "Berat (kg)"],
-      rows: (["good", "cracked"] as const).map((c) => {
+      rows: (["good", "cracked"] as const).map(c => {
         const stock = eggStock(state, c);
-        return [
-          new Date().toISOString(),
-          categoryLabel(c),
-          stock.eggs,
-          stock.kg,
-        ];
+        return [new Date().toISOString(), categoryLabel(c), stock.eggs, stock.kg];
       }),
-    },
+    }]),
   ];
   const selected = tables[Math.min(tab, tables.length - 1)];
   const chart = useMemo(() => {
@@ -242,7 +251,7 @@ export default function Reports() {
   }, [state.sales, from, to]);
   const total = sales.reduce((a, s) => a + s.total, 0),
     balance = sales.reduce((a, s) => a + s.balance, 0);
-  const invalid = from > to || !from || !to;
+  const invalid = from > to || !from || !to || to > today();
   async function download(format: string) {
     setBusy(format);
     setError("");
@@ -296,6 +305,7 @@ export default function Reports() {
             className="form-control"
             value={to}
             min={from || undefined}
+            max={today()}
             onChange={(e) => setTo(e.target.value)}
           />
         </div>
@@ -322,7 +332,7 @@ export default function Reports() {
       </section>
       {(error || invalid) && (
         <div role="alert" className="alert alert-danger">
-          {error || "Tanggal akhir harus sama atau setelah tanggal mulai."}
+          {error || "Pilih rentang tanggal yang valid hingga hari ini."}
         </div>
       )}
       <p className="report-caption">

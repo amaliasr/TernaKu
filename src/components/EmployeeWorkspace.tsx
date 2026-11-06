@@ -1,5 +1,7 @@
 "use client";
 
+import { InvoiceTasks } from "./InvoiceLedger";
+
 import { useEffect, useState } from "react";
 import {
   ArrowLeft,
@@ -507,6 +509,7 @@ export default function EmployeeWorkspace() {
             >
               <Plus size={23} /> Catat penjualan baru
             </button>
+            <InvoiceTasks invoices={ownSales} />
             <div className={styles.records}>
               {ownSales.slice(0, shown).map((row) => (
                 <article className={styles.record} key={row.id}>
