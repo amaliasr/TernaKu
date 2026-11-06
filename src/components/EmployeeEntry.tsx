@@ -34,7 +34,8 @@ import {
 import styles from "./EmployeeEntry.module.css";
 import Photo from "./PhotoUpload";
 import { useDraftField, useSaleDueDate } from "./DraftBoundary";
-import { saleStockIssues, saleStockKey } from "@/lib/sale-availability";
+import { SaleQuantities } from "./SaleQuantities";
+import { saleStockPreview, saleStockKey } from "@/lib/sale-availability";
 import { SaleStockSourceField, useSaleStockSource, type SaleStart } from "./SaleStockSource";
 import HarvestForm from "./HarvestForm";
 
@@ -79,13 +80,6 @@ function SimpleForm({
         {children}
       </fieldset>
       <div className={styles.footer}>
-        <LoadingButton
-          busy={busy}
-          disabled={disabled}
-          className={`btn btn-primary ${styles.save}`}
-        >
-          {label}
-        </LoadingButton>
         <button
           className="btn btn-light"
           type="button"
@@ -94,6 +88,13 @@ function SimpleForm({
         >
           Batal
         </button>
+        <LoadingButton
+          busy={busy}
+          disabled={disabled}
+          className={`btn btn-primary ${styles.save}`}
+        >
+          {label}
+        </LoadingButton>
       </div>
     </form>
   );
@@ -103,16 +104,18 @@ function CategoryButtons({
   value,
   onChange,
   stock,
+  choices = ["good", "cracked"],
 }: {
-  value: Category;
+  value?: Category;
   onChange: (value: Category) => void;
-  stock?: Record<Category, Quantity>;
+  stock?: Partial<Record<Category, Quantity>>;
+  choices?: Category[];
 }) {
   return (
     <fieldset className={styles.categories}>
       <legend>Jenis telur</legend>
       <div className={styles.twoColumns}>
-        {(["good", "cracked"] as const).map((category) => (
+        {choices.map((category) => (
           <button
             type="button"
             key={category}
@@ -125,7 +128,7 @@ function CategoryButtons({
               <strong>{category === "good" ? "Bagus" : "Bentes"}</strong>
               {category === value && <Check size={18} />}
             </span>
-            {stock && (
+            {stock?.[category] && (
               <small>
                 {quantity(stock[category].kg)} kg ·{" "}
                 {quantity(stock[category].eggs)} butir
@@ -336,12 +339,13 @@ function PickupEntry({
 
 type SaleLine = {
   category?: Category;
+  /** Only older employee drafts can contain a manual gift. */
+  is_free?: boolean;
   key: number;
   pickup_id: string;
   kg: string;
   eggs: string;
   trays: string;
-  is_free: boolean;
 };
 
 function SaleEntry({ onSave, busy, onClose, saleStart }: Props) {
@@ -355,7 +359,6 @@ function SaleEntry({ onSave, busy, onClose, saleStart }: Props) {
       kg: "",
       eggs: "",
       trays: "",
-      is_free: false,
     },
   ]);
   const [method, setMethod] = useDraftField<PaymentMethod>("method", "cash");
@@ -371,42 +374,30 @@ function SaleEntry({ onSave, busy, onClose, saleStart }: Props) {
   const [reviewMessage, setReviewMessage] = useState(false);
   const priceReviewRef = useRef<HTMLDivElement>(null);
   const hasQuantity = items.some((item) => item.kg !== "" || item.eggs !== "");
-  const stockIssues = saleStockIssues(items, available, source);
+  const { issues: stockIssues, estimatedEggs } = saleStockPreview(items, available, source);
   const showTotal = !!price && stockIssues.size === 0 && items.every(item => optionFor(item));
-  const priceChanged = !!price && hasQuantity && reviewedPriceId !== price.id;
+  const oldGift = !!price && price.cracked_price > 0 && items.some(item => item.is_free && optionFor(item)?.category === "cracked");
+  const needsPriceReview = oldGift || (!!price && hasQuantity && reviewedPriceId !== price.id);
   const unitPrice = (item: SaleLine) => {
     const pickup = optionFor(item);
-    if (
-      pickup?.category === "cracked" &&
-      (item.is_free || price?.cracked_price === 0)
-    )
-      return 0;
-    return pickup
-      ? (pickup.category === "good"
-          ? price?.good_price
-          : price?.cracked_price) || 0
-      : 0;
+    if (!pickup || !price) return 0;
+    return pickup.category === "good" ? price.good_price : price.cracked_price;
   };
   const total = items.reduce(
     (sum, item) => sum + Math.round(Number(item.kg) * unitPrice(item)),
     0,
   );
-  const hasFree = items.some(
-    (item) =>
-      optionFor(item)?.category ===
-        "cracked" &&
-      (item.is_free || price?.cracked_price === 0),
-  );
+  const hasFree = price?.cracked_price === 0 && items.some(item => optionFor(item)?.category === "cracked");
   const payment = total === 0 ? 0 : full ? total : Number(paid);
   const update = (
     key: number,
-    field: keyof Omit<SaleLine, "key">,
-    value: string | boolean,
+    field: keyof Omit<SaleLine, "key" | "is_free">,
+    value: string,
   ) => {
     if (!hasQuantity) setReviewedPriceId(price?.id);
     setItems((old) =>
       old.map((item) =>
-        item.key === key ? { ...item, ...(field === "pickup_id" || field === "category" ? {is_free: false} : {}), [field]: value } : item,
+        item.key === key ? { ...item, [field]: value } : item,
       ),
     );
   };
@@ -414,7 +405,7 @@ function SaleEntry({ onSave, busy, onClose, saleStart }: Props) {
   const sourceField = <SaleStockSourceField source={source} onChange={next => {
     if (next === source) return;
     setSource(next);
-    setItems(old => old.map(item => ({ ...item, ...choiceFor(next), is_free: false })));
+    setItems(old => old.map(item => ({ ...item, ...choiceFor(next) })));
   }} />;
   return (
     <SimpleForm
@@ -425,7 +416,7 @@ function SaleEntry({ onSave, busy, onClose, saleStart }: Props) {
       onSubmit={(event) => {
         event.preventDefault();
         if (photoBusy || !photo || !showTotal) return;
-        if (priceChanged) {
+        if (needsPriceReview) {
           setReviewMessage(true);
           priceReviewRef.current?.focus();
           return;
@@ -438,15 +429,10 @@ function SaleEntry({ onSave, busy, onClose, saleStart }: Props) {
           stock_source: source,
           items: items.map((item) => ({
             pickup_id: warehouseSale ? "" : item.pickup_id,
-            category: optionFor(item)
-              ?.category,
-            eggs: Number(item.eggs),
+            category: optionFor(item)?.category,
+            ...(item.eggs.trim() ? { eggs: Number(item.eggs) } : {}),
             kg: Number(item.kg),
             trays: Number(item.trays || 0),
-            is_free:
-              optionFor(item)
-                ?.category === "cracked" &&
-              (item.is_free || price?.cracked_price === 0),
           })),
           payment_method: total === 0 ? "cash" : method,
           customer,
@@ -474,9 +460,6 @@ function SaleEntry({ onSave, busy, onClose, saleStart }: Props) {
           </strong>
         </div>
       </div>
-      <p className={styles.hint}>
-        Harga dari atasan. Total mengikuti berat yang dijual.
-      </p>
       {priceSync.error && (
         <div className={styles.warning} role="status">
           <strong>Harga terbaru belum bisa diperiksa</strong>
@@ -533,7 +516,10 @@ function SaleEntry({ onSave, busy, onClose, saleStart }: Props) {
                 </button>
               )}
             </div>
-            {available.length === 1 && pickup ? (
+            {warehouseSale && available.length > 1 ? (
+              <CategoryButtons value={pickup?.category} onChange={category => update(item.key, "category", category)}
+                choices={available.map(option => option.category)} />
+            ) : available.length === 1 && pickup ? (
               <p className={styles.pickupLabel}>
                 <Egg size={20} />
                 <strong>{categoryLabel(pickup.category)}</strong>
@@ -566,39 +552,11 @@ function SaleEntry({ onSave, busy, onClose, saleStart }: Props) {
                 {quantity(balance.kg)} kg{warehouseSale && ` · ${quantity(balance.trays)} krat`}. Harga {money(unitPrice(item))}/kg.
               </p>
             )}
-            {pickup?.category === "cracked" && (
-              <label
-                className="d-flex align-items-center gap-2"
-                style={{ minHeight: 48 }}
-              >
-                <input
-                  type="checkbox"
-                  className="form-check-input m-0"
-                  style={{ minHeight: 24, width: 24 }}
-                  checked={item.is_free || price?.cracked_price === 0}
-                  disabled={price?.cracked_price === 0}
-                  onChange={(event) =>
-                    update(item.key, "is_free", event.target.checked)
-                  }
-                />
-                <span>
-                  Berikan gratis
-                  {price?.cracked_price === 0 && (
-                    <small className="d-block">
-                      Harga bentes hari ini gratis.
-                    </small>
-                  )}
-                </span>
-              </label>
-            )}
-            <Numbers
-              eggs={item.eggs}
-              kg={item.kg}
-              onEggs={(value) => update(item.key, "eggs", value)}
-              onKg={(value) => update(item.key, "kg", value)}
-              available={balance}
-            />
-            <Optional label="Isi jumlah krat (boleh kosong)">
+            <SaleQuantities
+              kg={item.kg} eggs={item.eggs} available={balance} estimatedEggs={estimatedEggs.get(index)}
+              onKg={value => update(item.key, "kg", value)} onEggs={value => update(item.key, "eggs", value)}
+              countSummary={Number(item.trays) > 0 ? `Jumlah butir dan krat · ${quantity(Number(item.trays))} krat` : undefined}
+              extraCountField={
               <Field label="Krat yang dijual">
                 <input
                   className="form-control"
@@ -612,16 +570,16 @@ function SaleEntry({ onSave, busy, onClose, saleStart }: Props) {
                   onChange={(e) => update(item.key, "trays", e.target.value)}
                 />
               </Field>
-            </Optional>
-            <div className={styles.lineTotal}>
-              <span>Jumlah</span>
+              }
+            />
+            {items.length > 1 && <div className={styles.lineTotal}>
+              <span>Subtotal</span>
               <strong>
-                {!price || !pickup || issue ? "—" : pickup.category === "cracked" &&
-                (item.is_free || price?.cracked_price === 0)
+                {!price || !pickup || issue ? "—" : pickup.category === "cracked" && price.cracked_price === 0
                   ? "Gratis"
                   : money(Math.round(Number(item.kg) * unitPrice(item)))}
               </strong>
-            </div>
+            </div>}
           </section>
         );
       })}
@@ -639,17 +597,15 @@ function SaleEntry({ onSave, busy, onClose, saleStart }: Props) {
                 eggs: "",
                 kg: "",
                 trays: "",
-                is_free: false,
               },
             ]);
           }}
         >
-          <Plus size={20} /> Tambah baris telur
+          <Plus size={20} /> Tambah jenis telur
         </button>
       )}
       <Field
           label={hasFree ? "Nama penerima telur gratis (wajib)" : "Nama pelanggan (wajib)"}
-          hint="Isi nama orang atau usaha yang menerima telur."
         >
           <input
             className="form-control"
@@ -662,14 +618,10 @@ function SaleEntry({ onSave, busy, onClose, saleStart }: Props) {
             required
           />
         </Field>
-      {hasFree && total === 0 ? (
-        <p className={styles.hint}>
-          Pemberian gratis. Stok tetap berkurang, tanpa pembayaran atau piutang.
-        </p>
-      ) : (
-        <Optional
-          label={`Pembayaran: ${methodLabel(method)} · ${full ? "Lunas" : "Belum lunas"}`}
-        >
+      <Photo value={photo} onChange={setPhoto} onBusyChange={setPhotoBusy} label="Foto dokumentasi penjualan" optional={false} disabled={busy} />
+      {!(hasFree && total === 0) && (
+        <Optional label={`Pembayaran: ${methodLabel(method)} · ${full ? "Lunas" : "Belum lunas"}`}>
+          <div className={styles.payment}>
           <Field label="Dibayar lewat apa?">
             <select
               className="form-select"
@@ -717,6 +669,7 @@ function SaleEntry({ onSave, busy, onClose, saleStart }: Props) {
               />
             </Field>
           )}
+          </div>
         </Optional>
       )}
       {payment < total && (
@@ -724,9 +677,7 @@ function SaleEntry({ onSave, busy, onClose, saleStart }: Props) {
           <input type="date" name="due_date" className="form-control" value={dueDate} onInput={e => setDueDate(e.currentTarget.value)} onChange={e => setDueDate(e.target.value)} required />
         </Field>
       )}
-      <Photo value={photo} onChange={setPhoto} onBusyChange={setPhotoBusy} label="Foto dokumentasi penjualan" optional={false} disabled={busy} />
-      <p className={styles.hint}>Foto wajib untuk setiap penjualan, termasuk telur gratis. Ambil langsung atau pilih dari galeri.</p>
-      <Optional label="Nomor HP dan catatan (boleh kosong)">
+      <Optional label="Tambah nomor HP, waktu, atau catatan">
         <Field label="Nomor HP pelanggan (opsional)">
           <input
             name="phone" data-draft-native
@@ -774,17 +725,19 @@ function SaleEntry({ onSave, busy, onClose, saleStart }: Props) {
           )}
         </small>
       </div>
-      {priceChanged && showTotal && (
+      {needsPriceReview && showTotal && (
         <div
           className={styles.warning}
           ref={priceReviewRef}
           tabIndex={-1}
           role="alert"
         >
-          <strong>Harga baru dari atasan</strong>
+          <strong>{oldGift ? "Draf ini sebelumnya ditandai gratis" : "Harga baru dari atasan"}</strong>
           <p>
             Total sekarang {money(total)}.{" "}
-            {reviewMessage
+            {oldGift
+              ? "Telur bentes sekarang mengikuti harga dari atasan. Periksa totalnya sebelum menyimpan."
+              : reviewMessage
               ? "Periksa dan setujui harga baru sebelum menyimpan."
               : "Periksa total sebelum menyimpan."}
           </p>
@@ -792,11 +745,12 @@ function SaleEntry({ onSave, busy, onClose, saleStart }: Props) {
             className="btn btn-warning"
             type="button"
             onClick={() => {
+              if (oldGift) setItems(previous => previous.map(({ is_free, ...line }) => line));
               setReviewedPriceId(price?.id);
               setReviewMessage(false);
             }}
           >
-            Pakai harga baru
+            {oldGift ? "Pakai harga dari atasan" : "Pakai harga baru"}
           </button>
         </div>
       )}

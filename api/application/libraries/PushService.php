@@ -1,6 +1,6 @@
 <?php
 require_once __DIR__.'/NativePushTransport.php';
-/** Private device subscriptions and the transactional price-update outbox. */
+/** Private device subscriptions and the transactional notification outbox. */
 class PushService {
     private PDO $db;
     private ?Closure $sender;
@@ -143,18 +143,29 @@ class PushService {
     }
     /** Called within price.create's existing SQL transaction, never after its commit. */
     public function enqueuePrice(array $price): void {
-        if(!$this->db->inTransaction()) throw new LogicException('Price notifications must share the price transaction.');
         $bentes=(float)$price['cracked_price']===0.0?'Gratis':'Rp'.number_format($price['cracked_price'],0,',','.').'/kg';
         $payload=['type'=>'price.updated','id'=>$price['id'],'tag'=>'price-'.$price['id'],'title'=>'Harga telur diperbarui',
             'body'=>'Mulai '.date('d/m/Y H:i',strtotime($price['effective_at'])).' WIB: telur bagus Rp'.number_format($price['good_price'],0,',','.').'/kg; telur bentes '.$bentes.'.',
             'url'=>'/','effective_at'=>$price['effective_at'],'good_price'=>$price['good_price'],'cracked_price'=>$price['cracked_price']];
+        $this->broadcast($payload,$this->activeRecipients());
+    }
+    public function activeRecipients(): array {
+        return $this->query("SELECT u.id FROM users u WHERE u.active=1 AND NOT EXISTS (
+            SELECT 1 FROM records r WHERE r.user_id=u.id AND r.kind='registration'
+            AND COALESCE(JSON_UNQUOTE(JSON_EXTRACT(r.data,'$.status')),'pending')<>'approved'
+        )")->fetchAll(PDO::FETCH_COLUMN);
+    }
+    /** Enqueue per device now; the sender performs network delivery after commit. */
+    public function broadcast(array $payload,array $recipients): void {
+        if(!$this->db->inTransaction()) throw new LogicException('Notifications must share the business transaction.');
+        $activeUsers=array_fill_keys($recipients,true);
         foreach($this->query("SELECT data FROM records WHERE kind='push_subscription'")->fetchAll(PDO::FETCH_COLUMN) as $raw) {
             $sub=json_decode($raw,true,512,JSON_THROW_ON_ERROR);
             if(isset($sub['subscription']['platform']) && !$this->liveSession($sub['user_id'],$sub['session_hash'])) {
                 $this->query("DELETE FROM records WHERE id=? AND kind='push_subscription' AND data=?",[$sub['id'],$raw]);
                 continue;
             }
-            if($this->active($sub['user_id'])) $this->enqueue($sub,$price['id'],$payload);
+            if(isset($activeUsers[$sub['user_id']])) $this->enqueue($sub,$payload['id'],$payload);
         }
     }
     private function enqueue(array $sub,string $eventId,array $payload): void {

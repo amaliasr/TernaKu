@@ -327,8 +327,6 @@ export default function EmployeeWorkspace() {
               </span>
               <ArrowRight size={22} />
             </button>
-            <InstallApp />
-            <PushNotifications />
             <section
               className={styles.section}
               aria-label="Catatan saya hari ini"
@@ -378,6 +376,8 @@ export default function EmployeeWorkspace() {
                 <ArrowRight size={18} />
               </button>
             )}
+            <InstallApp />
+            <PushNotifications />
             <section className={styles.moreSection}>
               <button
                 className={styles.moreToggle}
@@ -621,24 +621,26 @@ export default function EmployeeWorkspace() {
                 </article>
               ))}
             </div>
-            <button
-              className={styles.primaryButton}
-              onClick={() => openSale({ source: "warehouse" })}
-            >
-              <ShoppingBag size={22} /> Jual dari gudang
-            </button>
-            <button
-              className={styles.secondaryButton}
-              onClick={() => setModal("pickup")}
-            >
-              <Package size={22} /> Ambil telur untuk dijual
-            </button>
-            <button
-              className={styles.secondaryButton}
-              onClick={() => setModal("production")}
-            >
-              <Plus size={20} /> Catat panen dari kandang
-            </button>
+            <div className={styles.stockActions}>
+              <button
+                className={styles.primaryButton}
+                onClick={() => openSale({ source: "warehouse" })}
+              >
+                <ShoppingBag size={22} /> Jual dari gudang
+              </button>
+              <button
+                className={styles.secondaryButton}
+                onClick={() => setModal("pickup")}
+              >
+                <Package size={22} /> Ambil telur untuk dijual
+              </button>
+              <button
+                className={styles.secondaryButton}
+                onClick={() => setModal("production")}
+              >
+                <Plus size={20} /> Catat panen dari kandang
+              </button>
+            </div>
             <section className={styles.section}>
               <div className={styles.sectionHeading}>
                 <h2>Telur yang saya bawa</h2>
@@ -832,7 +834,6 @@ export default function EmployeeWorkspace() {
       {notificationsOpen && (
         <Dialog
           title="Pemberitahuan"
-          subtitle="Perubahan harga dan kabar dari atasan."
           onClose={() => setNotificationsOpen(false)}
         >
           <div className={styles.notifications}>

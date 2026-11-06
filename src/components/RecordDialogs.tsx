@@ -216,7 +216,7 @@ export function CorrectionDialog({
                       </small>
                     </div>
                     <div className="row g-3">
-                      <Field className="col-4" label="Butir">
+                      <Field className="col-4" label={item.eggs_estimated ? "Butir (estimasi awal)" : "Butir"}>
                         <input
                           className="form-control"
                           type="number"
@@ -656,7 +656,22 @@ export function SaleDetail({
                   : "Belum lunas"}
           </Pill>
         </div>
-        <div className="table-responsive">
+        <ul className="list-unstyled d-sm-none mb-4" aria-label="Telur yang dijual">
+          {sale.items.map((item) => (
+            <li key={item.id} className="border-bottom py-3">
+              <div className="d-flex justify-content-between gap-3">
+                <strong>{categoryLabel(item.category)}</strong>
+                <strong>{isFreeSaleItem(item) ? "Gratis" : money(item.total)}</strong>
+              </div>
+              <div>{number(item.kg)} kg × {money(item.unit_price)}/kg</div>
+              <small className="text-muted">
+                {number(item.eggs)} butir{item.eggs_estimated ? " (estimasi)" : ""}
+                {item.trays > 0 && ` · ${number(item.trays)} krat`}
+              </small>
+            </li>
+          ))}
+        </ul>
+        <div className="table-responsive d-none d-sm-block">
           <table className="table farm-table">
             <thead>
               <tr>
@@ -678,6 +693,7 @@ export function SaleDetail({
                   </td>
                   <td>
                     {number(item.eggs)} / {number(item.trays)}
+                    {item.eggs_estimated && <small className="cell-sub">Jumlah butir estimasi</small>}
                   </td>
                   <td>{number(item.kg)} kg</td>
                   <td>

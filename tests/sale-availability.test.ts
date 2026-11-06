@@ -4,6 +4,7 @@ import {
   availableSalePickups,
   saleStockKey,
   saleStockIssues,
+  saleStockPreview,
   warehouseSaleOptions,
 } from "../src/lib/sale-availability";
 import { createDemoState } from "../src/lib/seed";
@@ -52,6 +53,29 @@ test("sale drafts use the latest owned pickup balance, including multiple lines 
     /tidak tersedia/,
   );
   assert.equal(availableSalePickups(state, "other-user").length, 0);
+});
+
+test("weighed sales reserve counted eggs first and keep estimates separate across sources", () => {
+  const options = [
+    { id: "good", balance: { eggs: 45, kg: 10, trays: 0 } },
+    { id: "cracked", balance: { eggs: 10, kg: 0.5, trays: 0 } },
+  ];
+  const good = { pickup_id: "", category: "good" as const, kg: "7", eggs: "" };
+  const cracked = { ...good, category: "cracked" as const };
+  const draft = [good, { ...cracked, eggs: "", kg: "0.05" }, { ...cracked, eggs: "5", kg: "0.4" }, { ...cracked, eggs: "", kg: "0.05" }];
+  const preview = saleStockPreview(draft, options, "warehouse");
+  assert.deepEqual([...preview.issues], []);
+  // 45 * 7 / 10 rounds to 32. For cracked, reserve 5 counted first, then split the 5 remaining eggs.
+  assert.deepEqual([...preview.estimatedEggs], [[0, 32], [1, 3], [3, 2]]);
+  const last = { pickup_id: "personal", eggs: "", kg: "0.01" };
+  const personal = [{ id: "personal", balance: { eggs: 2, kg: 0.1, trays: 0 } }];
+  const impossible = saleStockPreview([last, last], personal);
+  assert.match(impossible.issues.get("personal")!, /Periksa berat/);
+  assert.equal(impossible.estimatedEggs.size, 0);
+  assert.deepEqual([...saleStockPreview([{ ...last, kg: "0.099" }], personal).estimatedEggs], [[0, 1]]);
+  assert.deepEqual([...saleStockPreview([{ ...last, kg: "0.1" }], personal).estimatedEggs], [[0, 2]]);
+  for (const eggs of ["0", "-1", "1.25", "0x10"])
+    assert.match(saleStockPreview([{ ...last, eggs }], personal).issues.get("personal")!, /Jumlah butir/);
 });
 
 test("warehouse options use the current farm inventory and exclude categories with no saleable eggs", () => {

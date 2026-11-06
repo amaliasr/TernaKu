@@ -51,7 +51,7 @@ self.addEventListener("fetch", (event) => {
   );
 });
 
-// Each saved price has a distinct ID, even when the numeric prices are unchanged.
+// Each saved event has its own tag so separate activities can appear on the same device.
 self.addEventListener("push", (event) => {
   let payload = {};
   try {
@@ -68,7 +68,7 @@ self.addEventListener("push", (event) => {
   const body =
     typeof payload.body === "string"
       ? payload.body.slice(0, 500)
-      : "Buka TernaKu untuk melihat pembaruan harga.";
+      : "Buka TernaKu untuk melihat pemberitahuan.";
   const tag =
     typeof payload.tag === "string"
       ? payload.tag.slice(0, 120)

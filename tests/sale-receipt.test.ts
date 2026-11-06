@@ -124,3 +124,11 @@ test("legacy snapshot matching never confuses warehouse sales with personal pick
   assert.equal(findSavedSale(state([warehouse]),"employee",direct),warehouse);
   assert.equal(findSavedSale(state([warehouse]),"employee",{...direct,stock_source:"pickup"}),null);
 });
+
+test("fallback receipt matches an omitted count only when it was estimated", () => {
+  const counted = sale("counted");
+  const estimated = sale("estimated", { items: [{ ...counted.items[0], eggs_estimated: true }] });
+  const weighed = { ...payload, items: [{ pickup_id: "pickup-1", category: "good", kg: 1.8 }] };
+  assert.equal(findSavedSale(state([counted, estimated]), "employee", weighed), estimated);
+  assert.equal(findSavedSale(state([counted, estimated]), "employee", payload), counted);
+});

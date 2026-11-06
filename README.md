@@ -23,8 +23,9 @@ Lihat [panduan produksi VPS](deploy/vps/production/README.md) untuk merilis kode
 - Di menu **Stok & pengambilan → Sesuaikan stok**, admin bisa menambah stok, mengurangi stok, atau memasukkan hasil hitung fisik untuk telur bagus dan bentes. Form menampilkan saldo awal, perubahan, dan saldo akhir dalam butir, kg, dan krat. Alasan, nama admin, tanggal, dan jam tersimpan di riwayat dan laporan penyesuaian gudang.
 - Pengambilan telur per karyawan, sisa telur yang dibawa, pengembalian, dan riwayat pergerakan stok bertanggal. Validasi mencegah saldo butir/kilogram negatif dan sisa yang hanya mempunyai salah satu satuan.
 - Atasan dan karyawan dapat memilih **Gudang → Jual dari gudang** tanpa pengambilan pribadi. Satu nota mengurangi stok gudang sesuai kategori, butir, kg, dan krat. Pilih **Telur yang saya bawa** jika telur sudah diambil; stok gudang tidak dipotong lagi.
+- Untuk menjual, masukkan berat hasil timbangan. Jumlah butir opsional. Jika dikosongkan, nota menampilkan jumlah butir sebagai estimasi berdasarkan stok asal.
 - Penjualan beberapa item dalam satu transaksi, pelanggan, harga otomatis, Tunai/Transfer/QRIS/Piutang, pembayaran sebagian/pelunasan, dan nota penjualan PDF.
-- Telur bentes dapat dibagikan gratis dengan nama penerima wajib diisi. Harga bentes Rp0 ditampilkan sebagai **Gratis**; jumlah telur tetap mengurangi stok, tanpa menambah omzet. Telur bagus tetap mengikuti harga jual.
+- Atasan dapat memberikan telur bentes gratis per transaksi. Karyawan selalu menjual dengan harga bentes yang ditetapkan atasan. Harga bentes Rp0 ditampilkan sebagai **Gratis**; jumlah telur tetap mengurangi stok, tanpa menambah omzet. Telur bagus tetap mengikuti harga jual.
 - Harga bagus/bentes per kilogram, jadwal mulai berlaku, riwayat harga, notifikasi perubahan, serta snapshot harga transaksi yang tidak berubah ketika harga baru ditetapkan.
 - Pembelian pakan beberapa item, nota pembelian PDF, stok/minimum pakan, dan pemakaian pakan per kandang ayam.
 - Admin mengelola akun/target, menonaktifkan karyawan, mengunci catatan, meninjau koreksi, dan membaca log aktivitas. Karyawan hanya menerima transaksi miliknya sendiri; harga serta saldo peternakan dapat dilihat sesuai kebutuhan kerja.
@@ -37,6 +38,7 @@ Lihat [panduan produksi VPS](deploy/vps/production/README.md) untuk merilis kode
 - Profil akun dapat mengubah nama dan foto. Semua foto bisa diperbesar, diambil dari kamera atau dipilih dari galeri. Web dan Android mengecilkan foto sebelum mengunggahnya. Sasaran foto dokumentasi sekitar 320 KiB dan foto profil sekitar 96 KiB; batas akhirnya tetap 1 MiB. Foto kecil yang sesuai dipertahankan. API menerima berkas gambar langsung.
 - Login tetap tersimpan setelah aplikasi ditutup. Sesi berlaku selama 30 hari sejak aktivitas terakhir, dengan batas 90 hari sejak login. Koneksi terputus tidak otomatis mengeluarkan akun.
 - Tombol kembali mengikuti menu yang dikunjungi. Saat foto atau formulir terbuka, tombol kembali menutup tampilan tersebut lebih dahulu.
+- Semua akun aktif mendapat pemberitahuan untuk penjualan, panen, dan telur yang masuk ke gudang. Panen yang langsung masuk gudang menghasilkan satu pemberitahuan gabungan.
 - Notifikasi harga ke HP melalui Web Push setelah perangkat memberi izin, termasuk ketika admin menyimpan nominal harga yang sama. Penyiapan server dan cron dijelaskan dalam [panduan notifikasi HP](api/PUSH.md).
 - Versi [Android dan iPhone](mobile/README.md) memakai akun TernaKu yang sama. Pengiriman notifikasi aplikasi menggunakan Firebase Cloud Messaging untuk Android dan Apple Push Notification service untuk iOS.
 - Laporan PDF dan Excel (`.xlsx`) serta peringkat penjualan. Export dibuat di browser menggunakan jsPDF dan ExcelJS.

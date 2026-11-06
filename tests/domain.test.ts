@@ -24,7 +24,7 @@ import type {
 const NOW = new Date("2026-10-13T09:00:00Z");
 const DATE = "2026-10-13";
 const DOCUMENTATION = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aC9sAAAAASUVORK5CYII=";
-function fixture(): State {
+function fixture(crackedPrice = 18000): State {
   const s = emptyState();
   s.users = [
     {
@@ -59,7 +59,7 @@ function fixture(): State {
     {
       id: "price",
       good_price: 28000,
-      cracked_price: 18000,
+      cracked_price: crackedPrice,
       effective_at: `${DATE}T00:00:00+07:00`,
       created_at: NOW.toISOString(),
       created_by: "admin",
@@ -146,7 +146,7 @@ function gift(s: State, user: string, extra: CommandPayload = {}): State {
 
 for (const user of ["admin", "a"]) {
   test(`${user} can record own harvest, pickup and named free cracked eggs without debt`, () => {
-    const before = crackedPickup(user);
+    const before = crackedPickup(user, fixture(user === "admin" ? 18000 : 0));
     const result = gift(before, user);
     const transaction = result.sales.at(-1)!;
     assert.equal(transaction.user_id, user);
@@ -200,8 +200,21 @@ for (const user of ["admin", "a"]) {
   });
 }
 
+test("an employee selling carried cracked eggs must use the active price", () => {
+  const state = crackedPickup("a");
+  const pickup = state.pickups[0];
+  assert.throws(() => gift(state, "a"), /Hanya atasan/);
+  assert.equal(state.sales.length, 0);
+  assert.equal(pickupBalance(state, pickup).kg, 6);
+  const charged = gift(state, "a", {
+    items: [{ pickup_id: pickup.id, category: "cracked", eggs: 20, kg: 1.2, trays: 0, unit_price: 0 }],
+  });
+  assert.equal(charged.sales[0].items[0].unit_price, 18000);
+  assert.equal(charged.sales[0].total, 21600);
+});
+
 test("free cracked eggs require a named recipient and reject any overpayment atomically", () => {
-  const source = crackedPickup("a");
+  const source = crackedPickup("a", fixture(0));
   const original = JSON.stringify(source);
   assert.throws(() => gift(source, "a", { customer: "  " }), /Nama penerima/);
   assert.throws(() => gift(source, "a", { paid: 1 }), /melebihi total/);
@@ -244,14 +257,14 @@ test("zero daily cracked price automatically records a free snapshot while good 
   });
   assert.equal(result.sales[0].items[0].is_free, true);
   assert.equal(result.sales[0].total, 0);
-  assert.match(result.notifications.at(-1)!.message, /Gratis/);
+  assert.match(source.notifications.at(-1)!.message, /Gratis/);
 });
 
 test("one sale can mix paid good eggs and free cracked eggs with only paid items included in the bill", () => {
-  const source = crackedPickup("a", take(fixture()));
+  const source = crackedPickup("admin", take(fixture(), "admin"));
   const good = source.pickups.find((p) => p.category === "good")!;
   const cracked = source.pickups.find((p) => p.category === "cracked")!;
-  const result = gift(source, "a", {
+  const result = gift(source, "admin", {
     items: [
       { pickup_id: good.id, category: "good", eggs: 50, kg: 3, trays: 0 },
       {
@@ -276,7 +289,7 @@ test("one sale can mix paid good eggs and free cracked eggs with only paid items
 });
 
 test("free price and recipient snapshots survive later prices and quantity corrections", () => {
-  let source = gift(crackedPickup("a"), "a");
+  let source = gift(crackedPickup("a", fixture(0)), "a");
   const transaction = source.sales[0];
   const item = transaction.items[0];
   source = cmd(source, "admin", "price.create", {
@@ -326,7 +339,7 @@ test("Jakarta business date is independent of host timezone", () => {
 });
 
 test("one pickup can be split between paid and free cracked items without escaping cumulative stock limits", () => {
-  const source = crackedPickup("a");
+  const source = crackedPickup("admin");
   const pickup = source.pickups[0];
   const items = [
     {
@@ -346,14 +359,14 @@ test("one pickup can be split between paid and free cracked items without escapi
       is_free: true,
     },
   ];
-  const result = gift(source, "a", { items, paid: 21600 });
+  const result = gift(source, "admin", { items, paid: 21600 });
   assert.equal(result.sales[0].total, 21600);
   assert.equal(result.sales[0].items[0].unit_price, 18000);
   assert.equal(result.sales[0].items[1].unit_price, 0);
   assert.equal(pickupBalance(result, pickup).kg, 3);
   assert.throws(
     () =>
-      gift(source, "a", {
+      gift(source, "admin", {
         items: [items[0], { ...items[1], eggs: 81, kg: 4.86 }],
       }),
     /melebihi sisa/,
@@ -414,7 +427,7 @@ test("scheduled prices activate at Jakarta time and existing snapshots never cha
   assert.equal(activePrice(s, "2026-10-13T17:00:00Z")?.good_price, 30000);
   assert.equal(s.sales[0].total, oldTotal);
   assert.equal(s.sales[0].items[0].unit_price, 28000);
-  assert.equal(s.notifications.length, s.users.length);
+  assert.equal(s.notifications.filter(n => n.title === "Harga telur dijadwalkan").length, s.users.length);
 });
 test("backdating a sale does not change the transaction-time price snapshot", () => {
   const s = take(fixture());
@@ -1092,7 +1105,7 @@ test("public demo signup creates an inactive pending employee, notifies admins, 
   assert.equal(user.registration_status, "pending");
   assert.equal(result.status, "pending");
   assert.equal(
-    state.notifications.filter((n) => n.user_id === "admin").length,
+    state.notifications.filter((n) => n.user_id === "admin" && n.title === "Pendaftaran karyawan baru").length,
     1,
   );
   assert.equal(state.activity[0].action, "user.register");

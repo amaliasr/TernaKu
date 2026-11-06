@@ -85,7 +85,7 @@ services:
     profiles: [push]
     init: true
     user: www-data
-    command: ["/bin/sh", "-c", "while :; do php scripts/push-worker.php --limit=50; sleep 60; done"]
+    command: ["/bin/sh", "-c", "while :; do php scripts/push-worker.php --limit=50; sleep 5; done"]
     healthcheck:
       test:
         - CMD

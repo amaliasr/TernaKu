@@ -54,6 +54,49 @@ try {
     $result=$push->drain(); checkPush($result['sent']===2 && count($deliveries)===2 && $deliveries[0]['tag']!==$deliveries[1]['tag'],'different price IDs produce distinct notifications');
     checkPush(str_contains($deliveries[0]['body'],'Gratis') && str_contains($deliveries[0]['body'],date('d/m/Y',time()+86400)),'free bentes and future effective date are explicit');
     checkPush($push->drain()['sent']===0,'delivered jobs are never resent by the next worker');
+    $harvest=['date'=>date('Y-m-d'),'notes'=>'RAHASIA lokasi','items'=>[
+        ['category'=>'good','eggs'=>30,'kg'=>1.8],['category'=>'cracked','eggs'=>10,'kg'=>0.6],
+    ]];
+    $state=$farm->command('production.create',$harvest,'activity-combined-1');
+    $notices=array_values(array_filter($state['notifications'],fn($n)=>($n['type']??'')==='farm.activity'));
+    checkPush(count($notices)===1 && $notices[0]['activity']==='production.stocked' && $notices[0]['title']==='Panen masuk gudang'
+        && str_contains($notices[0]['message'],'2,4 kg') && !str_contains($notices[0]['message'],'RAHASIA'),'two harvest categories share one safe combined harvest-and-stock notice');
+    $event=$notices[0]['event_id'];
+    $audience=$db->prepare("SELECT user_id FROM records WHERE kind='notification' AND JSON_UNQUOTE(JSON_EXTRACT(data,'$.event_id'))=? ORDER BY user_id");
+    $audience->execute([$event]);
+    checkPush($audience->fetchAll(PDO::FETCH_COLUMN)===['push_admin','push_employee','push_other'],'all active accounts including the actor have an inbox copy, and inactive accounts do not');
+    $farm->command('production.create',$harvest,'activity-combined-1');
+    $audience->execute([$event]);
+    checkPush(count($audience->fetchAll())===3 && countPush('push_job')===1 && $push->drain()['sent']===1,'replaying the command duplicates neither inbox records nor device deliveries');
+    $combined=end($deliveries);
+    checkPush($combined['type']==='farm.activity' && $combined['id']===$event && $combined['tag']==='farm-'.$event && $combined['url']==='/'
+        && $combined['body']===$notices[0]['message'] && !str_contains(json_encode($combined),'RAHASIA'),'queued push and authenticated inbox refer to the same privacy-limited activity');
+    $farm->command('settings.update',['harvest_auto_stock'=>false],'activity-manual-settings');
+    $pending=$farm->command('production.create',$harvest,'activity-pending');
+    $unreceived=array_values(array_filter($pending['productions'],fn($p)=>$p['stocked_at']===null));
+    $farm->command('production.receive',['id'=>$unreceived[0]['id']],'activity-receive');
+    $pickupState=$farm->command('pickup.create',['date'=>date('Y-m-d'),'category'=>'good','eggs'=>10,'kg'=>0.6,'area'=>'RAHASIA area'],'activity-pickup');
+    $farm->command('pickup.return',['id'=>$pickupState['pickups'][0]['id'],'eggs'=>3,'kg'=>0.18,'notes'=>'RAHASIA retur'],'activity-return');
+    $farm->command('price.create',array_replace($price,['effective_at'=>date('c',time()-60)]),'activity-current-price');
+    $proof='data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aC9sAAAAASUVORK5CYII=';
+    $sale=['date'=>date('Y-m-d'),'stock_source'=>'warehouse','customer'=>'RAHASIA pelanggan','photo'=>$proof,'notes'=>'RAHASIA transaksi',
+        'items'=>[['category'=>'good','kg'=>0.06],['category'=>'cracked','kg'=>0.12]],'payment_method'=>'cash','paid'=>0];
+    $sold=$farm->command('sale.create',$sale,'activity-sale');
+    $balance=$sold['inventory']['good']; $added=$balance; $added['eggs']+=10; $added['kg']+=0.6;
+    $addition=['method'=>'add','reason'=>'RAHASIA pergudangan','items'=>[['category'=>'good','expected'=>$balance,'physical'=>$added]]];
+    $farm->command('stock.reconcile',$addition,'activity-add');
+    $farm->command('stock.reconcile',['method'=>'count','reason'=>'RAHASIA hitung ulang','items'=>[['category'=>'good','expected'=>$added,'physical'=>$added]]],'activity-count');
+    $saleId=$sold['command_result']['record_id'];
+    $farm->command('correction.apply',['entity'=>'sale','id'=>$saleId,'reason'=>'RAHASIA koreksi','changes'=>['notes'=>'RAHASIA catatan']],'activity-correct');
+    $deliveryStart=count($deliveries);
+    $push->drain(20);
+    $activities=array_values(array_filter(array_slice($deliveries,$deliveryStart),fn($d)=>$d['type']==='farm.activity'));
+    $kinds=array_column($activities,'activity'); sort($kinds);
+    checkPush($kinds===['pickup.return','production.create','production.receive','sale.create','stock.add']
+        && count(array_unique(array_column($activities,'tag')))===5,'each manual harvest, receipt, return, sale and addition sends once; a count or correction does not send');
+    $sales=array_values(array_filter($activities,fn($d)=>$d['activity']==='sale.create'));
+    checkPush(str_contains($sales[0]['body'],'0,18 kg') && !str_contains(json_encode($activities),'RAHASIA') && !str_contains(json_encode($activities),'data:image')
+        && !str_contains($sales[0]['body'],'Rp'),'sale events sum item weights and exclude customer, proof, note, price and total');
     $farm->command('price.create',$price,'push-retry-uuid');
     $fail=new PushService($db,fn()=>['success'=>false,'expired'=>false,'status'=>503],$keys);
     checkPush($fail->drain()['retry']===1 && countPush('push_job')===1,'temporary failure retains durable pending job');

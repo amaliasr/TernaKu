@@ -24,7 +24,8 @@ import {
 } from "@/lib/domain";
 import type { Category, CommandPayload, Sale } from "@/lib/types";
 import { findSavedSale } from "@/lib/sale-receipt";
-import { saleStockIssues, saleStockKey } from "@/lib/sale-availability";
+import { SaleQuantities } from "./SaleQuantities";
+import { saleStockPreview, saleStockKey } from "@/lib/sale-availability";
 import { SaleStockSourceField, useSaleStockSource, type SaleStart } from "./SaleStockSource";
 import EmployeeEntry from "./EmployeeEntry";
 import { DraftBoundary, DraftFields, useDraftField, useEntryDraft, useSaleDueDate } from "./DraftBoundary";
@@ -234,7 +235,7 @@ function SaleForm({ onSave, busy, onClose, saleStart }: FormProps) {
   const [photo, setPhoto] = useDraftField("photo", "");
   const [photoBusy, setPhotoBusy] = useState(false);
   const [reviewedPriceId, setReviewedPriceId] = useDraftField("reviewedPriceId", price?.id);
-  const stockIssues = saleStockIssues(items, available, source);
+  const { issues: stockIssues, estimatedEggs } = saleStockPreview(items, available, source);
   const showTotal = !!price && stockIssues.size === 0 && items.every(item => optionFor(item));
   const needsPriceReview = !!price && reviewedPriceId !== price.id && items.some(line => line.kg !== "" || line.eggs !== "");
   const linePrice = (line: SaleLine) => {
@@ -293,7 +294,7 @@ function SaleForm({ onSave, busy, onClose, saleStart }: FormProps) {
             category: optionFor(item)
               ?.category,
             kg: Number(item.kg),
-            eggs: Number(item.eggs),
+            ...(item.eggs.trim() ? { eggs: Number(item.eggs) } : {}),
             trays: Number(item.trays),
             is_free:
               optionFor(item)?.category ===
@@ -436,31 +437,12 @@ function SaleForm({ onSave, busy, onClose, saleStart }: FormProps) {
                 </label>
               )}
               <div className="row g-2 mt-1">
-                <Field className="col-4" label="Butir">
-                  <input
-                    className="form-control"
-                    type="number"
-                    min="1"
-                    step="1"
-                    max={balance?.eggs}
-                    value={item.eggs}
-                    onChange={(e) => update(index, "eggs", e.target.value)}
-                    required
-                  />
-                </Field>
-                <Field className="col-4" label="Berat (kg)">
-                  <input
-                    className="form-control"
-                    type="number"
-                    min="0.001"
-                    step="0.001"
-                    max={balance?.kg}
-                    value={item.kg}
-                    onChange={(e) => update(index, "kg", e.target.value)}
-                    required
-                  />
-                </Field>
-                <Field className="col-4" label="Krat">
+                <SaleQuantities
+                  kg={item.kg} eggs={item.eggs} available={balance} estimatedEggs={estimatedEggs.get(index)}
+                  onKg={value => update(index, "kg", value)} onEggs={value => update(index, "eggs", value)}
+                  fieldClassName="col-12 col-sm-4"
+                />
+                <Field className="col-12 col-sm-4" label="Krat">
                   <input
                     className="form-control"
                     type="number"
@@ -1405,7 +1387,7 @@ function EntryBody({kind, onClose, onSaved, saleStart}: EntryProps) {
           : title
       }
       subtitle={
-        simple ? "Isi jumlah butir dan berat hasil timbangan." : subtitle
+        simple && kind === "sale" ? "Isi berat sesuai timbangan." : simple ? "Isi jumlah butir dan berat hasil timbangan." : subtitle
       }
       onClose={close}
       wide={!simple && (kind === "sale" || kind === "feed.purchase")}

@@ -2595,7 +2595,12 @@ small {
   }
   .modal-footer,
   .modal-footer-custom {
-    padding: 15px 20px;
+    flex-wrap: wrap;
+    row-gap: 12px;
+    padding: 16px 20px calc(20px + env(safe-area-inset-bottom, 0px));
+  }
+  .modal-footer-custom > button {
+    min-height: 44px;
   }
   .notification-panel {
     right: -40px;

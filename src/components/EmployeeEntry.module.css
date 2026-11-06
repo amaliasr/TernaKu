@@ -30,6 +30,7 @@
 .form :global(.form-control),
 .form :global(.form-select) {
   width: 100%;
+  scroll-margin-block: 18px;
 }
 .form :global(.btn) {
   white-space: normal;
@@ -110,6 +111,12 @@
   gap: 16px;
   padding: 3px 14px 16px;
 }
+.countHint {
+  display: block;
+  margin-top: -6px;
+  font-size: calc(13px * var(--font-scale, 1));
+  color: var(--bs-secondary-color);
+}
 .summary {
   display: grid;
   gap: 6px;
@@ -132,10 +139,11 @@
   line-height: 1.7;
 }
 .footer {
-  padding: 16px 24px calc(16px + env(safe-area-inset-bottom, 0px));
+  padding: 18px 24px calc(24px + env(safe-area-inset-bottom, 0px));
   border-top: 1px solid #e7ebe4;
   display: grid;
-  gap: 10px;
+  grid-template-columns: minmax(min-content, 1fr) minmax(0, 2fr);
+  gap: 12px;
   background: white;
   border-radius: 0 0 18px 18px;
 }
@@ -187,6 +195,14 @@
   border: 1px solid #e3e8e0;
   border-radius: 14px;
   min-width: 0;
+}
+.saleItem input[inputmode="decimal"] {
+  font-weight: 600;
+  font-size: calc(19px * var(--font-scale, 1));
+}
+.payment {
+  display: grid;
+  gap: 14px;
 }
 .lineHeader,
 .lineTotal {

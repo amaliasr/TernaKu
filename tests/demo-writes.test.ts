@@ -61,17 +61,67 @@ const warehouse = {
   ],
 };
 
+test("one activity notice per active account survives retries and keeps the buyer and sale details private", () => {
+  const initial = legacy();
+  initial.users[0].name = "Sari Wulandari";
+  const example = initial.users[0];
+  initial.users.push({ ...example, id: "admin", role: "admin" }, { ...example, id: "off", active: false },
+    { ...example, id: "pending", registration_status: "pending" }, { ...example, id: "rejected", registration_status: "rejected" });
+  const first = applyDemoWrite(initial, "sari", "production.create", harvest, attempt, at);
+  assert.deepEqual(first.state.notifications.map(n => n.user_id).sort(), ["admin", "budi", "sari"]);
+  assert.equal(new Set(first.state.notifications.map(n => n.event_id)).size, 1);
+  assert.equal(first.state.notifications[0].title, "Panen masuk gudang");
+  assert.equal(first.state.notifications[0].message, "Sari mencatat panen 7,2 kg telur yang langsung masuk gudang.");
+  const payload = { ...warehouse, items: [{ category: "good", kg: 1 }, { category: "cracked", kg: 0.5 }], notes: "Private", customer: "Private" };
+  const saleKey = { ...attempt, request_id: "sale-for-notice" };
+  const sold = applyDemoWrite(first.state, "sari", "sale.create", payload, saleKey, at);
+  const retried = applyDemoWrite(sold.state, "sari", "sale.create", payload, saleKey, at);
+  const notices = retried.state.notifications.filter(n => n.activity === "sale.create");
+  assert.deepEqual(notices.map(n => n.user_id).sort(), ["admin", "budi", "sari"]);
+  assert.ok(notices.every(n => n.type === "farm.activity" && n.title === "Penjualan telur" && n.message === "Sari menjual 1,5 kg telur."));
+  assert.equal(new Set(retried.state.notifications.map(n => n.id)).size, 6);
+  assert.equal(new Set(retried.state.notifications.map(n => n.event_id)).size, 2);
+  assert.doesNotMatch(JSON.stringify(notices), /Private|image\/png|Rp|Wulandari/);
+});
+
+test("warehouse activity distinguishes deferred harvest, receipt, return, and a positive addition", () => {
+  const initial = legacy();
+  initial.users[1].name = "operator@example.test";
+  initial.users[1].role = "admin";
+  initial.settings = { harvest_auto_stock: false };
+  const record = executeCommand(initial, "sari", "production.create", { date, ...harvest.items[0] }, at);
+  const received = executeCommand(record, "budi", "production.receive", { id: record.productions[0].id }, at);
+  const pickup = executeCommand(received, "sari", "pickup.create", { date, category: "good", eggs: 50, kg: 3, trays: 0, area: "Pasar" }, at);
+  const returned = executeCommand(pickup, "sari", "pickup.return", { id: pickup.pickups[0].id, eggs: 10, kg: 0.6, trays: 0 }, at);
+  const stock = eggStock(returned, "good");
+  const adjust = (state: State, method: string, change: number) => {
+    const expected = eggStock(state, "good");
+    return executeCommand(state, "budi", "stock.reconcile", { method, reason: "Cek persediaan",
+      items: [{ category: "good", expected, physical: { ...expected, trays: expected.trays + change } }] }, at);
+  };
+  const added = adjust(returned, "add", 1);
+  assert.equal(eggStock(added, "good").trays, stock.trays + 1);
+  const final = adjust(adjust(added, "count", 0), "subtract", -1);
+  const inbox = final.notifications.filter(n => n.user_id === "sari");
+  assert.deepEqual(inbox.map(n => n.activity), ["production.create", "production.receive", "pickup.return", "stock.add"]);
+  assert.equal(inbox[1].message, "Petugas menerima 6 kg telur dari panen.");
+  assert.equal(inbox[3].message, "Petugas menambah persediaan di gudang.");
+});
+
 test("warehouse sale debits each category once, even with a repeated request or mixed paid/free lines", () => {
   const harvested = executeCommand(legacy(), "sari", "production.create", harvest, at);
-  const before = executeCommand(harvested, "budi", "pickup.create",
+  harvested.users.push({ ...harvested.users[0], id: "admin", role: "admin", name: "Atasan" });
+  const before = executeCommand(harvested, "admin", "pickup.create",
     { date, category: "good", eggs: 10, kg: 0.6, trays: 0, area: "Pasar" }, at);
-  const first = applyDemoWrite(before, "budi", "sale.create", warehouse, attempt, at);
-  const { state, result } = applyDemoWrite(JSON.parse(JSON.stringify(first.state)), "budi", "sale.create", warehouse, attempt, at);
+  assert.throws(() => applyDemoWrite(before, "budi", "sale.create", warehouse, attempt, at),
+    (error: unknown) => error instanceof ApiError && error.status === 422 && /Hanya atasan/.test(error.message));
+  const first = applyDemoWrite(before, "admin", "sale.create", warehouse, attempt, at);
+  const { state, result } = applyDemoWrite(JSON.parse(JSON.stringify(first.state)), "admin", "sale.create", warehouse, attempt, at);
   assert.deepEqual(result, first.result);
   assert.equal(state.sales.length, 1);
   const [sale] = state.sales;
   assert.equal(sale.stock_source, "warehouse");
-  assert.equal(sale.user_id, "budi");
+  assert.equal(sale.user_id, "admin");
   assert.equal(sale.total, 2.4 * 28000 + 0.24 * 18000);
   assert.equal(sale.balance, sale.total);
   assert.deepEqual(sale.items.map(i => [i.pickup_id, i.unit_price]), [["", 28000], ["", 0], ["", 18000]]);
@@ -79,7 +129,7 @@ test("warehouse sale debits each category once, even with a repeated request or 
   assert.deepEqual(pickupBalance(state, state.pickups[0]), pickupBalance(before, before.pickups[0]));
   const moves = state.stock_movements!.filter(m => m.reference_id === sale.id);
   assert.deepEqual(moves.map(m => [m.kind, m.category, m.eggs, m.kg, m.trays, m.user_id]), [
-    ["sale", "good", -40, -2.4, -1, "budi"], ["sale", "cracked", -10, -0.6, 0, "budi"],
+    ["sale", "good", -40, -2.4, -1, "admin"], ["sale", "cracked", -10, -0.6, 0, "admin"],
   ]);
   assert.deepEqual(eggStock(state, "good"), { eggs: 50, kg: 3, trays: 0 });
   assert.deepEqual(eggStock(state, "cracked"), { eggs: 10, kg: 0.6, trays: 0 });
@@ -103,6 +153,48 @@ test("warehouse entries reject insufficient combined stock, unknown sources, and
     assert.throws(() => executeCommand(state, "budi", "sale.create", { ...warehouse, stock_source: source }, at));
   assert.equal(state.sales.length, 0);
   assert.equal(state.stock_movements!.length, 2);
+});
+
+test("weight-only sales persist the booked egg count and source on replay, including the last eggs", () => {
+  for (const source of ["warehouse", "pickup"]) {
+    const stocked = executeCommand(legacy(), "sari", "production.create", harvest, at);
+    const before = source === "warehouse" ? stocked : executeCommand(stocked, "sari", "pickup.create",
+      { date, category: "good", eggs: 100, kg: 6, trays: 1, area: "Pasar" }, at);
+    const pickupId = before.pickups[0]?.id;
+    const weighed = { category: "good", pickup_id: pickupId, kg: 1.8, trays: 0 };
+    const sale = { ...warehouse, stock_source: source, items: [
+      weighed, { ...weighed, eggs: 20, kg: 1.5 }, { ...weighed, eggs: null, kg: 1.35 }, { ...weighed, eggs: " ", kg: 1.35 },
+    ] };
+    const first = applyDemoWrite(before, "sari", "sale.create", sale, attempt, at);
+    const recovered = applyDemoWrite(JSON.parse(JSON.stringify(first.state)), "sari", "sale.create", sale, attempt, at);
+    assert.deepEqual(recovered.result, first.result);
+    assert.equal(recovered.state.sales.length, 1);
+    const invoice = recovered.state.sales[0];
+    assert.deepEqual(invoice.items.map(i => [i.eggs, i.eggs_estimated]), [[32, true], [20, undefined], [24, true], [24, true]]);
+    assert.equal(invoice.total, 168000);
+    const after = source === "warehouse" ? eggStock(recovered.state, "good") : pickupBalance(recovered.state, pickupId!);
+    assert.equal(after.eggs, 0);
+    assert.equal(after.kg, 0);
+    for (const eggs of [0, 1.5, false, [2]])
+      assert.throws(() => executeCommand(before, "sari", "sale.create", { ...sale, items: [{ ...weighed, eggs }] }, at), /Jumlah butir/);
+  }
+});
+
+test("corrections retain an estimated count until the count itself changes", () => {
+  const initial = legacy();
+  initial.users.push({ ...initial.users[0], id: "admin", role: "admin" });
+  const harvested = executeCommand(initial, "sari", "production.create", harvest, at);
+  const saved = executeCommand(harvested, "sari", "sale.create", { ...warehouse, items: [{ category: "good", kg: 3 }] }, at);
+  const invoice = saved.sales[0], item = invoice.items[0];
+  const correction = { entity: "sale", id: invoice.id, reason: "Cek timbangan dan jumlah" };
+  const corrected = (state: State, eggs: number) => executeCommand(state, "admin", "correction.apply", {
+    ...correction, changes: { items: [{ id: item.id, kg: 3.1, trays: 0, eggs }] },
+  }, at);
+  const weighed = corrected(saved, 50);
+  assert.equal(weighed.sales[0].items[0].eggs_estimated, true);
+  const counted = corrected(weighed, 49);
+  assert.equal(counted.sales[0].items[0].eggs_estimated, undefined);
+  assert.equal(eggStock(counted, "good").eggs, 51);
 });
 
 test("warehouse sale correction restores only its delta on the approval date and retains the seller's original prices", () => {

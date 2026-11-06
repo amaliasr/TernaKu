@@ -55,7 +55,15 @@ class FarmService {
         if ($key === 'date' && $d->setTimezone(new DateTimeZone('Asia/Jakarta'))->format('Y-m-d') > date('Y-m-d')) throw new ApiProblem('Tanggal transaksi tidak boleh di masa depan.');
         return strlen($v) === 10 ? $v : $d->setTimezone(new DateTimeZone('Asia/Jakarta'))->format('c');
     }
-    private function quantity(array $p): array { return ['eggs'=>(int)$this->number($p,'eggs',1,true,100000000),'kg'=>$this->number($p,'kg',0.001,false,1000000),'trays'=>(int)$this->number($p+['trays'=>0],'trays',0,true,1000000)]; }
+    private function quantity(array $p, bool $allowMissingEggs = false): array {
+        $eggs=$p['eggs']??null;
+        $missing=$eggs===null || (is_string($eggs) && trim($eggs)==='');
+        return [
+            'eggs'=>$allowMissingEggs && $missing ? null : (int)$this->number($p,'eggs',1,true,100000000),
+            'kg'=>$this->number($p,'kg',0.001,false,1000000),
+            'trays'=>(int)$this->number($p+['trays'=>0],'trays',0,true,1000000)
+        ];
+    }
     private function photo(array $p): string {
         $photo = $this->text($p,'photo',1398130);
         if ($photo==='') return '';
@@ -122,6 +130,25 @@ class FarmService {
     private function save(string $kind, array $r): void { $this->query('UPDATE records SET data=? WHERE id=? AND kind=?',[$this->json($r),$r['id'],$kind]); }
     private function audit(string $action, string $description, $before = null, $after = null): void {
         $this->insert('activity',['user_id'=>$this->actor['id'],'action'=>$action,'description'=>$description,'created_at'=>$this->now(),'before'=>$before,'after'=>$after]);
+    }
+    private function notifyFarmActivity(string $activity,float $kg): void {
+        $name=preg_split('/\s+/u',trim($this->actor['name']),2)[0]??'';
+        $name=preg_match("/^\p{L}[\p{L}\p{M}.'’\-]*$/uD",$name) ? mb_substr($name,0,32) : 'Petugas';
+        $weight=rtrim(rtrim(number_format($kg,3,',','.'),'0'),',').' kg telur';
+        [$title,$message]=match($activity) {
+            'sale.create'=>['Penjualan telur',"$name menjual $weight."],
+            'production.stocked'=>['Panen masuk gudang',"$name mencatat panen $weight yang langsung masuk gudang."],
+            'production.create'=>['Panen tercatat',"$name mencatat panen $weight."],
+            'production.receive'=>['Panen diterima di gudang',"$name menerima $weight dari panen."],
+            'pickup.return'=>['Telur kembali ke gudang',"$name mengembalikan $weight ke gudang."],
+            'stock.add'=>['Stok gudang bertambah',$kg>0 ? "$name menambahkan $weight ke gudang." : "$name menambah persediaan di gudang."],
+        };
+        $eventId=$this->id('event');
+        $notice=['type'=>'farm.activity','event_id'=>$eventId,'activity'=>$activity,'title'=>$title,'message'=>$message,'read'=>false,'created_at'=>$this->now()];
+        $push=new PushService($this->db);
+        $recipients=$push->activeRecipients();
+        foreach($recipients as $userId) $this->insert('notification',$notice+['user_id'=>$userId]);
+        $push->broadcast(['type'=>'farm.activity','id'=>$eventId,'tag'=>'farm-'.$eventId,'activity'=>$activity,'title'=>$title,'body'=>$message,'url'=>'/'],$recipients);
     }
     private function movement(string $kind,array $record,array $q,string $notes='',?string $date=null): array {
         return $this->insert('stock_movement',['date'=>$date ?? $record['date'],'created_at'=>$this->now(),'user_id'=>$record['user_id'],'category'=>$record['category'],'kind'=>$kind,'reference_id'=>$record['id'],'eggs'=>$q['eggs'],'kg'=>$q['kg'],'trays'=>$q['trays'],'notes'=>$notes]);
@@ -388,6 +415,68 @@ class FarmService {
         if($q['eggs']>$b['eggs'] || round($q['kg']-$b['kg'],3)>0) throw new ApiProblem('Jumlah melebihi sisa telur yang dibawa. Periksa butir dan kilogram.');
         if((($b['eggs']-$q['eggs'])==0) !== (round($b['kg']-$q['kg'],3)==0)) throw new ApiProblem('Sisa jumlah butir dan berat harus sama-sama habis atau sama-sama masih tersedia. Periksa berat aktual.');
     }
+    private function proportionalEggs(int $grams, int $eggs, int $totalGrams): int {
+        // Match Math.round on positive values in the web preview.
+        $share=((float)$grams*$eggs)/$totalGrams;
+        $whole=(int)$share;
+        return $whole+($share-$whole>=0.5 ? 1 : 0);
+    }
+    /** All writers already hold the command mutex. Allocate from that transaction's stock. */
+    private function resolveSaleEggs(array &$items, string $source, array $pickupBalances): void {
+        $groups=[];
+        foreach($items as $index=>$item) {
+            $key=$source==='warehouse' ? $item['category'] : $item['pickup_id'];
+            $groups[$key][]=$index;
+        }
+        $warehouseBalances=null;
+        foreach($groups as $key=>$indices) {
+            $manualEggs=0;
+            $manualGrams=0;
+            $weightOnly=[];
+            foreach($indices as $index) {
+                $grams=(int)round($items[$index]['kg']*1000);
+                if($items[$index]['eggs']===null) {
+                    $weightOnly[$index]=$grams;
+                } else {
+                    $manualEggs+=$items[$index]['eggs'];
+                    $manualGrams+=$grams;
+                }
+            }
+            if(!$weightOnly) {
+                // Warehouse movements validate their complete per-category balance at debit.
+                if($source==='pickup') $this->checkBalance(['eggs'=>$manualEggs,'kg'=>$manualGrams/1000],$pickupBalances[$key]);
+                continue;
+            }
+            if($source==='warehouse') {
+                $warehouseBalances??=$this->stockBalances(true)['inventory'];
+                $balance=$warehouseBalances[$key]??null;
+                if(!$balance) throw new ApiProblem('Stok gudang tidak ditemukan.');
+            } else {
+                $balance=$pickupBalances[$key];
+            }
+            $stockEggs=$balance['eggs']-$manualEggs;
+            $stockGrams=(int)round($balance['kg']*1000)-$manualGrams;
+            $soldGrams=array_sum($weightOnly);
+            $linesLeft=count($weightOnly);
+            $maxEggs=$stockEggs-($soldGrams<$stockGrams ? 1 : 0);
+            if($soldGrams>$stockGrams || $maxEggs<$linesLeft) {
+                throw new ApiProblem('Stok tidak cukup untuk berat atau jumlah butir yang dijual. Periksa kembali timbangannya.');
+            }
+            // Reserve one egg per reported weight, including any weight left in stock.
+            $estimated=$this->proportionalEggs($soldGrams,$stockEggs,$stockGrams);
+            $soldEggs=min($maxEggs,max($linesLeft,$estimated));
+            foreach($weightOnly as $index=>$grams) {
+                $linesLeft--;
+                $share=$this->proportionalEggs($grams,$soldEggs,$soldGrams);
+                $count=min($soldEggs-$linesLeft,max(1,$share));
+                if($count>100000000) throw new ApiProblem('Perkiraan jumlah butir melebihi batas per item. Periksa beratnya.');
+                $items[$index]['eggs']=$count;
+                $items[$index]['eggs_estimated']=true;
+                $soldEggs-=$count;
+                $soldGrams-=$grams;
+            }
+        }
+    }
     private function currentPrice(): array {
         // For price rows occurred_at is the effective time, including scheduled prices.
         $price=$this->query("SELECT data FROM records WHERE kind='price' AND occurred_at<=NOW() ORDER BY occurred_at DESC,sequence DESC LIMIT 1")->fetchColumn();
@@ -441,11 +530,13 @@ class FarmService {
 
         $date = $this->now();
         $reference = $this->id('count');
+        $weightChange = 0;
         foreach ($counts as $category => $count) {
             $expected = $count['expected'];
             $physical = $count['physical'];
             $eggs = $physical['eggs'] - $expected['eggs'];
             $kg = round($physical['kg'] - $expected['kg'], 3);
+            $weightChange += $kg;
             // Older devices count eggs and weight only. Preserve their current tray balance.
             $trays = isset($physical['trays']) ? $physical['trays'] - $expected['trays'] : 0;
             if ($method === 'add' && (min($eggs, $kg, $trays) < 0 || max($eggs, $kg, $trays) == 0)) {
@@ -467,6 +558,7 @@ class FarmService {
         $this->audit('stock.reconcile', 'Menyesuaikan stok gudang: '.$reason, null, [
             'id' => $reference, 'method' => $method, 'counts' => array_values($counts), 'reason' => $reason,
         ]);
+        if($method==='add') $this->notifyFarmActivity('stock.add',$weightChange);
     }
     private function changes(string $entity,array $changes): array {
         $allowed=['production'=>['eggs','kg','trays','notes'],'pickup'=>['eggs','kg','trays','notes','area'],'sale'=>['notes','customer','items']];
@@ -509,7 +601,9 @@ class FarmService {
             $newItems=[]; $reserved=[]; $total=0;
             foreach($r['items'] as $item) {
                 if(!isset($quantities[$item['id']])) throw new ApiProblem('ID item koreksi tidak cocok dengan penjualan.');
-                $newItem=array_replace($item,$quantities[$item['id']]); $newItem['total']=round($newItem['kg']*$item['unit_price']); $total+=$newItem['total'];
+                $newItem=array_replace($item,$quantities[$item['id']]);
+                if($newItem['eggs']!=$item['eggs']) unset($newItem['eggs_estimated']);
+                $newItem['total']=round($newItem['kg']*$item['unit_price']); $total+=$newItem['total'];
                 if(!is_finite($total) || $total>1000000000000) throw new ApiProblem('Total transaksi maksimal Rp1.000.000.000.000.');
                 $newItems[]=$newItem;
                 if(!$warehouse) {
@@ -610,7 +704,9 @@ class FarmService {
                     if($automatic) { $this->stock('egg:'.$category,$q['eggs'],$q['kg'],$q['trays']); $this->movement('production',$r,$q,$r['notes']); }
                     if($photo!=='' && !$ref) $ref=['kind'=>'production','id'=>$r['id'],'version'=>hash('sha256',$photo)];
                 }
-                $this->audit($action,$automatic?'Mencatat panen dan menambah stok':'Mencatat panen yang menunggu penerimaan stok',null,['harvest_id'=>$common['harvest_id'],'date'=>$common['date'],'items'=>$items]); break;
+                $this->audit($action,$automatic?'Mencatat panen dan menambah stok':'Mencatat panen yang menunggu penerimaan stok',null,['harvest_id'=>$common['harvest_id'],'date'=>$common['date'],'items'=>$items]);
+                $this->notifyFarmActivity($automatic?'production.stocked':$action,array_sum(array_column($items,'kg')));
+                break;
             case 'stock.reconcile':
                 $this->reconcileStock($p);
                 break;
@@ -622,7 +718,9 @@ class FarmService {
                 $q=['eggs'=>$r['eggs'],'kg'=>$r['kg'],'trays'=>$r['trays']];
                 $this->stock('egg:'.$r['category'],$q['eggs'],$q['kg'],$q['trays']); $this->save('production',$r);
                 $this->movement('production',$r,$q,'Penerimaan panen: '.$r['notes'],$r['stocked_at']);
-                $this->audit($action,'Menerima seluruh panen ke stok',$before,$r); break;
+                $this->audit($action,'Menerima seluruh panen ke stok',$before,$r);
+                $this->notifyFarmActivity($action,$q['kg']);
+                break;
             case 'pickup.create':
                 $q=$this->quantity($p); $category=$this->enum($p,'category',['good','cracked']);
                 $this->stock('egg:'.$category,-$q['eggs'],-$q['kg'],-$q['trays']);
@@ -633,7 +731,9 @@ class FarmService {
                 foreach(['eggs','kg','trays'] as $k) $r['returned_'.$k]=round($r['returned_'.$k]+$q[$k],3);
                 $this->stock('egg:'.$r['category'],$q['eggs'],$q['kg'],$q['trays']); $this->save('pickup',$r);
                 $this->movement('return',$r,$q,$this->text($p,'notes'),$this->now());
-                $this->audit($action,'Mengembalikan telur: '.$this->text($p,'notes'),null,['pickup_id'=>$r['id'],'quantity'=>$q]); break;
+                $this->audit($action,'Mengembalikan telur: '.$this->text($p,'notes'),null,['pickup_id'=>$r['id'],'quantity'=>$q]);
+                $this->notifyFarmActivity($action,$q['kg']);
+                break;
             case 'sale.create': $this->createSale($p); break;
             case 'sale.payment':
             case 'feed.payment':
@@ -726,7 +826,7 @@ class FarmService {
         $items=$p['items']??null; if(!is_array($items) || count($items)<1 || count($items)>100) throw new ApiProblem('Transaksi harus berisi 1–100 item.');
         $price=$this->currentPrice();
         if(isset($p['expected_price_id']) && $this->text($p,'expected_price_id',40,true)!==$price['id']) throw new ApiProblem('Harga telur berubah. Periksa harga terbaru lalu simpan kembali.',409);
-        $out=[]; $total=0; $reserved=[]; $pickups=[];
+        $out=[]; $total=0; $pickups=[];
         foreach($items as $item) {
             if(!is_array($item)) throw new ApiProblem('Item tidak valid.');
             $id=$this->text($item,'pickup_id',40,$source==='pickup');
@@ -739,21 +839,23 @@ class FarmService {
         }
         $balances=$this->carriedQuantities($pickups);
         foreach($items as $item) {
-            $id=''; $category=$this->enum($item,'category',['good','cracked']); $q=$this->quantity($item);
+            $id=''; $category=$this->enum($item,'category',['good','cracked']); $q=$this->quantity($item,true);
             if($source==='pickup') {
                 $id=trim($item['pickup_id']);
                 if($category!==$pickups[$id]['category']) throw new ApiProblem('Kategori penjualan berbeda dengan telur yang diambil.');
-                $used=$reserved[$id]??['eggs'=>0,'kg'=>0];
-                $reserved[$id]=['eggs'=>$q['eggs']+$used['eggs'],'kg'=>round($q['kg']+$used['kg'],3)];
-                $this->checkBalance($reserved[$id],$balances[$id]);
             }
             if(array_key_exists('is_free',$item) && !is_bool($item['is_free'])) throw new ApiProblem('Pilihan gratis tidak valid.');
-            if(($item['is_free']??false) && $category!=='cracked') throw new ApiProblem('Hanya telur bentes yang boleh diberikan gratis.');
-            $free=$category==='cracked' && (($item['is_free']??false) || $price['cracked_price']==0);
+            $requestedFree=$item['is_free']??false;
+            if($requestedFree && $category!=='cracked') throw new ApiProblem('Hanya telur bentes yang boleh diberikan gratis.');
+            if($requestedFree && $price['cracked_price']>0 && $this->actor['role']!=='admin') {
+                throw new ApiProblem('Hanya atasan yang bisa memberikan telur bentes gratis. Gunakan harga yang berlaku.');
+            }
+            $free=$category==='cracked' && ($requestedFree || $price['cracked_price']==0);
             $unit=$free?0:$price[$category==='good'?'good_price':'cracked_price']; $itemTotal=round($q['kg']*$unit);
             $out[]=$q+['id'=>$this->id('item'),'pickup_id'=>$id,'category'=>$category,'unit_price'=>$unit,'is_free'=>$free,'total'=>$itemTotal]; $total+=$itemTotal;
             if(!is_finite($total) || $total>1000000000000) throw new ApiProblem('Total transaksi maksimal Rp1.000.000.000.000.');
         }
+        $this->resolveSaleEggs($out,$source,$balances);
         $paid=$this->number($p,'paid',0,true); if($paid>$total) throw new ApiProblem('Nominal pembayaran melebihi total transaksi.');
         $method=$this->enum($p,'payment_method',['cash','transfer','qris','credit']);
         $date=$this->date($p);
@@ -761,6 +863,7 @@ class FarmService {
         $this->commandResult=['action'=>'sale.create','record_id'=>$r['id'],'request_id'=>''];
         if($source==='warehouse') $this->commandResult['movement_ids']=$this->warehouseSaleMovements($r,[],'sale','Penjualan gudang '.$r['number']);
         $this->audit('sale.create','Mencatat penjualan '.$r['number'],null,$r);
+        $this->notifyFarmActivity('sale.create',array_sum(array_column($out,'kg')));
     }
     private function createUser(array $p): void {
         $this->admin(); $email=strtolower($this->text($p,'email',190,true)); if(!filter_var($email,FILTER_VALIDATE_EMAIL)) throw new ApiProblem('Format email tidak valid.');

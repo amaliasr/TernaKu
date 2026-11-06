@@ -2,6 +2,7 @@ import type {
   Category,
   CommandPayload,
   Correction,
+  FarmActivity,
   Pickup,
   PickupBalance,
   Price,
@@ -18,6 +19,7 @@ import type {
 } from "./types";
 import { dueDate, paymentEntry } from "./invoice-ledger";
 import { ApiError } from "./request-errors";
+import { resolveSaleEggs, saleEggCount } from "./sale-eggs";
 
 export const money = (value: number) =>
   new Intl.NumberFormat("id-ID", {
@@ -454,6 +456,25 @@ function category(value: unknown): Category {
   );
   return value;
 }
+
+function farmNotice(activity: FarmActivity, name: string, kg: number) {
+  const first = name.trim().split(/\s+/u)[0];
+  const who = /^\p{L}[\p{L}\p{M}.'’\-]*$/u.test(first)
+    ? Array.from(first).slice(0, 32).join("")
+    : "Petugas";
+  const weight = number(kg, 3) + " kg telur";
+  switch (activity) {
+    case "sale.create": return { title: "Penjualan telur", message: `${who} menjual ${weight}.` };
+    case "production.create": return { title: "Panen tercatat", message: `${who} mencatat panen ${weight}.` };
+    case "production.stocked": return { title: "Panen masuk gudang", message: `${who} mencatat panen ${weight} yang langsung masuk gudang.` };
+    case "production.receive": return { title: "Panen diterima di gudang", message: `${who} menerima ${weight} dari panen.` };
+    case "pickup.return": return { title: "Telur kembali ke gudang", message: `${who} mengembalikan ${weight} ke gudang.` };
+    case "stock.add": return {
+      title: "Stok gudang bertambah",
+      message: kg > 0 ? `${who} menambahkan ${weight} ke gudang.` : `${who} menambah persediaan di gudang.`,
+    };
+  }
+}
 function quantities(p: CommandPayload): Quantity {
   return {
     eggs: numeric(p.eggs, "Jumlah butir", true, true),
@@ -647,7 +668,9 @@ function correct(
         const old = sale.items.find((original) => original.id === itemId);
         assert(old, "Item koreksi tidak ditemukan pada transaksi ini.");
         const q = quantities(item);
-        return { ...old, ...q, total: Math.round(q.kg * old.unit_price) };
+        const updatedItem = { ...old, ...q, total: Math.round(q.kg * old.unit_price) };
+        if (q.eggs !== old.eggs) delete updatedItem.eggs_estimated;
+        return updatedItem;
       });
       const total = totalAmount(
         updated.reduce((sum, item) => sum + item.total, 0),
@@ -717,6 +740,7 @@ export function executeCommand(
   const invoice = (prefix: string, count: number) =>
     `${prefix}-${today(now).replaceAll("-", "")}-${String(count + 1).padStart(4, "0")}`;
   let detail: { before?: unknown; after?: unknown } = {};
+  let farmEvent: { activity: FarmActivity; kg: number } | undefined;
   switch (action) {
     case "production.create": {
       const entries = payload.items === undefined ? [payload] : list(payload.items);
@@ -738,7 +762,9 @@ export function executeCommand(
         stocked_at: state.settings?.harvest_auto_stock === false ? null : stamp,
         ...(state.settings?.harvest_auto_stock === false ? {} : { stocked_by: user.id }),
       };
-      for (const item of entries) state.productions.push({ ...common, id: id("prod"), category: category(item.category), ...quantities(item) });
+      const records = entries.map(item => ({ ...common, id: id("prod"), category: category(item.category), ...quantities(item) }));
+      state.productions.push(...records);
+      farmEvent = { activity: common.stocked_at ? "production.stocked" : "production.create", kg: records.reduce((sum, p) => sum + p.kg, 0) };
       break;
     }
     case "stock.reconcile": {
@@ -782,6 +808,7 @@ export function executeCommand(
         });
       }
       detail.after = { id: reference, counts, reason, method };
+      if (method === "add") farmEvent = { activity: "stock.add", kg: counts.reduce((sum, item) => sum + item.kg, 0) };
       break;
     }
     case "production.receive": {
@@ -791,6 +818,7 @@ export function executeCommand(
       assert(!isProductionStocked(production), "Panen ini sudah masuk stok gudang.");
       production.stocked_at = stamp;
       production.stocked_by = user.id;
+      farmEvent = { activity: "production.receive", kg: production.kg };
       detail = { after: { production_id: production.id, stocked_at: stamp, stocked_by: user.id } };
       break;
     }
@@ -840,6 +868,7 @@ export function executeCommand(
       p.returned_eggs += q.eggs;
       p.returned_kg = round(p.returned_kg + q.kg);
       p.returned_trays += q.trays;
+      farmEvent = { activity: "pickup.return", kg: q.kg };
       detail = { after: { pickup_id: p.id, ...q, notes: text(payload.notes) } };
       break;
     }
@@ -854,10 +883,13 @@ export function executeCommand(
         "Harga telur telah berubah. Periksa harga terbaru lalu simpan kembali.",
       );
       const entries = list(payload.items);
-      const reserved: Record<string, Quantity> = {};
+      const stockGroups = new Map<string, SaleItem[]>();
       const items = entries.map((item) => {
         const c = category(item.category);
-        const q = quantities(item);
+        const count = saleEggCount(item.eggs);
+        const kg = numeric(item.kg, "Berat aktual", true, false, 1_000_000);
+        assert(kg >= 0.001, "Berat aktual minimal 0,001 kg.");
+        const trays = numeric(item.trays ?? 0, "Jumlah krat", false, true, 1_000_000);
         let pickupId = "";
         if (source === "warehouse") {
           assert(item.pickup_id === undefined || item.pickup_id === "",
@@ -867,8 +899,6 @@ export function executeCommand(
           assert(p.user_id === user.id, "Penjualan hanya boleh menggunakan pengambilan milik Anda.");
           assert(c === p.category, "Kategori penjualan harus sesuai pengambilan.");
           pickupId = p.id;
-          const used = reserved[p.id] || emptyQuantity();
-          reserved[p.id] = { eggs: used.eggs + q.eggs, kg: round(used.kg + q.kg), trays: used.trays + q.trays };
         }
         assert(
           item.is_free === undefined || typeof item.is_free === "boolean",
@@ -878,6 +908,10 @@ export function executeCommand(
           !item.is_free || c === "cracked",
           "Hanya telur bentes yang boleh diberikan gratis.",
         );
+        assert(
+          !item.is_free || price.cracked_price === 0 || user.role === "admin",
+          "Hanya atasan yang bisa memberikan telur bentes gratis. Gunakan harga yang berlaku.",
+        );
         const is_free =
           c === "cracked" &&
           (item.is_free === true || price.cracked_price === 0);
@@ -886,20 +920,33 @@ export function executeCommand(
           : c === "good"
             ? price.good_price
             : price.cracked_price;
-        return {
+        const line: SaleItem = {
           id: id("item"),
           pickup_id: pickupId,
           category: c,
-          ...q,
+          eggs: count ?? 0,
+          ...(count === undefined ? { eggs_estimated: true } : {}),
+          kg,
+          trays,
           unit_price,
           is_free,
-          total: Math.round(q.kg * unit_price),
+          total: Math.round(kg * unit_price),
         };
+        const key = source === "warehouse" ? c : pickupId;
+        const group = stockGroups.get(key);
+        if (group) group.push(line);
+        else stockGroups.set(key, [line]);
+        return line;
       });
-      for (const [pickupId, used] of Object.entries(reserved)) {
-        const available = pickupBalance(state, pickupId);
-        assert(used.eggs <= available.eggs && used.kg <= available.kg, "Jumlah penjualan melebihi sisa telur yang dibawa.");
-        completeBalance(available.eggs - used.eggs, available.kg - used.kg);
+      for (const [key, group] of stockGroups) {
+        const available = source === "warehouse" ? eggStock(state, group[0].category) : pickupBalance(state, key);
+        const counts = resolveSaleEggs(group.map(i => ({ eggs: i.eggs_estimated ? undefined : i.eggs, kg: i.kg })), available);
+        group.forEach((line, index) => { line.eggs = counts[index]; });
+        if (source === "pickup") {
+          const used = soldQuantity(group, group[0].category);
+          assert(used.eggs <= available.eggs && used.kg <= available.kg, "Jumlah penjualan melebihi sisa telur yang dibawa.");
+          completeBalance(available.eggs - used.eggs, available.kg - used.kg);
+        }
       }
       const total = totalAmount(items.reduce((sum, i) => sum + i.total, 0));
       const paid = numeric(payload.paid ?? 0, "Nominal dibayar", false, true);
@@ -940,6 +987,7 @@ export function executeCommand(
       };
       if (source === "warehouse") postWarehouseSale(state, sale, undefined, now, `Penjualan gudang ${sale.number}`);
       state.sales.push(sale);
+      farmEvent = { activity: "sale.create", kg: items.reduce((sum, item) => sum + item.kg, 0) };
       break;
     }
     case "sale.due":
@@ -1374,6 +1422,16 @@ export function executeCommand(
           ...q,
           notes: text(payload.notes),
         });
+    }
+  }
+  if (farmEvent) {
+    const eventId = `farm-${now.getTime()}-${input.activity.length + 1}`;
+    const notice = farmNotice(farmEvent.activity, user.name, farmEvent.kg);
+    for (const recipient of state.users.filter(u => !accountAccessError(u))) {
+      state.notifications.push({
+        id: `${eventId}-${recipient.id}`, event_id: eventId, type: "farm.activity", activity: farmEvent.activity,
+        user_id: recipient.id, ...notice, read: false, created_at: stamp,
+      });
     }
   }
   if (action !== "notification.read")
