@@ -18,7 +18,8 @@ Source dan workflow build siap digunakan. Publikasi ke domain memerlukan akses h
 ## Fitur versi awal
 
 - Dashboard produksi, omzet, stok, grafik, target, dan performa karyawan dengan filter tanggal.
-- Produksi harian telur bagus/bentes: butir, kilogram aktual, jumlah krat, sumber kandang opsional, catatan, foto dan lokasi opsional. Krat dan kilogram diisi terpisah; estimasi 10 kg/krat hanya membantu input.
+- Satu formulir panen mencatat telur bagus dan bentes sekaligus. Jumlah butir, berat aktual, dan krat diisi per kategori. Tanggal, kandang, catatan, dan foto cukup diisi sekali. Pengaturan admin menentukan apakah hasil panen langsung tersedia di gudang atau menunggu penerimaan.
+- Di menu Gudang, admin dapat membandingkan hitungan fisik dengan stok aplikasi untuk kedua kategori. Selisih beserta alasannya masuk riwayat. Laporan admin menampilkan saldo gudang pada akhir tanggal pilihan berdasarkan pergerakan stok dalam WIB.
 - Pengambilan telur per karyawan, sisa telur yang dibawa, pengembalian, dan riwayat pergerakan stok bertanggal. Validasi mencegah saldo butir/kilogram negatif dan sisa yang hanya mempunyai salah satu satuan.
 - Penjualan beberapa item dalam satu transaksi, pelanggan, harga otomatis, Tunai/Transfer/QRIS/Piutang, pembayaran sebagian/pelunasan, dan nota penjualan PDF.
 - Telur bentes dapat dibagikan gratis dengan nama penerima wajib diisi. Harga bentes Rp0 ditampilkan sebagai **Gratis**; jumlah telur tetap mengurangi stok, tanpa menambah omzet. Telur bagus tetap mengikuti harga jual.
@@ -27,7 +28,8 @@ Source dan workflow build siap digunakan. Publikasi ke domain memerlukan akses h
 - Admin mengelola akun/target, menonaktifkan karyawan, mengunci catatan, meninjau koreksi, dan membaca log aktivitas. Karyawan hanya menerima transaksi miliknya sendiri; harga serta saldo peternakan dapat dilihat sesuai kebutuhan kerja.
 - Tombol Daftar selalu tersedia: admin pertama dibuat dengan kode setup pemilik, sedangkan pendaftaran berikutnya menjadi karyawan yang menunggu persetujuan admin. Admin menyetujui atau menolak permohonan melalui menu Karyawan.
 - Halaman karyawan khusus HP: tombol besar Panen/Jual/Gudang, stok bagus dan bentes terpisah, formulir singkat, serta rincian tambahan yang dapat dibuka bila diperlukan.
-- Harga karyawan diperiksa setiap 5 detik saat aplikasi terlihat. Input tetap tersimpan di formulir selama pembaruan; harga baru pada penjualan harus ditinjau sebelum menyimpan. Status koneksi dan waktu pemeriksaan terakhir ditampilkan.
+- Saat TernaKu terbuka, aplikasi mengecek perubahan harga setiap 5 detik. Setiap pembaruan dari atasan muncul sebagai pemberitahuan, termasuk jika nominalnya sama. Harga terjadwal berlaku sesuai waktunya. Isian penjualan tetap tersimpan saat harga diperbarui dan karyawan dapat meninjau harga baru sebelum menyimpan.
+- Setelah penjualan tersimpan, API langsung mengirim nota transaksi dan sisa telur yang dibawa. Jika koneksi putus saat menyimpan, pengiriman ulang dengan ID permintaan yang sama mengembalikan nota transaksi tersebut.
 - Pemasangan ke layar utama HP sebagai aplikasi web (PWA), dengan ikon TernaKu, tampilan standalone, dan petunjuk Android/iPhone.
 - Tampilan awal terang. Menu **Profil & tampilan** menyediakan pilihan terang/gelap dan ukuran tulisan Kecil, Normal, atau Besar; pilihan tersimpan pada perangkat.
 - Profil akun dapat mengubah nama dan foto. Semua foto bisa diperbesar, diambil dari kamera atau dipilih dari galeri. Foto besar dikompres otomatis hingga maksimal 1 MiB sebelum dikirim; foto kecil yang sesuai dipertahankan.
@@ -45,9 +47,9 @@ Buka [TernaKu](https://ternaku.rstudiohub.com) lalu tekan **Pasang TernaKu di HP
 - **iPhone/iPad:** buka di Safari, tekan **Bagikan → Tambahkan ke Layar Utama → Tambah**.
 - Sesudah terpasang, buka ikon **TernaKu** di layar utama dan masuk dengan akun Anda.
 
-Pemasangan tersedia melalui HTTPS dan bergantung pada dukungan browser. Aplikasi memerlukan internet untuk login, memeriksa harga, dan menyimpan catatan. Ketika aplikasi terbuka tetapi koneksi gagal, isian formulir tidak dikosongkan dan harga terakhir diberi peringatan. Menutup/memuat ulang aplikasi dapat menghilangkan isian yang belum disimpan. Service worker hanya menyimpan halaman pemberitahuan offline; data API, harga, token, dan transaksi tidak disimpan dalam cache service worker. Tidak ada antrean transaksi offline. Pemeriksaan 5 detik berhenti ketika aplikasi berada di latar belakang dan langsung dilanjutkan saat dibuka kembali.
+Formulir **Panen** dan **Jual** menyimpan isian dan foto yang sudah diproses di perangkat. Setelah muncul **Draf tersimpan di HP**, Anda bisa menutup aplikasi. Buka formulir dengan akun dan browser yang sama lalu pilih **Lanjutkan draf**. Draf tersimpan sampai dikirim atau dibuang. Menghapus data situs juga menghapus draf. Internet diperlukan untuk membuka aplikasi kembali, memeriksa harga dan stok, serta mengirim catatan.
 
-Jika penjualan sudah dikirim tetapi hasilnya belum diketahui, aplikasi mempertahankan data percobaan pada sesi tab yang sama. Buka kembali **Jual** lalu gunakan **Coba lagi dengan data yang sama** agar permintaan memakai nomor yang sama dan tidak membuat transaksi ganda. Data ini bukan antrean otomatis; jangan menutup seluruh tab atau menghapus data browser sebelum hasil penjualan dipastikan.
+Jika koneksi putus setelah pengiriman, buka kembali formulir dan pilih **Coba lagi dengan data yang sama**. Aplikasi memakai nomor percobaan yang sudah tersimpan agar satu pengiriman hanya menghasilkan satu catatan. Saat aplikasi kembali ke layar, pemeriksaan harga dilanjutkan. Perubahan harga pada draf penjualan perlu ditinjau sebelum disimpan.
 
 Untuk pemberitahuan saat aplikasi ditutup, masuk lalu tekan **Aktifkan notifikasi** pada bagian **Notifikasi di HP** dan berikan izin browser. Gunakan **Coba notifikasi** untuk memeriksa perangkat sendiri. Pada iPhone/iPad, buka TernaKu dari ikon layar utama dengan iOS/iPadOS 16.4 atau lebih baru. Pengiriman mengikuti koneksi, izin, dan pengaturan HP; pengelola hosting perlu menyelesaikan [penyiapan Web Push](api/PUSH.md).
 

@@ -13,6 +13,7 @@ import {
 import { printReceipt } from "@/lib/export";
 import ImagePreview from "./ImagePreview";
 import PhotoUpload from "./PhotoUpload";
+import { InvoiceDialog, InvoiceHistory } from "./InvoiceLedger";
 import type { Pickup, Production, RecordEntity, Sale, User } from "@/lib/types";
 import {
   categoryLabel,
@@ -441,71 +442,8 @@ export function ReturnDialog({
     </Dialog>
   );
 }
-export function PaymentDialog({
-  sale,
-  onClose,
-}: {
-  sale: Sale;
-  onClose: () => void;
-}) {
-  const { command } = useFarm();
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState("");
-  return (
-    <Dialog
-      title="Terima pembayaran"
-      subtitle={`${sale.number} · ${sale.customer || "Pelanggan umum"}`}
-      onClose={onClose}
-    >
-      <form
-        onSubmit={async (e) => {
-          e.preventDefault();
-          const data = dataFrom(e.currentTarget);
-          setBusy(true);
-          setError("");
-          try {
-            await command("sale.payment", {
-              id: sale.id,
-              amount: Number(data.amount),
-            });
-            onClose();
-          } catch (error) {
-            setError(errorMessage(error));
-          } finally {
-            setBusy(false);
-          }
-        }}
-      >
-        <div className="modal-body-custom">
-          {error && (
-            <div className="alert alert-danger" role="alert">
-              {error}
-            </div>
-          )}
-          <div className="form-summary mb-3">
-            <span>Sisa tagihan</span>
-            <strong>{money(sale.balance)}</strong>
-          </div>
-          <Field className="d-block" label="Tambahan pembayaran (Rp)">
-            <input
-              className="form-control"
-              name="amount"
-              type="number"
-              step="1"
-              min="1"
-              max={sale.balance}
-              defaultValue={sale.balance}
-              required
-            />
-          </Field>
-        </div>
-        <div className="modal-footer-custom">
-          <Cancel onClose={onClose} disabled={busy} />
-          <LoadingButton busy={busy}>Catat pembayaran</LoadingButton>
-        </div>
-      </form>
-    </Dialog>
-  );
+export function PaymentDialog({ sale, onClose }: {sale: Sale; onClose: () => void}) {
+  return <InvoiceDialog invoice={sale} onClose={onClose} />;
 }
 export function EmployeeDialog({
   employee,
@@ -766,6 +704,7 @@ export function SaleDetail({
             <strong>{money(sale.balance)}</strong>
           </div>
         </div>
+        <InvoiceHistory invoice={sale} />
         {sale.notes && <p className="mt-3 mb-0 text-muted">{sale.notes}</p>}
         {(sale.photo || sale.photo_ref) && (
           <ImagePreview

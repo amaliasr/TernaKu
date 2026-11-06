@@ -64,7 +64,7 @@ Frontend production memakai `NEXT_PUBLIC_API_URL=https://api.buildmanagement.id/
 | POST | `/auth/logout` | Mencabut bearer token |
 | GET | `/bootstrap` | State sesuai hak pengguna |
 | GET | `/bootstrap?compact=1` | State yang sama dengan referensi foto, tanpa base64 dalam riwayat/audit |
-| GET | `/sync/prices` | Harga, notifikasi sendiri, pengguna aktif tanpa foto, dan pengaturan |
+| GET | `/sync/prices` | Harga, notifikasi sendiri, pengguna aktif dan pengaturan. Tambahkan `?since=<price_cursor>` untuk mengambil perubahan saja. |
 | GET | `/media/{kind}/{id}` | Gambar biner privat; kind `production`, `sale`, atau `profile` |
 | POST | `/commands` | `{action,payload,request_id?}` → State terbaru |
 
@@ -82,13 +82,15 @@ Nama kolom dan struktur respons mengikuti `../src/lib/types.ts` dan `../CONTRACT
 
 | Perintah | Payload utama | Hak |
 | --- | --- | --- |
-| `production.create` | date, barn_id, category, eggs, kg, trays, notes, photo?, location? | Semua, pencatat otomatis |
-| `production.receive` | id | Pemilik panen/admin; seluruh panen satu kali |
+| `production.create` | date, items[{category, eggs, kg, trays}], barn_id?, notes?, photo?, location? | Semua, satu atau dua kategori unik dalam satu panen |
+| `production.receive` | id | Pemilik panen/admin, menerima satu baris kategori yang masih menunggu |
+| `stock.reconcile` | items[{category, expected:{eggs,kg}, physical:{eggs,kg}}], reason | Admin, hasil hitung fisik untuk kedua kategori |
 | `settings.update` | harvest_auto_stock:boolean | Admin |
 | `pickup.create` | date, category, eggs, kg, trays, area, notes | Semua, pengambil otomatis |
 | `pickup.return` | id, eggs, kg, trays, notes | Pemilik/admin |
-| `sale.create` | date, customer, phone?, items[{pickup_id,category,eggs,kg,trays}], payment_method, paid, notes, photo, expected_price_id? | Pengambilan sendiri; nama pelanggan dan foto dokumentasi wajib |
-| `sale.payment` | id, amount | Pemilik/admin |
+| `sale.create` | date, customer, phone?, items[{pickup_id,category,eggs,kg,trays}], payment_method, paid, due_date?, notes, photo, expected_price_id? | Pengambilan sendiri; nama pelanggan dan foto dokumentasi wajib |
+| `sale.payment` | id, amount, expected_paid?, method? | Pemilik/admin |
+| `sale.due` | id, due_date | Pemilik/admin |
 | `price.create` | good_price, cracked_price, effective_at | Admin |
 | `user.create` | name, email, password, role, target | Admin |
 | `user.update` | id, name?, email?, photo?, active?, target? | Admin; perubahan email/foto hanya untuk akun karyawan |
@@ -97,13 +99,21 @@ Nama kolom dan struktur respons mengikuti `../src/lib/types.ts` dan `../CONTRACT
 | `user.reject` | id | Admin, menolak pendaftaran yang menunggu |
 | `barn.create` | name, type:`ayam`, capacity, notes | Admin |
 | `feed.create` | name, unit:`kg`, min_stock | Admin |
-| `feed.purchase` | date, supplier, items[{feed_id,quantity,unit_price}], paid, notes | Admin |
+| `feed.purchase` | date, supplier, items[{feed_id,quantity,unit_price}], paid, due_date?, notes | Admin |
+| `feed.payment` | id, amount, expected_paid, method? | Admin |
+| `feed.due` | id, due_date | Admin |
 | `feed.use` | date, feed_id, barn_id, quantity, notes | Semua |
 | `notification.read` | id atau id:`all` | Notifikasi sendiri |
 | `correction.request` | entity, id, reason, changes | Pemilik/admin |
 | `correction.apply` | entity, id, reason, changes | Admin atau produksi sendiri yang belum dikunci |
 | `correction.review` | id, approved:boolean | Admin |
 | `record.lock` | entity, id, locked:boolean | Admin |
+
+Untuk nota bersaldo, aplikasi meminta tanggal jatuh tempo (`due_date`, YYYY-MM-DD), minimal tanggal nota dalam WIB. Klien lama masih dapat membuat nota tanpa tanggal tersebut. Untuk mengatur jatuh tempo pada nota yang sudah ada, gunakan `sale.due` atau `feed.due`.
+
+Gunakan `sale.payment` untuk penerimaan uang pelanggan dan `feed.payment` untuk pembayaran kepada pemasok. Kirim nominal rupiah bulat positif dalam `amount` dan total yang sudah dibayar ketika formulir dibuka dalam `expected_paid`. Jika total tersebut berubah sebelum penyimpanan, API mengembalikan HTTP 409. Ambil data nota terbaru lalu periksa riwayatnya sebelum mencatat pembayaran lain. Saat mengulangi permintaan karena jaringan terputus, gunakan `request_id` yang sama. Kolom `method` menerima `cash`, `transfer`, atau `qris`. Pembayaran pemasok memperbarui saldo nota dengan stok pakan tetap berasal dari pembelian asli.
+
+Kolom `payments` pada setiap nota berisi pembayaran awal dan cicilan yang tercatat, beserta jenis (`initial` atau `installment`), nominal, pengguna, waktu server, dan metode jika diketahui. Untuk nota lama, selisih antara `paid` dan jumlah riwayat ini adalah pembayaran terdahulu tanpa rincian tanggal. Daftar tagihan mengelompokkan nota per pelanggan atau pemasok, termasuk transaksi di luar rentang tanggal laporan. Tampilan awal memperlihatkan tagihan yang masih bersaldo. Pilih filter **Lunas** untuk melihat pembayaran pada nota yang sudah selesai.
 
 Koreksi memakai entity `production`, `pickup`, atau `sale`; alasan minimal 5 karakter. Produksi boleh mengubah eggs/kg/trays/notes selama stok tidak menjadi negatif. Pickup dapat mengubah eggs/kg/trays/notes/area; jumlah baru harus mencukupi seluruh penjualan dan pengembalian, sedangkan selisih pengambilan disesuaikan ke stok gudang dan ledger.
 
@@ -137,7 +147,13 @@ Untuk instalasi yang sudah memakai versi Web Push sebelumnya, cadangkan lalu gan
 
 Pembaruan API ini mengganti **tiga file**: `application/libraries/FarmService.php`, `application/controllers/Api.php`, dan `application/config/routes.php`. Deploy API terlebih dahulu, kemudian frontend. Pertahankan `.env`, kunci setup/push, `vendor/`, serta data. Tidak ada migrasi SQL atau pemindahan foto: pengaturan dan konfirmasi command menggunakan tabel `records` yang sudah ada. Client lama tetap mendapat respons lengkap tanpa harus diubah bersamaan.
 
-`settings.harvest_auto_stock` bernilai `true` jika belum diatur, mempertahankan perilaku sebelumnya. Admin dapat menggantinya melalui `settings.update`. Ketika nonaktif, `production.create` menyimpan panen dengan `stocked_at: null` dan `stocked_by: null`, tanpa menambah stok atau ledger. Pemilik/admin menerima seluruh batch melalui `production.receive`; waktu/penerima ditentukan server, saldo bertambah satu kali, dan satu pergerakan `production` dicatat pada waktu penerimaan. Pengulangan dengan request ID yang sama bersifat idempoten; permintaan baru setelah diterima ditolak 409. Mengaktifkan kembali pengaturan tidak otomatis menerima panen yang masih menunggu. Koreksi kuantitas panen yang menunggu tidak menyentuh stok; setelah diterima koreksi kembali menyesuaikan saldo dan ledger. Data produksi lama yang **tidak mempunyai kolom** `stocked_at` dianggap sudah diterima, sehingga tidak terjadi penggandaan stok setelah upgrade.
+`production.create` menerima satu atau dua baris telur dengan kategori berbeda melalui `items`. Pencatat, tanggal, kandang, catatan, lokasi, dan foto berlaku untuk seluruh panen. Setiap baris kategori mendapat ID produksi sendiri dan `harvest_id` yang sama. API memvalidasi dan menyimpan semua baris dalam satu transaksi. Klien lama tetap bisa mengirim satu kategori dengan `category`, `eggs`, `kg`, dan `trays` di tingkat teratas.
+
+Pengaturan admin `settings.harvest_auto_stock` aktif secara bawaan. Saat aktif, saat simpan panen stok langsung bertambah dengan tanggal bisnis panen. Saat nonaktif, panen berstatus menunggu (`stocked_at: null`). Pemilik panen atau admin menerima setiap baris kategori dari Gudang melalui `production.receive` dengan ID produksi. Saldo dan mutasi bertambah satu kali per baris pada waktu penerimaan. Mengaktifkan kembali stok otomatis tetap membiarkan panen yang menunggu diterima secara manual. API menganggap produksi lama tanpa kolom `stocked_at` sudah masuk gudang.
+
+`stock.reconcile` mencocokkan hitungan fisik gudang untuk kedua kategori. Isi `expected` dengan saldo aplikasi ketika mulai menghitung dan `physical` dengan hasil hitung. Jika saldo berubah, API menjawab 409 agar admin mengecek kembali stok terbaru. Tiap kategori menyimpan mutasi `reconcile` yang memuat waktu server, pencatat, catatan, hitungan aplikasi, hitungan fisik, dan selisih. Hitungan yang cocok juga disimpan. Transaksi ini memakai tabel yang sudah ada.
+
+Di Laporan admin, **Saldo akhir gudang** menghitung stok pada akhir tanggal pilihan dalam WIB dari saldo terkini dan riwayat mutasi. Untuk hari ini, laporan menampilkan saldo berjalan. Panen yang diterima manual masuk pada hari diterima. Jika catatan lama belum memadai untuk menentukan saldo, laporan memberi keterangan khusus. **Hitung fisik** memuat hasil pemeriksaan dalam rentang laporan. Keduanya disertakan di PDF dan Excel.
 
 Untuk klien baru, ambil state lengkap melalui `/bootstrap?compact=1` (atau `compact=true`), dan tambahkan `response_mode: "compact"` di luar `payload` pada `/commands`. State ringkas mengganti foto produksi, bukti penjualan, dan profil dengan `photo: ""` serta `photo_ref: {kind,id,version}` jika gambar ada. `version` adalah SHA-256, 64 karakter heksadesimal kecil. Foto dalam snapshot audit juga dikeluarkan dari respons ringkas, sementara data asli tetap tersimpan. Tanpa parameter ini respons lama tetap berisi foto untuk kompatibilitas. Kolom milik karyawan disaring dalam SQL sebelum JSON dibaca; koleksi pembelian dan audit admin tidak diambil sama sekali untuk karyawan. Metadata profil/pendaftaran pengguna dibaca secara kelompok untuk menghindari query berulang per pengguna.
 
@@ -145,9 +161,13 @@ Untuk klien baru, ambil state lengkap melalui `/bootstrap?compact=1` (atau `comp
 
 Frontend dapat memanggil `/sync/prices` setiap **5 detik** tanpa mengunduh transaksi/foto. Hasilnya `{prices,notifications,user,settings}`; `user` sengaja tidak berisi `photo` atau `photo_ref`, sehingga client mempertahankan foto yang sudah dimilikinya. Endpoint ini tetap memeriksa token, status pendaftaran, dan aktivasi akun pada setiap permintaan. State lengkap dapat disegarkan lebih jarang, setelah penulisan, atau saat pengguna meminta refresh. Harga terjadwal tetap disertakan agar tampilan dapat mengaktifkannya pada waktu yang tepat.
 
+Untuk mengambil perubahan, gunakan `price_cursor` dari `/bootstrap?compact=1`. Kirim `GET /sync/prices?since=<price_cursor>` dengan token akun yang sama. Respons `mode: "delta"` berisi `prices`, `notifications`, dan `read_notices` sejak kursor itu. ID di `read_notices` menandai pemberitahuan yang sudah dibaca, dan `all` menandai semuanya. Simpan `cursor` dari respons sesudah perubahan diterapkan. Saat `more` bernilai `true`, segera ambil halaman berikutnya. Setiap halaman memuat paling banyak 100 perubahan. Riwayat harga lama tetap tersedia di aplikasi. Pemberitahuan baru dibedakan berdasarkan ID meskipun nominal harga sama. Saat berganti akun, ambil kursor baru melalui bootstrap.
+
 Ambil foto hanya ketika diperlukan menggunakan bearer token pada `GET /media/{kind}/{id}?v={version}`. Untuk profil, `id` adalah ID pengguna. Respons adalah byte gambar asli dengan MIME tervalidasi, `ETag`, dan `Cache-Control: private, no-store`. Karyawan hanya dapat membaca foto catatan/profilnya; admin dapat membaca semuanya. Parameter `v` adalah identitas cache client, bukan pengganti autentikasi. Tidak ada token dalam URL, redirect ke URL eksternal, atau perubahan penyimpanan gambar. Cache Blob di memori client harus dibatasi dan dibersihkan ketika sesi berganti.
 
 Respons `sale.create` kini menyertakan `state.command_result: {action:"sale.create",record_id,request_id}`. Gunakan `record_id` tersebut untuk menampilkan/mencetak nota dari state yang dikembalikan, bukan menebak penjualan terbaru atau menunggu render state React. Saat request ID disertakan, ID transaksi hasil commit disimpan secara atomik dalam record privat `command_result`; retry setelah respons hilang mengembalikan ID penjualan yang sama meskipun ada transaksi lain sesudahnya. `response_mode` tidak termasuk fingerprint penulisan, sehingga retry dapat berganti format respons tanpa menggandakan penjualan.
+
+Untuk membuka nota tanpa menunggu riwayat transaksi, kirim `response_mode: "compact"` dan `receipt_for_role` (`admin` atau `employee`, sesuai sesi) di luar `payload` pada `sale.create`. Respons `mode: "sale_receipt"` memuat `command_result`, `sale` lengkap dengan harga saat transaksi, serta `pickups` dan `pickup_balances` untuk pengambilan pada nota tersebut. Saldo menunjukkan sisa telur yang dibawa pada saat respons dibuat. Klien dapat langsung membuka nota dari `sale` lalu memperbarui saldo yang terpengaruh. Jika peran pengguna telah berubah, server mengirim state ringkas lengkap sesuai hak akses terkini. Klien lama tetap dapat meminta state lengkap seperti sebelumnya.
 
 ## Pengujian nyata
 

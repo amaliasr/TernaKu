@@ -38,7 +38,7 @@ export default function InstallApp() {
           <ol><li>Buka <strong>ternaku.rstudiohub.com</strong> di Chrome.</li><li>Tekan menu <strong>⋮</strong> di pojok atas.</li><li>Pilih <strong>Instal aplikasi</strong> atau <strong>Tambahkan ke layar utama</strong>, lalu ikuti petunjuknya.</li></ol>
           <details><summary>Menggunakan iPhone?</summary><p>Buka di Safari → Bagikan → Tambahkan ke Layar Utama → Tambah.</p></details>
         </>}
-        <p className={styles.note}>Jika dibuka dari WhatsApp, buka dulu tautannya di browser. TernaKu tetap memerlukan internet untuk harga terbaru dan menyimpan catatan.</p>
+        <p className={styles.note}>Jika dibuka dari WhatsApp, buka dulu tautannya di browser. Draf panen dan penjualan tersimpan di HP ini. Sambungkan internet untuk melihat harga terbaru dan mengirim catatan.</p>
         <button type="button" className="btn btn-primary w-100" onClick={() => setHelp(false)}>Mengerti</button>
       </div>
     </Dialog>}

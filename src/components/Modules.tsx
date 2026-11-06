@@ -49,9 +49,11 @@ import type {
   User,
 } from "@/lib/types";
 import EntryModal from "./EntryModal";
+import { InvoiceDialog, InvoiceTasks } from "./InvoiceLedger";
 import ImagePreview from "./ImagePreview";
 import Avatar from "./Avatar";
 import PendingHarvest from "./PendingHarvest";
+import StockCount from "./StockCount";
 import {
   businessDate,
   categoryLabel,
@@ -575,6 +577,7 @@ function SalesPage({ open }: { open: OpenForm }) {
           },
         ]}
       />
+      <InvoiceTasks invoices={state.sales.filter(s=>user?.role==="admin" || s.user_id===user?.id)} />
       <section className="panel">
         <div className="panel-header">
           <div>
@@ -760,7 +763,8 @@ function StockPage({ open }: { open: OpenForm }) {
     production: "Produksi masuk",
     pickup: "Pengambilan keluar",
     return: "Pengembalian telur",
-    correction: "Koreksi produksi",
+    correction: "Koreksi",
+    reconcile: "Hitung fisik gudang",
   };
   const movements = (
     state.stock_movements
@@ -831,6 +835,7 @@ function StockPage({ open }: { open: OpenForm }) {
       </Heading>
       {action.feedback}
       <PendingHarvest />
+      <StockCount />
       <Stats
         items={[
           {
@@ -1058,6 +1063,8 @@ function FeedPage({ open }: { open: OpenForm }) {
   const filters = useFilters();
   const [error, setError] = useState("");
   const [downloading, setDownloading] = useState("");
+  const [invoiceId, setInvoiceId] = useState("");
+  const invoice = state.feed_purchases.find(row=>row.id===invoiceId);
   const purchases = state.feed_purchases
     .filter(
       (p) =>
@@ -1139,6 +1146,8 @@ function FeedPage({ open }: { open: OpenForm }) {
           },
         ]}
       />
+      {user?.role === "admin" && tab === "purchase" && <InvoiceTasks invoices={state.feed_purchases} supplier />}
+      {invoice && user?.role==="admin" && <InvoiceDialog key={invoice.id} invoice={invoice} onClose={()=>setInvoiceId("")} />}
       <section className="panel">
         <div className="panel-header">
           <div className="module-tabs">
@@ -1321,6 +1330,7 @@ function FeedPage({ open }: { open: OpenForm }) {
                         )}
                       </td>
                       <td>
+                        <button type="button" className="btn btn-sm btn-outline-primary" onClick={()=>setInvoiceId(p.id)}>{p.balance > 0 ? "Catat pembayaran" : "Riwayat pembayaran"}</button>{" "}
                         <button
                           className="btn btn-sm btn-light"
                           disabled={downloading === p.id}
@@ -1919,10 +1929,14 @@ function EmployeesPage({ open }: { open: OpenForm }) {
 }
 const actionLabels: Record<string, string> = {
   "production.create": "Produksi dicatat",
+  "stock.reconcile": "Stok gudang dicocokkan",
   "pickup.create": "Pengambilan telur",
   "pickup.return": "Pengembalian telur",
   "sale.create": "Penjualan dicatat",
   "sale.payment": "Pembayaran diterima",
+  "sale.due": "Jatuh tempo pelanggan",
+  "feed.due": "Jatuh tempo pemasok",
+  "feed.payment": "Pembayaran ke pemasok",
   "price.create": "Harga diperbarui",
   "user.create": "Akun dibuat",
   "user.update": "Akun diperbarui",

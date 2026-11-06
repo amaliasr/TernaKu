@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, type ReactNode } from "react";
+import { createContext, useContext, useEffect, useLayoutEffect, useRef, type ReactNode, type RefObject } from "react";
 import { createPortal } from "react-dom";
 import { X, Inbox, Search, LoaderCircle } from "lucide-react";
 import { businessDate, dateLabel } from "@/lib/domain";
@@ -128,6 +128,16 @@ export function Filters({
     </div>
   );
 }
+type CloseDialog = () => void | boolean;
+const SharedBackLayer = createContext<RefObject<CloseDialog | null> | null>(null);
+
+/** Draft choice, editing, and receipt share one Android Back entry. */
+export function DialogSession({ children, onClose }: { children: ReactNode; onClose: CloseDialog }) {
+  const activeDialog = useRef<CloseDialog | null>(null);
+  useBackLayer(true, () => (activeDialog.current || onClose)());
+  return <SharedBackLayer.Provider value={activeDialog}>{children}</SharedBackLayer.Provider>;
+}
+
 export function Dialog({
   title,
   subtitle,
@@ -142,11 +152,18 @@ export function Dialog({
   wide?: boolean;
 }) {
   const ref = useRef<HTMLDivElement>(null);
-  useBackLayer(true, onClose);
+  const parentLayer = useContext(SharedBackLayer);
+  useBackLayer(!parentLayer, onClose);
   const closeRef = useRef(onClose);
-  useEffect(() => {
+  useLayoutEffect(() => {
     closeRef.current = onClose;
   }, [onClose]);
+  useLayoutEffect(() => {
+    if (!parentLayer) return;
+    const close = () => closeRef.current();
+    parentLayer.current = close;
+    return () => { if (parentLayer.current === close) parentLayer.current = null; };
+  }, [parentLayer]);
   useEffect(() => {
     const previous = document.activeElement as HTMLElement | null;
     const releaseScroll = lockBodyScroll();
@@ -213,7 +230,7 @@ export function Dialog({
             <X size={20} />
           </button>
         </div>
-        {children}
+        <SharedBackLayer.Provider value={null}>{children}</SharedBackLayer.Provider>
       </div>
     </div>,
     document.body,
