@@ -185,7 +185,6 @@ export default function HarvestForm({
               required
               max={today()}
               value={date}
-              data-draft-controlled
               onInput={(e) => setDate(e.currentTarget.value)}
               onChange={(e) => setDate(e.target.value)}
             />
