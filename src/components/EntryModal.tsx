@@ -33,6 +33,7 @@ import { draftKey, type DraftAttempt } from "@/lib/entry-drafts";
 import Photo from "./PhotoUpload";
 import { SaleDetail } from "./RecordDialogs";
 import { normalizeUsername } from "@/lib/usernames";
+import { NEW_EGG_TYPES, EGG_TYPES, eggTypePrice } from "@/lib/egg-types";
 import UsernameInput, { optionalUsernameHint } from "./UsernameInput";
 import PasswordInput from "./PasswordInput";
 import {
@@ -105,7 +106,7 @@ function FormShell({
 }
 function PickupForm({ onSave, busy, onClose }: FormProps) {
   const { state } = useFarm();
-  const [category, setCategory] = useState<Category>("good");
+  const [category, setCategory] = useState<Category>("skm");
   const available = eggStock(state, category);
   return (
     <FormShell
@@ -142,8 +143,8 @@ function PickupForm({ onSave, busy, onClose }: FormProps) {
             value={category}
             onChange={(e) => setCategory(e.target.value as Category)}
           >
-            <option value="good">Telur bagus</option>
-            <option value="cracked">Telur bentes</option>
+            <optgroup label="Telur Bagus"><option value="skm">Telur SKM</option><option value="skm_new">Telur SKM Baru</option></optgroup>
+            <option value="cracked">Telur Bentes</option>
           </select>
         </Field>
       </div>
@@ -239,7 +240,8 @@ function SaleForm({ onSave, busy, onClose, saleStart }: FormProps) {
   const [photoBusy, setPhotoBusy] = useState(false);
   const [reviewedPriceId, setReviewedPriceId] = useDraftField("reviewedPriceId", price?.id);
   const { issues: stockIssues, estimatedEggs } = saleStockPreview(items, available, source);
-  const showTotal = !!price && stockIssues.size === 0 && items.every(item => optionFor(item));
+  const missingPrice = items.some(item => { const option = optionFor(item); return option && eggTypePrice(price, option.category) === undefined; });
+  const showTotal = !!price && !missingPrice && stockIssues.size === 0 && items.every(item => optionFor(item));
   const needsPriceReview = !!price && reviewedPriceId !== price.id && items.some(line => line.kg !== "" || line.eggs !== "");
   const linePrice = (line: SaleLine) => {
     const pickup = optionFor(line);
@@ -249,9 +251,7 @@ function SaleForm({ onSave, busy, onClose, saleStart }: FormProps) {
       (line.is_free || price?.cracked_price === 0)
     )
       return 0;
-    return pickup?.category === "good"
-      ? price?.good_price || 0
-      : price?.cracked_price || 0;
+    return eggTypePrice(price, pickup.category) ?? 0;
   };
   const total = items.reduce(
       (sum, item) => sum + Math.round(Number(item.kg) * linePrice(item)),
@@ -311,6 +311,7 @@ function SaleForm({ onSave, busy, onClose, saleStart }: FormProps) {
         });
       }}
     >
+      {missingPrice && <p className="alert alert-warning" role="alert">Harga jenis telur yang dipilih belum diatur. Tetapkan harga jenis tersebut sebelum menyimpan penjualan.</p>}
       <div className="row g-3">
         <Field className="col-sm-6" label="Waktu transaksi (WIB)">
           <input
@@ -414,7 +415,7 @@ function SaleForm({ onSave, busy, onClose, saleStart }: FormProps) {
               {balance && (
                 <small className="text-muted d-block my-2">
                   Tersedia {number(balance.eggs)} butir / {number(balance.kg)}{" "}
-                  kg{warehouseSale && ` · ${number(balance.trays)} krat`} · Harga {money(linePrice(item))}/kg
+                  kg{warehouseSale && ` · ${number(balance.trays)} krat`} · Harga {pickup && eggTypePrice(price, pickup.category) !== undefined ? `${money(linePrice(item))}/kg` : "belum diatur"}
                 </small>
               )}
               {pickup?.category === "cracked" && (
@@ -459,7 +460,7 @@ function SaleForm({ onSave, busy, onClose, saleStart }: FormProps) {
                 </Field>
               </div>
               <div className="text-end mt-2 fw-semibold">
-                {!price || !pickup || issue ? "—" : pickup.category === "cracked" &&
+                {!price || !pickup || issue || eggTypePrice(price, pickup.category) === undefined ? "—" : pickup.category === "cracked" &&
                 (item.is_free || price?.cracked_price === 0)
                   ? "Gratis"
                   : money(Math.round(Number(item.kg) * linePrice(item)))}
@@ -576,39 +577,21 @@ function PriceForm({ onSave, busy, onClose }: FormProps) {
         e.preventDefault();
         const data = dataFrom(e.currentTarget);
         void onSave("price.create", {
-          good_price: Number(data.good_price),
+          skm_price: Number(data.skm_price),
+          skm_new_price: Number(data.skm_new_price),
           cracked_price: Number(data.cracked_price),
           effective_at: `${data.effective_at}:00+07:00`,
         });
       }}
     >
       <div className="row g-3">
-        <Field className="col-sm-6" label="Telur bagus (Rp/kg)">
-          <input
-            name="good_price"
-            className="form-control"
-            type="number"
-            min="1"
-            step="1"
-            defaultValue={price?.good_price}
-            required
-          />
-        </Field>
-        <Field
-          className="col-sm-6"
-          label="Telur bentes (Rp/kg)"
-          hint="Isi 0 jika telur bentes diberikan gratis."
-        >
-          <input
-            name="cracked_price"
-            className="form-control"
-            type="number"
-            min="0"
-            step="1"
-            defaultValue={price?.cracked_price}
-            required
-          />
-        </Field>
+        <div className="col-12"><h3 className="h6 mb-0">Telur Bagus</h3></div>
+        {NEW_EGG_TYPES.map(type => <div key={type} className={type === "cracked" ? "col-12" : "col-sm-6"}>
+          {type === "cracked" && <h3 className="h6 mt-2 mb-3">Telur Bentes</h3>}
+          <Field className="d-block"
+          label={`${categoryLabel(type)} (Rp/kg)`} hint={type === "cracked" ? "Isi 0 jika telur bentes diberikan gratis." : undefined}>
+          <input name={EGG_TYPES[type].priceKey} className="form-control" type="number" min={type === "cracked" ? "0" : "1"} step="1" defaultValue={eggTypePrice(price, type)} required />
+        </Field></div>)}
         <Field
           className="col-12"
           label="Mulai berlaku (WIB)"
@@ -1275,7 +1258,8 @@ function EntryBody({kind, onClose, onSaved, saleStart}: EntryProps) {
     setError("");
     try {
       if (user && isDraftAction && !attempt) {
-        const snapshot = state.prices.find(
+        const currentPrice = activePrice(state);
+        const snapshot = currentPrice?.id === payload.expected_price_id ? currentPrice : state.prices.find(
           (price) => price.id === payload.expected_price_id,
         );
         const lines = Array.isArray(payload.items)
@@ -1291,7 +1275,7 @@ function EntryBody({kind, onClose, onSaved, saleStart}: EntryProps) {
           action,
           ...(action === "sale.create" ? { previous_sale_ids: previousSaleIds } : {}),
           payload: JSON.parse(JSON.stringify(payload)) as CommandPayload,
-          total: snapshot
+          total: snapshot && lines.every(item => item.category === "cracked" && item.is_free || eggTypePrice(snapshot, item.category) !== undefined)
             ? lines.reduce(
                 (sum, item) =>
                   sum +
@@ -1299,9 +1283,7 @@ function EntryBody({kind, onClose, onSaved, saleStart}: EntryProps) {
                     item.kg *
                       (item.category === "cracked" && item.is_free
                         ? 0
-                        : item.category === "good"
-                          ? snapshot.good_price
-                          : snapshot.cracked_price),
+                        : eggTypePrice(snapshot, item.category) ?? 0),
                   ),
                 0,
               )

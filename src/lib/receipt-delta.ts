@@ -1,4 +1,5 @@
 import type { Pickup, PickupBalance, Sale, State, StockMovement } from "./types";
+import { ALL_EGG_TYPES, emptyEggQuantities, isEggType } from "./egg-types";
 
 interface ReceiptDelta {
   mode: "sale_receipt";
@@ -13,7 +14,7 @@ interface ReceiptDelta {
 const obj = (v: unknown): v is Record<string, unknown> => v !== null && typeof v === "object" && !Array.isArray(v);
 const finite = (v: unknown) => typeof v === "number" && Number.isFinite(v);
 const quantity = (v: Record<string, unknown>) => ["eggs", "kg", "trays"].every(k => finite(v[k]));
-const validCategory = (v: unknown) => v === "good" || v === "cracked";
+const validCategory = isEggType;
 
 /** A receipt from another request, account, or pickup cannot modify this session. */
 export function isReceiptDelta(data: unknown, userId: string, requestId: string | undefined): data is ReceiptDelta {
@@ -31,8 +32,11 @@ export function isReceiptDelta(data: unknown, userId: string, requestId: string 
     if (pickups.length || Object.keys(balances).length || sale.items.some(i => i.pickup_id !== "")
       || !obj(data.inventory) || !Array.isArray(data.stock_movements)) return false;
     const inventory = data.inventory;
-    if (!["good","cracked"].every(category => {
+    const newTypes = sale.items.some(item => item.category === "skm" || item.category === "skm_new");
+    const required = newTypes ? ALL_EGG_TYPES : ["good", "cracked"];
+    if (!ALL_EGG_TYPES.every(category => {
       const q = inventory[category];
+      if (q === undefined && !required.includes(category)) return true;
       return obj(q) && quantity(q) && ["kg","eggs","trays"].every(k => Number(q[k]) >= 0);
     })) return false;
     const categories = new Set(sale.items.map(i => i.category));
@@ -74,7 +78,7 @@ export function mergeReceiptDelta(state: State, delta: ReceiptDelta): State {
   return { ...state, command_result: delta.command_result,
     sales,
     ...(warehouse ? {
-      inventory: delta.inventory,
+      inventory: { ...emptyEggQuantities(), ...state.inventory, ...delta.inventory },
       stock_movements: [...warehouse, ...(state.stock_movements || []).filter(m => !movementIds.has(m.id))],
     } : {}),
     pickups: [...updated.values(), ...pickups],

@@ -37,6 +37,8 @@ import {
 } from "@/lib/export";
 import { adjustmentMethodLabel, categoryLabel, methodLabel } from "./ModuleUI";
 import { inReportRange, reportRange, reportRangeError, type ReportPreset } from "@/lib/report-range";
+import { ALL_EGG_TYPES, eggTypeLabel } from "@/lib/egg-types";
+import { eggSummaryRows, saleInvoiceTotals, summarizeEggTypes } from "@/lib/egg-report";
 import styles from "./Reports.module.css";
 
 export default function Reports() {
@@ -54,6 +56,16 @@ export default function Reports() {
   const production = state.productions.filter((p) => inRange(p.date));
   const purchases = state.feed_purchases.filter((p) => inRange(p.date));
   const usages = state.feed_usages.filter((p) => inRange(p.date));
+  const saleItems = sales.flatMap(sale => sale.items);
+  const harvestSummary = summarizeEggTypes(production);
+  const saleSummary = summarizeEggTypes(saleItems);
+  const summaryTypes = ALL_EGG_TYPES.filter(type => type !== "good" || harvestSummary.hasLegacy || saleSummary.hasLegacy);
+  const currentStockTypes = ALL_EGG_TYPES.filter(type => {
+    const q = eggStock(state, type);
+    return type !== "good" || q.eggs !== 0 || q.kg !== 0 || q.trays !== 0;
+  });
+  const closingStockRows = ALL_EGG_TYPES.map(type => ({ type, stock: closingEggStock(state, type, to) }))
+    .filter(({ type, stock }) => type !== "good" || !stock || stock.eggs !== 0 || stock.kg !== 0);
   const employee = (id: string) =>
     state.users.find((u) => u.id === id)?.name || "Karyawan";
   const tables: ReportTable[] = [
@@ -89,13 +101,23 @@ export default function Reports() {
       ]),
     },
     {
+      name: "Penjualan per jenis",
+      columns: ["Jenis telur", "Butir", "Berat (kg)", "Krat", "Omzet (Rp)"],
+      rows: eggSummaryRows(saleItems, true),
+    },
+    {
+      name: "Rincian item penjualan",
+      columns: ["Nomor nota", "Tanggal & jam (WIB)", "Karyawan", "Pelanggan", "Jenis telur", "Butir", "Berat (kg)", "Krat", "Harga transaksi (Rp/kg)", "Nilai item (Rp)"],
+      rows: sales.flatMap(sale => sale.items.map(item => [sale.number, sale.date, employee(sale.user_id), sale.customer || "Umum", eggTypeLabel(item.category), item.eggs, item.kg, item.trays, item.unit_price, item.total])),
+    },
+    {
       name: "Produksi",
       columns: [
         "Tanggal panen",
         "Waktu input (WIB)",
         "Karyawan",
         "Kandang",
-        "Kategori",
+        "Jenis telur",
         "Butir",
         "Berat (kg)",
         "Krat",
@@ -112,6 +134,11 @@ export default function Reports() {
         p.trays,
         p.notes,
       ]),
+    },
+    {
+      name: "Panen per jenis",
+      columns: ["Jenis telur", "Butir", "Berat (kg)", "Krat"],
+      rows: eggSummaryRows(production),
     },
     {
       name: "Performa karyawan",
@@ -214,6 +241,8 @@ export default function Reports() {
             sale: "Penjualan dari gudang",
             correction: "Koreksi",
             reconcile: adjustmentMethodLabel(m.method),
+            classify_in: "Pemilahan masuk",
+            classify_out: "Pemilahan keluar",
           }[m.kind],
           m.eggs,
           m.kg,
@@ -224,9 +253,8 @@ export default function Reports() {
     ...(user?.role === "admin" ? [{
       name: "Saldo akhir gudang",
       columns: ["Tanggal saldo", "Kategori", "Butir", "Berat (kg)", "Keterangan"],
-      rows: (["good","cracked"] as const).map(c => {
-        const stock = closingEggStock(state,c,to);
-        return [to, categoryLabel(c), stock?.eggs ?? "—", stock?.kg ?? "—",
+      rows: closingStockRows.map(({ type, stock }) => {
+        return [to, categoryLabel(type), stock?.eggs ?? "—", stock?.kg ?? "—",
           !stock ? "Riwayat stok pada tanggal ini belum lengkap." : to === today() ? "Saldo berjalan hari ini (WIB)" : "Saldo pada akhir hari (WIB)"];
       }),
     }, {
@@ -249,7 +277,7 @@ export default function Reports() {
     }] : [{
       name: "Stok saat ini",
       columns: ["Waktu pencatatan WIB", "Kategori", "Butir", "Berat (kg)"],
-      rows: (["good", "cracked"] as const).map(c => {
+      rows: currentStockTypes.map(c => {
         const stock = eggStock(state, c);
         return [new Date().toISOString(), categoryLabel(c), stock.eggs, stock.kg];
       }),
@@ -270,8 +298,7 @@ export default function Reports() {
       .sort(([a], [b]) => a.localeCompare(b))
       .map(([date, omzet]) => ({ date: dateLabel(date), omzet }));
   }, [state.sales, from, to, rangeError]);
-  const total = sales.reduce((a, s) => a + s.total, 0),
-    balance = sales.reduce((a, s) => a + s.balance, 0);
+  const { total, balance } = saleInvoiceTotals(sales);
   const invalid = !!rangeError;
   async function download(format: string) {
     setBusy(format);
@@ -379,10 +406,11 @@ export default function Reports() {
       )}
       <p className="report-caption">
         Menampilkan {dateLabel(from)} – {dateLabel(to)} ·{" "}
-        {user?.role === "admin" ? "Seluruh peternakan" : "Data milik Anda"} ·
+        {user?.role === "admin" ? "Seluruh peternakan" : user?.can_check_stock ? "Data yang dapat Anda lihat" : "Data milik Anda"} ·
         Target dibandingkan dengan omzet pada periode yang dipilih.
       </p>
       <p className="report-caption">{REPORT_TIME_NOTE}</p>
+      <p className="report-caption">Subtotal bagus hanya menjumlahkan SKM dan SKM Baru. Telur bagus lama yang belum dibedakan tetap ditampilkan terpisah. Pembayaran dan piutang dihitung sekali per nota.</p>
       <div className="report-stats">
         <div className="metric-card">
           <p>Omzet penjualan</p>
@@ -418,6 +446,27 @@ export default function Reports() {
           <small>{usages.length} pencatatan pemakaian</small>
         </div>
       </div>
+      <section className={`panel ${styles.typeSummary}`} aria-label="Ringkasan tiap jenis telur">
+        <div className="panel-header"><div><h3>Ringkasan tiap jenis telur</h3><p>Hasil panen dan penjualan pada periode yang dipilih.</p></div></div>
+        <div className={styles.compactSummary}>
+          {[
+            ...summaryTypes.map(type => ({ label: eggTypeLabel(type), harvest: harvestSummary.byType[type], sale: saleSummary.byType[type] })),
+            { label: "Subtotal bagus (SKM + SKM Baru)", harvest: harvestSummary.bagus, sale: saleSummary.bagus },
+            { label: "Total seluruh telur", harvest: harvestSummary.total, sale: { ...saleSummary.total, amount: total } },
+          ].map(row => <div key={row.label} className={styles.compactType}>
+            <h4>{row.label}</h4>
+            <dl><div><dt>Panen</dt><dd>{number(row.harvest.eggs, 0)} butir <span>{number(row.harvest.kg, 3)} kg</span></dd></div><div><dt>Terjual</dt><dd>{number(row.sale.kg, 3)} kg <span>{money(row.sale.amount)}</span></dd></div></dl>
+          </div>)}
+        </div>
+        <div className={`table-responsive ${styles.summaryTable}`}><table className="table farm-table">
+          <thead><tr><th>Jenis telur</th><th className="text-end">Panen (butir)</th><th className="text-end">Panen (kg)</th><th className="text-end">Terjual (kg)</th><th className="text-end">Omzet</th></tr></thead>
+          <tbody>{summaryTypes.map(type => <tr key={type}><td>{eggTypeLabel(type)}</td><td className="text-end">{number(harvestSummary.byType[type].eggs, 0)}</td><td className="text-end">{number(harvestSummary.byType[type].kg, 3)}</td><td className="text-end">{number(saleSummary.byType[type].kg, 3)}</td><td className="text-end">{money(saleSummary.byType[type].amount)}</td></tr>)}</tbody>
+          <tfoot>
+            <tr><th>Subtotal bagus (SKM + SKM Baru)</th><td className="text-end">{number(harvestSummary.bagus.eggs, 0)}</td><td className="text-end">{number(harvestSummary.bagus.kg, 3)}</td><td className="text-end">{number(saleSummary.bagus.kg, 3)}</td><td className="text-end">{money(saleSummary.bagus.amount)}</td></tr>
+            <tr><th>Total seluruh telur</th><td className="text-end">{number(harvestSummary.total.eggs, 0)}</td><td className="text-end">{number(harvestSummary.total.kg, 3)}</td><td className="text-end">{number(saleSummary.total.kg, 3)}</td><td className="text-end">{money(total)}</td></tr>
+          </tfoot>
+        </table></div>
+      </section>
       <section className="panel mb-4">
         <div className="panel-header">
           <div>

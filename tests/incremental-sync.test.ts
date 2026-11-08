@@ -1,3 +1,4 @@
+import { emptyEggQuantities } from "../src/lib/egg-types";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { activePrice, emptyState, pickupBalance } from "../src/lib/domain";
@@ -32,7 +33,7 @@ test("unchanged poll preserves collections; a truncated/malformed cursor cannot 
 });
 
 test("receipt delta always resolves the exact invoice, including on replay after sale from another phone", () => {
-  const state=emptyState(); state.users=[user]; state.inventory={good:{eggs:65,kg:3.9,trays:0},cracked:{eggs:0,kg:0,trays:0}};
+  const state=emptyState(); state.users=[user]; state.inventory={...emptyEggQuantities(),good:{eggs:65,kg:3.9,trays:0},cracked:{eggs:0,kg:0,trays:0}};
   const pickup:Pickup={id:"pu",date:"2026-10-01",user_id:user.id,category:"good",eggs:100,kg:6,trays:0,area:"Pasar",notes:"",created_at:"2026-10-01",locked:false,returned_eggs:0,returned_kg:0,returned_trays:0};
   const sale:Sale={id:"sale1",number:"TK-1",user_id:user.id,date:"2026-10-01",notes:"",customer:"Warung",phone:"",created_at:"2026-10-01",
     total:16800,paid:16800,balance:0,payment_method:"cash",payment_status:"paid",locked:true,
@@ -56,7 +57,7 @@ test("a warehouse receipt updates shared inventory once, never claims a personal
     stock_source:"warehouse",total:0,paid:0,balance:0,payment_method:"cash",payment_status:"paid",locked:true,
     items:[{id:"i",pickup_id:"",category:"cracked",eggs:10,kg:0.5,trays:0,unit_price:0,total:0}]};
   const m={id:"m",kind:"sale",reference_id:"w",user_id:user.id,category:"cracked",date:stamp,created_at:stamp,notes:"TK-W",eggs:-10,kg:-0.5,trays:0};
-  const inventory={good:{eggs:120,kg:7,trays:2},cracked:{eggs:5,kg:0.25,trays:0}};
+  const inventory={...emptyEggQuantities(),good:{eggs:120,kg:7,trays:2},cracked:{eggs:5,kg:0.25,trays:0}};
   const receipt={mode:"sale_receipt",command_result:{action:"sale.create",record_id:sale.id,request_id:req},sale,pickups:[],pickup_balances:{},inventory,stock_movements:[m]};
   assert.ok(isReceiptDelta(receipt,user.id,req));
   const once=mergeReceiptDelta(state,receipt);

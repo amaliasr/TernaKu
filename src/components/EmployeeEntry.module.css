@@ -58,6 +58,10 @@
   margin: 0;
   min-width: 0;
 }
+.typeGroup { margin: 4px 0 9px; font-size: calc(13px * var(--font-scale, 1)); font-weight: 600; }
+.typeExtra { display: grid; gap: 10px; margin-top: 10px; }
+.typeExtra .category { width: 100%; }
+.category:disabled { opacity: .65; }
 .categories legend {
   float: none;
   width: auto;
@@ -175,6 +179,7 @@
   color: #fff;
   border-radius: 14px;
 }
+.priceBar > div:last-child { grid-column: 1 / -1; grid-template-columns: 1fr auto; align-items: center; border-top: 1px solid #ffffff30; padding-top: 10px; }
 .priceBar > div {
   display: grid;
   gap: 5px;

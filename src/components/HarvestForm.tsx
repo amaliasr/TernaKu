@@ -4,13 +4,14 @@ import { useState } from "react";
 import { useFarm } from "@/lib/store";
 import { number, today } from "@/lib/domain";
 import type { Category, CommandPayload } from "@/lib/types";
+import { NEW_EGG_TYPES } from "@/lib/egg-types";
+import { classifyHarvestDraft, hasLegacyHarvest, normalizeHarvestRows, type HarvestDraftRows } from "@/lib/harvest-draft";
 import { Field, LoadingButton, categoryLabel } from "./ModuleUI";
 import { useDraftField } from "./DraftBoundary";
 import PhotoUpload from "./PhotoUpload";
 
-type Row = { eggs: string; kg: string; trays: string };
-const blank = (): Row => ({ eggs: "", kg: "", trays: "" });
-const categories = ["good", "cracked"] as const;
+type Row = HarvestDraftRows[Category];
+const categories = NEW_EGG_TYPES;
 
 export default function HarvestForm({
   onSave,
@@ -22,10 +23,12 @@ export default function HarvestForm({
   onClose: () => void;
 }) {
   const { state, user } = useFarm();
-  const [rows, setRows] = useDraftField<Record<Category, Row>>(
+  const [savedRows, setRows] = useDraftField<Partial<HarvestDraftRows>>(
     "harvest.rows",
-    () => ({ good: blank(), cracked: blank() }),
+    () => normalizeHarvestRows(undefined),
   );
+  const rows = normalizeHarvestRows(savedRows);
+  const legacy = hasLegacyHarvest(rows);
   const [date, setDate] = useDraftField("harvest.date", () => today());
   const [barn, setBarn] = useDraftField("harvest.barn", "");
   const [notes, setNotes] = useDraftField("harvest.notes", "");
@@ -45,7 +48,7 @@ export default function HarvestForm({
   const update = (category: Category, key: keyof Row, value: string) =>
     setRows((previous) => ({
       ...previous,
-      [category]: { ...previous[category], [key]: value },
+      [category]: { ...rows[category], [key]: value },
     }));
   return (
     <form
@@ -56,6 +59,7 @@ export default function HarvestForm({
       onSubmit={(e) => {
         e.preventDefault();
         if (busy || photoBusy) return;
+        if (legacy) { setMessage("Pilih jenis telur untuk draf bagus lama sebelum menyimpan."); return; }
         if (!items.length) {
           setMessage(
             "Isi jumlah butir dan berat untuk sedikitnya satu jenis telur.",
@@ -90,11 +94,23 @@ export default function HarvestForm({
           Isi hasil timbangan untuk setiap jenis telur. Kosongkan baris yang
           tidak dipanen.
         </p>
+        {legacy && <div className="alert alert-warning" role="alert">
+          <strong>Draf telur bagus belum dibedakan</strong>
+          <p className="mb-2">{rows.good.eggs || "0"} butir · {rows.good.kg || "0"} kg. Pilih jenis yang benar. Foto dan isian lain tetap tersimpan.</p>
+          <div className="d-flex flex-column flex-sm-row gap-2">
+            {(["skm", "skm_new"] as const).map(type => <button key={type} type="button" className="btn btn-outline-secondary" onClick={() => {
+              try { setRows(classifyHarvestDraft(rows, type)); setMessage(""); } catch (cause) { setMessage(cause instanceof Error ? cause.message : "Periksa draf panen."); }
+            }}>Pindahkan ke {categoryLabel(type)}</button>)}
+          </div>
+        </div>}
         {categories.map((c) => {
           const row = rows[c],
             estimate = Number(row.trays) * 10;
           return (
-            <fieldset key={c} className="border rounded p-3 mb-3">
+            <div key={c}>
+            {c === "skm" && <h3 className="h6 mt-3 mb-2">Telur Bagus</h3>}
+            {c === "cracked" && <h3 className="h6 mt-4 mb-2">Telur Bentes</h3>}
+            <fieldset className="border rounded p-3 mb-3">
               <legend className="float-none w-auto h6 px-1 mb-0">
                 {categoryLabel(c)}
               </legend>
@@ -162,6 +178,7 @@ export default function HarvestForm({
                   </p>
                 )}
             </fieldset>
+            </div>
           );
         })}
         <div className="form-summary mb-3" aria-live="polite">

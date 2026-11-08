@@ -5,12 +5,13 @@ import { createPortal } from "react-dom";
 import { X, Inbox, Search, LoaderCircle } from "lucide-react";
 import { businessDate, dateLabel } from "@/lib/domain";
 import type { StockAdjustmentMethod } from "@/lib/types";
+import { eggTypeLabel, isEggType } from "@/lib/egg-types";
 import { useBackLayer } from "@/lib/navigation";
 import { lockBodyScroll } from "@/lib/scroll-lock";
 export { businessDate } from "@/lib/domain";
 
 export const categoryLabel = (value: string) =>
-  value === "good" ? "Telur bagus" : "Telur bentes";
+  isEggType(value) ? eggTypeLabel(value) : "Jenis telur tidak dikenal";
 export const adjustmentMethodLabel = (method: StockAdjustmentMethod = "count") =>
   ({ add: "Tambah stok", subtract: "Kurangi stok", count: "Hasil hitung fisik" })[method];
 export const methodLabel = (value: string) =>

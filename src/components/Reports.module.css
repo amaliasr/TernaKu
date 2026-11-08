@@ -24,6 +24,20 @@
   font-size: calc(12px * var(--font-scale, 1));
 }
 
+.typeSummary { margin-bottom: 24px; }
+.typeSummary table { margin-bottom: 0; }
+.typeSummary th:first-child { min-width: 170px; }
+.typeSummary tfoot td, .typeSummary tfoot th { padding: 14px 16px; border-top: 1px solid var(--border); color: var(--text); }
+.typeSummary tfoot tr:last-child { font-weight: 600; }
+.compactSummary { display: none; }
+.compactType { padding: 16px; border-top: 1px solid var(--border); }
+.compactType h4 { margin: 0 0 12px; font-size: calc(14px * var(--font-scale, 1)); line-height: 1.6; }
+.compactType dl { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin: 0; }
+.compactType dt { font-size: calc(12px * var(--font-scale, 1)); font-weight: 400; color: var(--muted); margin-bottom: 6px; }
+.compactType dd { margin: 0; font-size: calc(14px * var(--font-scale, 1)); font-weight: 600; }
+.compactType dd span { display: block; margin-top: 4px; font-size: calc(12px * var(--font-scale, 1)); font-weight: 400; color: var(--muted); }
+@media (max-width: 600px) { .compactSummary { display: grid; } .summaryTable { display: none; } }
+
 @media (max-width: 576px) {
   .presets button { flex: 1 0 auto; }
 }

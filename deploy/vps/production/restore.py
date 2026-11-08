@@ -112,9 +112,20 @@ def compatible_account_columns(source_features, target_features):
 
 FRESH = """(SELECT COUNT(*) FROM users)=0 AND (SELECT COUNT(*) FROM records)=0
  AND (SELECT COUNT(*) FROM tokens)=0 AND (SELECT COUNT(*) FROM login_attempts)=0
- AND (SELECT COUNT(*) FROM command_requests)=0 AND (SELECT COUNT(*) FROM stock)=2
- AND (SELECT COUNT(*) FROM stock WHERE stock_key IN ('egg:good','egg:cracked') AND eggs=0 AND kg=0 AND trays=0)=2
+ AND (SELECT COUNT(*) FROM command_requests)=0
+ AND (((SELECT COUNT(*) FROM stock)=2
+       AND (SELECT COUNT(*) FROM stock WHERE stock_key IN ('egg:good','egg:cracked') AND eggs=0 AND kg=0 AND trays=0)=2)
+   OR ((SELECT COUNT(*) FROM stock)=4
+       AND (SELECT COUNT(*) FROM stock WHERE stock_key IN ('egg:good','egg:cracked','egg:skm','egg:skm_new') AND eggs=0 AND kg=0 AND trays=0)=4))
  AND (SELECT COUNT(*) FROM command_mutex)=1 AND (SELECT COUNT(*) FROM command_mutex WHERE id=1 AND version=0)=1"""
+
+
+def validate_egg_stock_keys(keys):
+    """Accept complete legacy/new layouts, never a partial or unknown egg SKU."""
+    legacy = {"egg:good", "egg:cracked"}
+    current = legacy | {"egg:skm", "egg:skm_new"}
+    require(len(keys) == len(set(keys)) and set(keys) in (legacy, current),
+            "Unknown or incomplete egg stock layout. Keep the database offline.")
 
 
 def import_scratch(cid, dump, sha256, scratch, account, password):
@@ -225,7 +236,7 @@ def main():
         not_deleted = " AND deleted_at IS NULL" if "deleted_at" in source_features else ""
         require(root_sql(cid, "SELECT COUNT(*) FROM " + scratch + ".users WHERE active=1 AND role='admin'" + not_deleted + ";") != "0", "No active admin in source.")
         require(source["command_mutex"] == 1 and root_sql(cid, "SELECT id FROM " + scratch + ".command_mutex;") == "1", "Source mutex is missing.")
-        require(root_sql(cid, "SELECT COUNT(*) FROM " + scratch + ".stock WHERE stock_key IN ('egg:good','egg:cracked');") == "2", "Missing egg stock rows.")
+        validate_egg_stock_keys(root_sql(cid, "SELECT stock_key FROM " + scratch + ".stock WHERE stock_key LIKE 'egg:%' ORDER BY stock_key;").splitlines())
         next_sequence = int(root_sql(cid, next_sequence_query(scratch) + ";"))
         require(next_sequence > int(root_sql(cid, f"SELECT COALESCE(MAX(sequence),0) FROM {scratch}.records;")), "Invalid next record sequence.")
         print("Verified dump counts", source, flush=True)

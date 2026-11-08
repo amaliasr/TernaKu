@@ -7,6 +7,7 @@ import {
   saleStockPreview,
   warehouseSaleOptions,
 } from "../src/lib/sale-availability";
+import { emptyEggQuantities } from "../src/lib/egg-types";
 import { createDemoState } from "../src/lib/seed";
 
 test("sale drafts use the latest owned pickup balance, including multiple lines from one batch", () => {
@@ -80,7 +81,7 @@ test("weighed sales reserve counted eggs first and keep estimates separate acros
 
 test("warehouse options use the current farm inventory and exclude categories with no saleable eggs", () => {
   const state = createDemoState(new Date("2026-11-06T03:00:00Z"));
-  state.inventory = { good: { eggs: 8, kg: 0.48, trays: 0 }, cracked: { eggs: 0, kg: 0, trays: 1 } };
+  state.inventory = { ...emptyEggQuantities(), good: { eggs: 8, kg: 0.48, trays: 0 }, cracked: { eggs: 0, kg: 0, trays: 1 } };
   const options = warehouseSaleOptions(state);
   assert.deepEqual(options.map(o => [o.id, o.category, o.balance]), [["good", "good", state.inventory.good]]);
   const line = { pickup_id: "p-123", category: "cracked" as const, eggs: "1", kg: "0.05" };

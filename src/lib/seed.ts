@@ -78,6 +78,8 @@ export function createDemoState(now = new Date()): State {
     {
       id: "price-1",
       good_price: 26500,
+      skm_price: 26500,
+      skm_new_price: 27500,
       cracked_price: 16500,
       effective_at: stamp(-30, "00:00"),
       created_at: stamp(-30),
@@ -86,6 +88,8 @@ export function createDemoState(now = new Date()): State {
     {
       id: "price-2",
       good_price: 27000,
+      skm_price: 27000,
+      skm_new_price: 28000,
       cracked_price: 17000,
       effective_at: stamp(-7, "00:00"),
       created_at: stamp(-8),
@@ -94,6 +98,8 @@ export function createDemoState(now = new Date()): State {
     {
       id: "price-3",
       good_price: 28000,
+      skm_price: 28000,
+      skm_new_price: 29000,
       cracked_price: 18000,
       effective_at: stamp(0, "00:00"),
       created_at: stamp(-1, "16:30"),
@@ -110,11 +116,11 @@ export function createDemoState(now = new Date()): State {
   ];
   for (let offset = -13; offset <= 0; offset++) {
     const idx = offset + 13;
-    for (const c of ["good", "cracked"] as Category[]) {
+    for (const c of ["skm", "skm_new", "cracked"] as Category[]) {
       const kg =
-        c === "good"
+        c === "skm"
           ? 97 + (idx % 5) * 3 + (offset === 0 ? 4 : 0)
-          : 3 + (idx % 3) * 0.3;
+          : c === "skm_new" ? 30 + (idx % 3) * 2 : 3 + (idx % 3) * 0.3;
       state.productions.push({
         id: `prod-${idx}-${c}`,
         date: day(offset),
@@ -123,9 +129,9 @@ export function createDemoState(now = new Date()): State {
         category: c,
         eggs: Math.round(kg / 0.058),
         kg,
-        trays: c === "good" ? 10 : 0,
+        trays: c === "skm" ? 10 : c === "skm_new" ? 3 : 0,
         notes:
-          c === "good"
+          c !== "cracked"
             ? "Panen pagi, kualitas baik."
             : "Dipisahkan saat sortir.",
         created_at: stamp(offset, "07:15"),
@@ -144,7 +150,7 @@ export function createDemoState(now = new Date()): State {
         id: pickupId,
         date: day(offset),
         user_id: `emp-${worker}`,
-        category: "good",
+        category: "skm",
         eggs,
         kg,
         trays: 3,
@@ -179,7 +185,7 @@ export function createDemoState(now = new Date()): State {
           {
             id: `item-${idx}-${worker}`,
             pickup_id: pickupId,
-            category: "good",
+            category: "skm",
             eggs: soldEggs,
             kg: soldKg,
             trays: offset === 0 ? 2 : 3,

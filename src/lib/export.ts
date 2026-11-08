@@ -1,6 +1,7 @@
-import type { FeedPurchase, Sale, State } from "./types";
+import type { FeedPurchase, Sale, SaleItem, State } from "./types";
 import { saleSourceLabel } from "./sale-availability";
 import { historicalPaid, type FarmInvoice } from "./invoice-ledger";
+import { receiptEggLabel } from "./egg-report";
 import {
   dateLabel,
   isFreeSaleItem,
@@ -331,6 +332,16 @@ export function receiptDateLines(date: string, createdAt?: string): string[] {
     lines.push(`Waktu input (WIB): ${dateLabel(createdAt, true)}`);
   return lines;
 }
+export function receiptEggRows(items: readonly SaleItem[]): string[][] {
+  return items.map(item => [
+    receiptEggLabel(item),
+    item.eggs_estimated ? `${number(item.eggs, 0)} (estimasi)` : number(item.eggs, 0),
+    number(item.kg, 3),
+    number(item.trays),
+    isFreeSaleItem(item) ? "Gratis" : money(item.unit_price),
+    money(item.total),
+  ]);
+}
 export async function printReceipt(sale: Sale, state: State) {
   return receiptDocument(
     "NOTA PENJUALAN",
@@ -338,18 +349,7 @@ export async function printReceipt(sale: Sale, state: State) {
     sale.date,
     `${sale.items.some(isFreeSaleItem) ? "Pelanggan / penerima" : "Pelanggan"}: ${sale.customer || "Pelanggan umum"}${sale.phone ? " | " + sale.phone : ""}\nSumber telur: ${saleSourceLabel(sale.stock_source)}`,
     state.users.find((u) => u.id === sale.user_id)?.name || "Karyawan",
-    sale.items.map((i) => [
-      i.category === "good"
-        ? "Telur bagus"
-        : isFreeSaleItem(i)
-          ? "Telur bentes - Gratis"
-          : "Telur bentes",
-      i.eggs_estimated ? `${number(i.eggs, 0)} (estimasi)` : number(i.eggs, 0),
-      number(i.kg, 3),
-      number(i.trays),
-      isFreeSaleItem(i) ? "Gratis" : money(i.unit_price),
-      money(i.total),
-    ]),
+    receiptEggRows(sale.items),
     sale.total,
     sale.paid,
     sale.balance,

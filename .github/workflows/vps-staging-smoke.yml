@@ -49,7 +49,7 @@ jobs:
           docker compose exec -T db sh -ec '
             export MYSQL_PWD="$MYSQL_PASSWORD"
             test "$(mysql -N -B -u "$MYSQL_USER" "$MYSQL_DATABASE" -e "SELECT COUNT(*) FROM users")" = 0
-            test "$(mysql -N -B -u "$MYSQL_USER" "$MYSQL_DATABASE" -e "SELECT COUNT(*) FROM stock WHERE eggs = 0 AND kg = 0")" = 2
+            test "$(mysql -N -B -u "$MYSQL_USER" "$MYSQL_DATABASE" -e "SELECT COUNT(*) FROM stock WHERE eggs = 0 AND kg = 0")" = 4
           '
       - name: Show startup diagnostics on failure
         if: failure()

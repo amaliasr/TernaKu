@@ -59,4 +59,4 @@ CREATE TABLE IF NOT EXISTS command_requests (
  FOREIGN KEY (user_id) REFERENCES users(id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 INSERT IGNORE INTO command_mutex(id, version) VALUES (1,0);
-INSERT IGNORE INTO stock(stock_key,eggs,kg) VALUES ('egg:good',0,0),('egg:cracked',0,0);
+INSERT IGNORE INTO stock(stock_key,eggs,kg) VALUES ('egg:good',0,0),('egg:cracked',0,0),('egg:skm',0,0),('egg:skm_new',0,0);
