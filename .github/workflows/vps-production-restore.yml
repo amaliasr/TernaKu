@@ -70,24 +70,29 @@ jobs:
           if "${runner[@]}" --apply --counts "$valid"; then exit 1; fi
           docker compose exec -T db sh -ec '
             export MYSQL_PWD="$MYSQL_PASSWORD"
-            exec mysql -N -s -u "$MYSQL_USER" "$MYSQL_DATABASE" -e "
+            exec mysql --default-character-set=utf8mb4 -N -s -u "$MYSQL_USER" "$MYSQL_DATABASE" -e "
               SET SESSION information_schema_stats_expiry=0;
               SELECT AUTO_INCREMENT FROM information_schema.tables WHERE table_schema=DATABASE() AND table_name=\"records\";
             "
           ' | grep -x 48
           docker compose exec -T db sh -ec '
             export MYSQL_PWD="$MYSQL_PASSWORD"
-            exec mysql -N -s -u "$MYSQL_USER" "$MYSQL_DATABASE" -e "SELECT username FROM users WHERE id=\"demo\";"
+            exec mysql --default-character-set=utf8mb4 -N -s -u "$MYSQL_USER" "$MYSQL_DATABASE" -e "SELECT username FROM users WHERE id=\"demo\";"
           ' | grep -Fx 'test.username'
           docker compose exec -T db sh -ec '
             export MYSQL_PWD="$MYSQL_PASSWORD"
-            exec mysql -N -s -u "$MYSQL_USER" "$MYSQL_DATABASE" -e "
-              SELECT is_superadmin=1 AND deleted_at IS NULL FROM users WHERE id=\"demo\";
-              SELECT is_superadmin=0 AND active=0 AND deleted_at=\"2026-11-01 15:23:45\" FROM users WHERE id=\"former\";
-              SELECT user_id=\"former\" AND JSON_CONTAINS_PATH(compact_data,\"one\",\"\$.photo\")=0 AND JSON_UNQUOTE(JSON_EXTRACT(compact_data,\"\$.customer\"))=\"Pélanggan\" AND photo_version=SHA2(JSON_UNQUOTE(JSON_EXTRACT(data,\"\$.photo\")),256) FROM records WHERE id=\"two\";
+            exec mysql --default-character-set=utf8mb4 -N -s -u "$MYSQL_USER" "$MYSQL_DATABASE" -e "
+              SELECT \"protected_admin\",is_superadmin=1 AND deleted_at IS NULL FROM users WHERE id=\"demo\";
+              SELECT \"deleted_account\",is_superadmin=0 AND active=0 AND deleted_at=\"2026-11-01 15:23:45\" FROM users WHERE id=\"former\";
+              SELECT \"historical_owner\",user_id=\"former\" FROM records WHERE id=\"two\";
+              SELECT \"compact_photo_removed\",JSON_CONTAINS_PATH(compact_data,\"one\",\"\$.photo\")=0 FROM records WHERE id=\"two\";
+              SELECT \"utf8_customer\",JSON_UNQUOTE(JSON_EXTRACT(compact_data,\"\$.customer\"))=\"Pélanggan\" FROM records WHERE id=\"two\";
+              SELECT \"photo_version\",photo_version=SHA2(JSON_UNQUOTE(JSON_EXTRACT(data,\"\$.photo\")),256) FROM records WHERE id=\"two\";
             "
           ' > "$RUNNER_TEMP/account-restore-checks"
-          test "$(cat "$RUNNER_TEMP/account-restore-checks")" = "$(printf '1\n1\n1')"
+          # Only synthetic check names and boolean results enter CI logs.
+          cat "$RUNNER_TEMP/account-restore-checks"
+          test "$(cat "$RUNNER_TEMP/account-restore-checks")" = "$(printf 'protected_admin\t1\ndeleted_account\t1\nhistorical_owner\t1\ncompact_photo_removed\t1\nutf8_customer\t1\nphoto_version\t1')"
       - name: Verify production service readiness with disposable notification keys
         run: |
           umask 077

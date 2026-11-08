@@ -10,6 +10,13 @@ $checks=0;
 function verifyProjection(bool $ok,string $message): void {
     global $checks; if(!$ok) throw new RuntimeException($message); $checks++; echo "PASS $message\n";
 }
+function canonicalProjection(mixed $value): mixed {
+    if(!is_array($value)) return $value;
+    foreach($value as $key=>$child) $value[$key]=canonicalProjection($child);
+    // MySQL normalizes JSON object key order; list order and value types still matter.
+    if(!array_is_list($value)) ksort($value);
+    return $value;
+}
 try {
     $original=$db->query('SELECT id,SHA2(data,256) FROM records ORDER BY id')->fetchAll(PDO::FETCH_NUM);
     $db->exec('ALTER TABLE records DROP COLUMN compact_data, DROP COLUMN photo_version');
@@ -27,7 +34,7 @@ try {
         $stmt=$db->prepare('SELECT compact_data,photo_version,data FROM records WHERE id=?');$stmt->execute([$record['id']]);$row=$stmt->fetch(PDO::FETCH_ASSOC);
         $expected=$record;unset($expected['photo']);
         foreach(['before','after'] as $key) if(isset($expected[$key]) && is_array($expected[$key])) unset($expected[$key]['photo']);
-        verifyProjection(json_decode($row['compact_data'],true)===$expected,'compact data removes only documented photo paths in case '.$i);
+        verifyProjection(canonicalProjection(json_decode($row['compact_data'],true))===canonicalProjection($expected),'compact data removes only documented photo paths in case '.$i);
         verifyProjection($row['photo_version']===(empty($record['photo'])?null:hash('sha256',$record['photo'])),'stored media version matches existing SHA-256 reference in case '.$i);
         verifyProjection(json_decode($row['data'],true)===$record,'full record retains original media in case '.$i);
     }
