@@ -58,7 +58,7 @@ function fixture(crackedPrice = 18000): State {
   s.prices = [
     {
       id: "price",
-      good_price: 28000,
+      skm_new_price: 29000, skm_price: 28000,
       cracked_price: crackedPrice,
       effective_at: `${DATE}T00:00:00+07:00`,
       created_at: NOW.toISOString(),
@@ -69,7 +69,7 @@ function fixture(crackedPrice = 18000): State {
   return cmd(s, "a", "production.create", {
     date: DATE,
     barn_id: "barn",
-    category: "good",
+    category: "skm",
     eggs: 1000,
     kg: 60,
     trays: 5,
@@ -80,7 +80,7 @@ const cmd = (s: State, user: string, action: string, payload: CommandPayload) =>
 const take = (s: State, user = "a", eggs = 500, kg = 30) =>
   cmd(s, user, "pickup.create", {
     date: DATE,
-    category: "good",
+    category: "skm",
     eggs,
     kg,
     trays: 3,
@@ -97,7 +97,7 @@ const sale = (
     date: DATE,
     customer: "Pelanggan uji",
     photo: DOCUMENTATION,
-    items: [{ pickup_id: id, category: "good", eggs, kg, trays: 1 }],
+    items: [{ pickup_id: id, category: "skm", eggs, kg, trays: 1 }],
     payment_method: "cash",
     paid: 0,
     ...extra,
@@ -174,7 +174,7 @@ for (const user of ["admin", "a"]) {
       items: [
         {
           pickup_id: source.pickups[0].id,
-          category: "good",
+          category: "skm",
           eggs: 20,
           kg: 1.2,
           trays: 0,
@@ -224,7 +224,7 @@ test("free cracked eggs require a named recipient and reject any overpayment ato
 test("zero daily cracked price automatically records a free snapshot while good price must remain positive", () => {
   let source = crackedPickup("a");
   const price = {
-    good_price: 28000,
+    skm_new_price: 29000, skm_price: 28000,
     cracked_price: 0,
     effective_at: NOW.toISOString(),
   };
@@ -233,7 +233,7 @@ test("zero daily cracked price automatically records a free snapshot while good 
     /hanya untuk admin/,
   );
   assert.throws(
-    () => cmd(source, "admin", "price.create", { ...price, good_price: 0 }),
+    () => cmd(source, "admin", "price.create", { ...price, skm_new_price: 29000, skm_price: 0 }),
     /lebih dari nol/,
   );
   assert.throws(
@@ -262,11 +262,11 @@ test("zero daily cracked price automatically records a free snapshot while good 
 
 test("one sale can mix paid good eggs and free cracked eggs with only paid items included in the bill", () => {
   const source = crackedPickup("admin", take(fixture(), "admin"));
-  const good = source.pickups.find((p) => p.category === "good")!;
+  const good = source.pickups.find((p) => p.category === "skm")!;
   const cracked = source.pickups.find((p) => p.category === "cracked")!;
   const result = gift(source, "admin", {
     items: [
-      { pickup_id: good.id, category: "good", eggs: 50, kg: 3, trays: 0 },
+      { pickup_id: good.id, category: "skm", eggs: 50, kg: 3, trays: 0 },
       {
         pickup_id: cracked.id,
         category: "cracked",
@@ -293,7 +293,7 @@ test("free price and recipient snapshots survive later prices and quantity corre
   const transaction = source.sales[0];
   const item = transaction.items[0];
   source = cmd(source, "admin", "price.create", {
-    good_price: 32000,
+    skm_new_price: 29000, skm_price: 32000,
     cracked_price: 22000,
     effective_at: NOW.toISOString(),
   });
@@ -392,8 +392,8 @@ test("sales reserve duplicate pickup items cumulatively in a single atomic trans
     () =>
       sale(s, p.id, 100, 6, {
         items: [
-          { pickup_id: p.id, category: "good", eggs: 300, kg: 18 },
-          { pickup_id: p.id, category: "good", eggs: 300, kg: 18 },
+          { pickup_id: p.id, category: "skm", eggs: 300, kg: 18 },
+          { pickup_id: p.id, category: "skm", eggs: 300, kg: 18 },
         ],
       }),
     /melebihi sisa/,
@@ -407,7 +407,7 @@ test("employees cannot sell another employees pickup or change prices", () => {
   assert.throws(
     () =>
       cmd(s, "a", "price.create", {
-        good_price: 1,
+        skm_new_price: 29000, skm_price: 1,
         cracked_price: 1,
         effective_at: DATE,
       }),
@@ -419,12 +419,12 @@ test("scheduled prices activate at Jakarta time and existing snapshots never cha
   s = sale(s, s.pickups[0].id);
   const oldTotal = s.sales[0].total;
   s = cmd(s, "admin", "price.create", {
-    good_price: 30000,
+    skm_new_price: 29000, skm_price: 30000,
     cracked_price: 20000,
     effective_at: "2026-10-14T00:00",
   });
-  assert.equal(activePrice(s, NOW)?.good_price, 28000);
-  assert.equal(activePrice(s, "2026-10-13T17:00:00Z")?.good_price, 30000);
+  assert.equal(activePrice(s, NOW)?.skm_price, 28000);
+  assert.equal(activePrice(s, "2026-10-13T17:00:00Z")?.skm_price, 30000);
   assert.equal(s.sales[0].total, oldTotal);
   assert.equal(s.sales[0].items[0].unit_price, 28000);
   assert.equal(s.notifications.filter(n => n.title === "Harga telur dijadwalkan").length, s.users.length);
@@ -445,7 +445,7 @@ test("a stale displayed price must be reviewed before a sale can be confirmed", 
   let s = take(fixture());
   const oldId = s.prices[0].id;
   s = cmd(s, "admin", "price.create", {
-    good_price: 30000,
+    skm_new_price: 29000, skm_price: 30000,
     cracked_price: 19000,
     effective_at: DATE,
   });
@@ -485,7 +485,7 @@ test("returns restore warehouse once and cannot return already sold or returned 
   const id = s.pickups[0].id;
   s = sale(s, id, 200, 12);
   s = cmd(s, "a", "pickup.return", { id, eggs: 300, kg: 18, trays: 2 });
-  assert.equal(eggStock(s, "good").kg, 48);
+  assert.equal(eggStock(s, "skm").kg, 48);
   assert.equal(eggStock(s).eggs, 800);
   assert.equal(pickupBalance(s, id).kg, 0);
   assert.throws(
@@ -530,7 +530,7 @@ test("mixed good and cracked items each use their own immutable category price",
   });
   s = sale(s, s.pickups[0].id, 100, 6, {
     items: [
-      { pickup_id: s.pickups[0].id, category: "good", eggs: 100, kg: 6 },
+      { pickup_id: s.pickups[0].id, category: "skm", eggs: 100, kg: 6 },
       { pickup_id: s.pickups[1].id, category: "cracked", eggs: 50, kg: 3 },
     ],
   });
@@ -665,7 +665,7 @@ test("sale quantity correction preserves original prices and payment while recom
   const original = s.sales[0];
   const warehouse = eggStock(s);
   s = cmd(s, "admin", "price.create", {
-    good_price: 31000,
+    skm_new_price: 29000, skm_price: 31000,
     cracked_price: 21000,
     effective_at: DATE,
   });
@@ -740,8 +740,8 @@ test("sale quantity corrections aggregate all existing lines from the same picku
   const pickupId = s.pickups[0].id;
   s = sale(s, pickupId, 100, 6, {
     items: [
-      { pickup_id: pickupId, category: "good", eggs: 100, kg: 6, trays: 1 },
-      { pickup_id: pickupId, category: "good", eggs: 100, kg: 6, trays: 1 },
+      { pickup_id: pickupId, category: "skm", eggs: 100, kg: 6, trays: 1 },
+      { pickup_id: pickupId, category: "skm", eggs: 100, kg: 6, trays: 1 },
     ],
   });
   const row = s.sales[0];
@@ -928,7 +928,7 @@ test("photo attachments retain complete data rather than silently truncating bas
   const s = cmd(fixture(), "a", "production.create", {
     date: DATE,
     barn_id: "barn",
-    category: "good",
+    category: "skm",
     eggs: 1,
     kg: 0.06,
     photo: encoded,
@@ -998,7 +998,7 @@ test("new photo uploads enforce decoded 1 MiB and MIME while legacy reads remain
 test("optional production source and dated signed stock ledger preserve corrections and returns", () => {
   let s = cmd(fixture(), "a", "production.create", {
     date: DATE,
-    category: "good",
+    category: "skm",
     eggs: 10,
     kg: 0.6,
     trays: 0,
@@ -1039,20 +1039,20 @@ test("optional production source and dated signed stock ledger preserve correcti
 test("same-instant price replacements use the newest record and reject impossible calendar dates", () => {
   let s = fixture();
   s = cmd(s, "admin", "price.create", {
-    good_price: 29000,
+    skm_new_price: 29000, skm_price: 29000,
     cracked_price: 19000,
     effective_at: DATE,
   });
   s = cmd(s, "admin", "price.create", {
-    good_price: 30000,
+    skm_new_price: 29000, skm_price: 30000,
     cracked_price: 20000,
     effective_at: DATE,
   });
-  assert.equal(activePrice(s, NOW)?.good_price, 30000);
+  assert.equal(activePrice(s, NOW)?.skm_price, 30000);
   assert.throws(
     () =>
       cmd(s, "admin", "price.create", {
-        good_price: 29000,
+        skm_new_price: 29000, skm_price: 29000,
         cracked_price: 19000,
         effective_at: "2026-02-31T00:00",
       }),
@@ -1061,7 +1061,7 @@ test("same-instant price replacements use the newest record and reject impossibl
 });
 test("demo seed is internally consistent, recent, and has no incentive or cattle calculations", () => {
   const s = createDemoState(NOW);
-  for (const c of ["good", "cracked"] as const) {
+  for (const c of ["skm", "cracked"] as const) {
     assert.ok(eggStock(s, c).eggs >= 0);
     assert.ok(eggStock(s, c).kg >= 0);
   }
@@ -1082,7 +1082,7 @@ test("demo seed is internally consistent, recent, and has no incentive or cattle
     assert.equal(sale.balance, sale.total - sale.paid);
   }
   assert.equal(s.productions.at(-1)?.date, DATE);
-  assert.equal(activePrice(s, NOW)?.good_price, 28000);
+  assert.equal(activePrice(s, NOW)?.skm_price, 28000);
 });
 
 const signupInput: RegistrationInput = {

@@ -9,6 +9,7 @@ import {
   Trash2,
 } from "lucide-react";
 import { useFarm } from "@/lib/store";
+import { ALL_EGG_TYPES, NEW_EGG_TYPES, EGG_TYPES, eggTypePrice } from "@/lib/egg-types";
 import {
   activePrice,
   dateLabel,
@@ -104,41 +105,29 @@ function CategoryButtons({
   value,
   onChange,
   stock,
-  choices = ["good", "cracked"],
+  choices = [...NEW_EGG_TYPES],
 }: {
   value?: Category;
   onChange: (value: Category) => void;
   stock?: Partial<Record<Category, Quantity>>;
   choices?: Category[];
 }) {
-  return (
-    <fieldset className={styles.categories}>
-      <legend>Jenis telur</legend>
-      <div className={styles.twoColumns}>
-        {choices.map((category) => (
-          <button
-            type="button"
-            key={category}
-            className={`${styles.category} ${category === value ? styles.selected : ""}`}
-            aria-pressed={category === value}
-            onClick={() => onChange(category)}
-          >
-            <span>
-              <Egg size={23} />
-              <strong>{category === "good" ? "Bagus" : "Bentes"}</strong>
-              {category === value && <Check size={18} />}
-            </span>
-            {stock?.[category] && (
-              <small>
-                {quantity(stock[category].kg)} kg ·{" "}
-                {quantity(stock[category].eggs)} butir
-              </small>
-            )}
-          </button>
-        ))}
-      </div>
-    </fieldset>
-  );
+  const visible: Category[] = [...NEW_EGG_TYPES, ...(choices.includes("good") ? ["good" as const] : [])];
+  const button = (category: Category) => {
+    const remaining = stock?.[category];
+    const unavailable = !choices.includes(category) || (remaining && (remaining.kg <= 0 || remaining.eggs <= 0));
+    return <button type="button" key={category} disabled={Boolean(unavailable)}
+      className={`${styles.category} ${category === value ? styles.selected : ""}`}
+      aria-pressed={category === value} onClick={() => onChange(category)}>
+      <span><Egg size={23} /><strong>{category === "good" ? "Bagus lama · belum dibedakan" : EGG_TYPES[category].shortLabel}</strong>{category === value && <Check size={18} />}</span>
+      <small>{unavailable ? "Stok habis" : remaining ? `${quantity(remaining.kg)} kg · ${quantity(remaining.eggs)} butir` : ""}</small>
+    </button>;
+  };
+  return <fieldset className={styles.categories}><legend>Jenis telur</legend>
+    <p className={styles.typeGroup}>Telur Bagus</p>
+    <div className={styles.twoColumns}>{visible.filter(c => c === "skm" || c === "skm_new").map(button)}</div>
+    <div className={styles.typeExtra}>{visible.filter(c => c === "cracked" || c === "good").map(button)}</div>
+  </fieldset>;
 }
 
 function Numbers({
@@ -209,16 +198,13 @@ function PickupEntry({
   onClose,
 }: Props) {
   const { state, user } = useFarm();
-  const [category, setCategory] = useState<Category>("good");
+  const [category, setCategory] = useState<Category>("skm");
   const [eggs, setEggs] = useState("");
   const [kg, setKg] = useState("");
   const [trays, setTrays] = useState("");
   const [date, setDate] = useState("");
   const [initialDate] = useState(() => localNow());
-  const stock = {
-    good: eggStock(state, "good"),
-    cracked: eggStock(state, "cracked"),
-  };
+  const stock = Object.fromEntries(ALL_EGG_TYPES.map(type => [type, eggStock(state, type)])) as Record<Category, Quantity>;
   const available = stock[category];
   const estimate = Number(trays) * 10;
   const weightWarning =
@@ -375,13 +361,14 @@ function SaleEntry({ onSave, busy, onClose, saleStart }: Props) {
   const priceReviewRef = useRef<HTMLDivElement>(null);
   const hasQuantity = items.some((item) => item.kg !== "" || item.eggs !== "");
   const { issues: stockIssues, estimatedEggs } = saleStockPreview(items, available, source);
-  const showTotal = !!price && stockIssues.size === 0 && items.every(item => optionFor(item));
+  const missingPrice = items.some(item => { const option = optionFor(item); return option && eggTypePrice(price, option.category) === undefined; });
+  const showTotal = !!price && !missingPrice && stockIssues.size === 0 && items.every(item => optionFor(item));
   const oldGift = !!price && price.cracked_price > 0 && items.some(item => item.is_free && optionFor(item)?.category === "cracked");
   const needsPriceReview = oldGift || (!!price && hasQuantity && reviewedPriceId !== price.id);
   const unitPrice = (item: SaleLine) => {
     const pickup = optionFor(item);
     if (!pickup || !price) return 0;
-    return pickup.category === "good" ? price.good_price : price.cracked_price;
+    return eggTypePrice(price, pickup.category) ?? 0;
   };
   const total = items.reduce(
     (sum, item) => sum + Math.round(Number(item.kg) * unitPrice(item)),
@@ -445,21 +432,9 @@ function SaleEntry({ onSave, busy, onClose, saleStart }: Props) {
       {sourceField}
       {emptyMessage && <p className={styles.warning}>{emptyMessage}</p>}
       <div className={styles.priceBar} aria-label="Harga telur saat ini">
-        <div>
-          <span>Bagus / kg</span>
-          <strong>{price ? money(price.good_price) : "Belum diatur"}</strong>
-        </div>
-        <div>
-          <span>Bentes / kg</span>
-          <strong>
-            {price
-              ? price.cracked_price === 0
-                ? "Gratis"
-                : money(price.cracked_price)
-              : "Belum diatur"}
-          </strong>
-        </div>
+        {NEW_EGG_TYPES.map(type => <div key={type}><span>{EGG_TYPES[type].shortLabel} / kg</span><strong>{eggTypePrice(price, type) === undefined ? "Belum diatur" : eggTypePrice(price, type) === 0 ? "Gratis" : money(eggTypePrice(price, type)!)}</strong></div>)}
       </div>
+      {missingPrice && <p className={styles.warning} role="alert">Harga jenis telur yang dipilih belum ditetapkan. Minta atasan mengisi harganya sebelum menjual.</p>}
       {priceSync.error && (
         <div className={styles.warning} role="status">
           <strong>Harga terbaru belum bisa diperiksa</strong>
@@ -516,7 +491,7 @@ function SaleEntry({ onSave, busy, onClose, saleStart }: Props) {
                 </button>
               )}
             </div>
-            {warehouseSale && available.length > 1 ? (
+            {warehouseSale ? (
               <CategoryButtons value={pickup?.category} onChange={category => update(item.key, "category", category)}
                 choices={available.map(option => option.category)} />
             ) : available.length === 1 && pickup ? (
@@ -549,7 +524,7 @@ function SaleEntry({ onSave, busy, onClose, saleStart }: Props) {
             {balance && (
               <p className={styles.hint}>
                 {warehouseSale ? "Tersedia di gudang" : "Anda bawa"} {quantity(balance.eggs)} butir ·{" "}
-                {quantity(balance.kg)} kg{warehouseSale && ` · ${quantity(balance.trays)} krat`}. Harga {money(unitPrice(item))}/kg.
+                {quantity(balance.kg)} kg{warehouseSale && ` · ${quantity(balance.trays)} krat`}. Harga {pickup && eggTypePrice(price, pickup.category) !== undefined ? `${money(unitPrice(item))}/kg` : "belum diatur"}.
               </p>
             )}
             <SaleQuantities
@@ -575,7 +550,7 @@ function SaleEntry({ onSave, busy, onClose, saleStart }: Props) {
             {items.length > 1 && <div className={styles.lineTotal}>
               <span>Subtotal</span>
               <strong>
-                {!price || !pickup || issue ? "—" : pickup.category === "cracked" && price.cracked_price === 0
+                {!price || !pickup || issue || eggTypePrice(price, pickup.category) === undefined ? "—" : pickup.category === "cracked" && price.cracked_price === 0
                   ? "Gratis"
                   : money(Math.round(Number(item.kg) * unitPrice(item)))}
               </strong>

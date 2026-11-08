@@ -1,4 +1,5 @@
 <?php
+require_once __DIR__.'/EggTypes.php';
 require_once __DIR__.'/NativePushTransport.php';
 /** Private device subscriptions and the transactional notification outbox. */
 class PushService {
@@ -143,10 +144,9 @@ class PushService {
     }
     /** Called within price.create's existing SQL transaction, never after its commit. */
     public function enqueuePrice(array $price): void {
-        $bentes=(float)$price['cracked_price']===0.0?'Gratis':'Rp'.number_format($price['cracked_price'],0,',','.').'/kg';
         $payload=['type'=>'price.updated','id'=>$price['id'],'tag'=>'price-'.$price['id'],'title'=>'Harga telur diperbarui',
-            'body'=>'Mulai '.date('d/m/Y H:i',strtotime($price['effective_at'])).' WIB: telur bagus Rp'.number_format($price['good_price'],0,',','.').'/kg; telur bentes '.$bentes.'.',
-            'url'=>'/','effective_at'=>$price['effective_at'],'good_price'=>$price['good_price'],'cracked_price'=>$price['cracked_price']];
+            'body'=>EggTypes::priceMessage($price),'url'=>'/','effective_at'=>$price['effective_at']];
+        foreach(EggTypes::PRICE_FIELDS as $field) if(array_key_exists($field,$price)) $payload[$field]=$price[$field];
         $this->broadcast($payload,$this->activeRecipients());
     }
     public function activeRecipients(): array {

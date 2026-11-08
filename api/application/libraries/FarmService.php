@@ -4,6 +4,8 @@ require_once __DIR__.'/UsernameService.php';
 require_once __DIR__.'/AccountPolicyService.php';
 require_once __DIR__.'/StockCheckSchema.php';
 require_once __DIR__.'/StockCheckWorkflow.php';
+require_once __DIR__.'/EggTypes.php';
+require_once __DIR__.'/EggTypesSchema.php';
 /** TernaKu transactional domain service; used by CI3 and the CLI installer. */
 class ApiProblem extends RuntimeException {
     public int $status;
@@ -385,8 +387,8 @@ class FarmService {
         return $state+$balances;
     }
     private function stockBalances(bool $eggsOnly=false): array {
-        $balances=['inventory'=>[],'feed_inventory'=>[]];
-        $sql='SELECT stock_key,eggs,kg,trays FROM stock'.($eggsOnly?" WHERE stock_key IN ('egg:good','egg:cracked')":'');
+        $balances=['inventory'=>EggTypes::emptyInventory(),'feed_inventory'=>[]];
+        $sql='SELECT stock_key,eggs,kg,trays FROM stock'.($eggsOnly?" WHERE stock_key IN ('egg:good','egg:cracked','egg:skm','egg:skm_new')":'');
         foreach($this->query($sql)->fetchAll(PDO::FETCH_ASSOC) as $stock) {
             $key=$stock['stock_key'];
             if(str_starts_with($key,'egg:')) $balances['inventory'][substr($key,4)]=['eggs'=>(int)$stock['eggs'],'kg'=>(float)$stock['kg'],'trays'=>(int)$stock['trays']];
@@ -499,10 +501,18 @@ class FarmService {
         }
     }
     private function currentPrice(): array {
-        // For price rows occurred_at is the effective time, including scheduled prices.
-        $price=$this->query("SELECT data FROM records WHERE kind='price' AND occurred_at<=NOW() ORDER BY occurred_at DESC,sequence DESC LIMIT 1")->fetchColumn();
-        if (!$price) throw new ApiProblem('Admin belum menetapkan harga yang berlaku saat ini.');
-        return json_decode($price,true,512,JSON_THROW_ON_ERROR);
+        // Resolve each field separately: a scheduled legacy price cannot erase a typed rate.
+        $raw=$this->query("SELECT compact_data FROM records WHERE kind='price' AND occurred_at<=NOW() ORDER BY occurred_at DESC,sequence DESC LIMIT 1")->fetchColumn();
+        if($raw===false) throw new ApiProblem('Admin belum menetapkan harga yang berlaku saat ini.');
+        $latest=json_decode($raw,true,512,JSON_THROW_ON_ERROR);
+        $result=['id'=>$latest['id'],'effective_at'=>$latest['effective_at']];
+        foreach(EggTypes::PRICE_FIELDS as $field) {
+            if(array_key_exists($field,$latest)) { $result[$field]=$latest[$field]; continue; }
+            // Fields are fixed server constants, not client input. Read only one eligible value.
+            $value=$this->query("SELECT JSON_EXTRACT(compact_data,'$.".$field."') FROM records WHERE kind='price' AND occurred_at<=NOW() AND JSON_CONTAINS_PATH(compact_data,'one','$.".$field."') ORDER BY occurred_at DESC,sequence DESC LIMIT 1")->fetchColumn();
+            if($value!==false) $result[$field]=json_decode($value,true,512,JSON_THROW_ON_ERROR);
+        }
+        return $result;
     }
     private function reason(array $p): string { $reason=$this->text($p,'reason',1000,true); if(mb_strlen($reason)<5) throw new ApiProblem('Alasan koreksi minimal 5 karakter.'); return $reason; }
     private function countedEggStock(array $values): array {
@@ -520,8 +530,8 @@ class FarmService {
         $reason = $this->text($payload, 'reason', 2000, true);
         $method = $this->enum($payload + ['method' => 'count'], 'method', ['count', 'add', 'subtract']);
         $rows = $payload['items'] ?? null;
-        if (!is_array($rows) || !array_is_list($rows) || count($rows) < 1 || count($rows) > 2) {
-            throw new ApiProblem('Pilih satu atau dua kategori telur untuk dicocokkan.');
+        if (!is_array($rows) || !array_is_list($rows) || count($rows) < 1 || count($rows) > count(EggTypes::ALL)) {
+            throw new ApiProblem('Pilih jenis telur yang ingin dicocokkan.');
         }
 
         $counts = [];
@@ -529,7 +539,7 @@ class FarmService {
             if (!is_array($row) || !is_array($row['expected'] ?? null) || !is_array($row['physical'] ?? null)) {
                 throw new ApiProblem('Isi stok tercatat dan hasil hitung fisik.');
             }
-            $category = $this->enum($row, 'category', ['good', 'cracked']);
+            $category = $this->enum($row, 'category', EggTypes::ALL);
             if (isset($counts[$category])) throw new ApiProblem('Kategori telur tidak boleh berulang.');
             $expected = $this->countedEggStock($row['expected']);
             $physical = $this->countedEggStock($row['physical']);
@@ -580,6 +590,29 @@ class FarmService {
             'id' => $reference, 'method' => $method, 'counts' => array_values($counts), 'reason' => $reason,
         ]);
         if($method==='add') $this->notifyFarmActivity('stock.add',$weightChange);
+    }
+    private function classifyStock(array $p): void {
+        $this->admin();
+        if(array_diff(array_keys($p),['category','eggs','kg','trays','expected_source','expected_target','reason'])) throw new ApiProblem('Kolom pemilahan stok tidak didukung.');
+        $category=$this->enum($p,'category',['skm','skm_new']); $q=$this->quantity($p); $reason=$this->reason($p);
+        $before=[];
+        foreach(['source'=>'good','target'=>$category] as $key=>$type) {
+            $input=$p['expected_'.$key]??null;
+            if(!is_array($input) || count($input)!==3 || array_diff(array_keys($input),['eggs','kg','trays'])) throw new ApiProblem('Muat ulang stok asal dan tujuan sebelum memilah.');
+            $expected=$this->countedEggStock($input);
+            $row=$this->query('SELECT eggs,kg,trays FROM stock WHERE stock_key=? FOR UPDATE',['egg:'.$type])->fetch(PDO::FETCH_ASSOC);
+            if(!$row) throw new ApiProblem('Jenis stok belum siap. Hubungi atasan.',409);
+            $actual=['eggs'=>(int)$row['eggs'],'kg'=>(float)$row['kg'],'trays'=>(int)$row['trays']];
+            if($expected!==$actual) throw new ApiProblem('Stok berubah sejak dibuka. Muat ulang sebelum memilah.',409);
+            $before[$key]=$actual;
+        }
+        $this->stock('egg:good',-$q['eggs'],-$q['kg'],-$q['trays'],true);
+        $this->stock('egg:'.$category,$q['eggs'],$q['kg'],$q['trays']);
+        $reference=$this->id('classify'); $now=$this->now();
+        $record=['id'=>$reference,'date'=>$now,'user_id'=>$this->actor['id']];
+        $this->movement('classify_out',$record+['category'=>'good'],['eggs'=>-$q['eggs'],'kg'=>-$q['kg'],'trays'=>-$q['trays']],$reason,$now);
+        $this->movement('classify_in',$record+['category'=>$category],$q,$reason,$now);
+        $this->audit('stock.classify','Memilah stok bagus lama menjadi '.EggTypes::LABELS[$category].': '.$reason,$before,['id'=>$reference,'source'=>'good','category'=>$category,'quantity'=>$q,'reason'=>$reason]);
     }
     private function changes(string $entity,array $changes): array {
         $allowed=['production'=>['eggs','kg','trays','notes'],'pickup'=>['eggs','kg','trays','notes','area'],'sale'=>['notes','customer','items']];
@@ -721,10 +754,10 @@ class FarmService {
                 $this->audit($action,'Mengubah pengaturan stok panen otomatis',$before,$after); break;
             case 'production.create':
                 $rows=array_key_exists('items',$p)?$p['items']:[$p];
-                if(!is_array($rows) || count($rows)<1 || count($rows)>2 || array_keys($rows)!==range(0,count($rows)-1)) throw new ApiProblem('Isi satu atau dua jenis telur untuk panen.');
+                if(!is_array($rows) || count($rows)<1 || count($rows)>count(EggTypes::ACTIVE) || array_keys($rows)!==range(0,count($rows)-1)) throw new ApiProblem('Isi satu sampai tiga jenis telur untuk panen.');
                 $items=[]; foreach($rows as $item) {
                     if(!is_array($item)) throw new ApiProblem('Baris panen tidak valid.');
-                    $category=$this->enum($item,'category',['good','cracked']); if(isset($items[$category])) throw new ApiProblem('Kategori telur tidak boleh berulang.');
+                    $category=$this->enum($item,'category',EggTypes::ACTIVE); if(isset($items[$category])) throw new ApiProblem('Jenis telur tidak boleh berulang.');
                     $items[$category]=$this->quantity($item);
                 }
                 $barn=$this->text($p,'barn_id',40); if($barn!=='') $this->record('barn',$barn);
@@ -741,6 +774,9 @@ class FarmService {
             case 'stock.reconcile':
                 $this->reconcileStock($p);
                 break;
+            case 'stock.classify':
+                $this->classifyStock($p);
+                break;
             case 'production.receive':
                 if(array_diff(array_keys($p),['id'])) throw new ApiProblem('Penerimaan stok harus mencakup seluruh panen.');
                 $r=$this->record('production',$this->text($p,'id',40,true),true); $this->owned($r);
@@ -753,7 +789,7 @@ class FarmService {
                 $this->notifyFarmActivity($action,$q['kg']);
                 break;
             case 'pickup.create':
-                $q=$this->quantity($p); $category=$this->enum($p,'category',['good','cracked']);
+                $q=$this->quantity($p); $category=$this->enum($p,'category',EggTypes::ACTIVE);
                 $this->stock('egg:'.$category,-$q['eggs'],-$q['kg'],-$q['trays']);
                 $r=$this->insert('pickup',$q+['date'=>$this->date($p),'user_id'=>$this->actor['id'],'category'=>$category,'area'=>$this->text($p,'area',190),'notes'=>$this->text($p,'notes'),'returned_eggs'=>0,'returned_kg'=>0,'returned_trays'=>0,'created_at'=>$this->now(),'locked'=>false]);
                 $this->movement('pickup',$r,['eggs'=>-$q['eggs'],'kg'=>-$q['kg'],'trays'=>-$q['trays']],$r['notes']); $this->audit($action,'Mengambil telur untuk dijual',null,$r); break;
@@ -772,8 +808,9 @@ class FarmService {
             case 'feed.due': $this->updateInvoice($action,$p); break;
             case 'price.create':
                 $this->admin(); $effective=$this->date($p,'effective_at');
-                $r=$this->insert('price',['good_price'=>$this->number($p,'good_price',1,true,10000000),'cracked_price'=>$this->number($p,'cracked_price',0,true,10000000),'effective_at'=>$effective,'created_at'=>$this->now(),'created_by'=>$this->actor['id']]);
-                foreach($this->query('SELECT id FROM users WHERE active=1')->fetchAll(PDO::FETCH_COLUMN) as $uid) $this->insert('notification',['user_id'=>$uid,'title'=>'Harga telur diperbarui','message'=>'Mulai '.date('d/m/Y H:i',strtotime($effective)).' WIB: telur bagus Rp'.number_format($r['good_price'],0,',','.').'/kg dan telur bentes '.($r['cracked_price']==0?'Gratis':'Rp'.number_format($r['cracked_price'],0,',','.').'/kg').'.','created_at'=>$this->now(),'read'=>false]);
+                if(array_diff(array_keys($p),['skm_price','skm_new_price','cracked_price','effective_at'])) throw new ApiProblem('Perbarui aplikasi untuk mengatur harga SKM, SKM Baru, dan bentes.');
+                $r=$this->insert('price',['skm_price'=>$this->number($p,'skm_price',1,true,10000000),'skm_new_price'=>$this->number($p,'skm_new_price',1,true,10000000),'cracked_price'=>$this->number($p,'cracked_price',0,true,10000000),'effective_at'=>$effective,'created_at'=>$this->now(),'created_by'=>$this->actor['id']]);
+                foreach((new PushService($this->db))->activeRecipients() as $uid) $this->insert('notification',['user_id'=>$uid,'title'=>'Harga telur diperbarui','message'=>EggTypes::priceMessage($r),'created_at'=>$this->now(),'read'=>false]);
                 (new PushService($this->db))->enqueuePrice($r);
                 $this->audit($action,'Menetapkan harga telur',null,$r); break;
             case 'user.create': $this->createUser($p); break;
@@ -874,7 +911,7 @@ class FarmService {
         }
         $balances=$this->carriedQuantities($pickups);
         foreach($items as $item) {
-            $id=''; $category=$this->enum($item,'category',['good','cracked']); $q=$this->quantity($item,true);
+            $id=''; $category=$this->enum($item,'category',EggTypes::ALL); $q=$this->quantity($item,true);
             if($source==='pickup') {
                 $id=trim($item['pickup_id']);
                 if($category!==$pickups[$id]['category']) throw new ApiProblem('Kategori penjualan berbeda dengan telur yang diambil.');
@@ -886,7 +923,9 @@ class FarmService {
                 throw new ApiProblem('Hanya atasan yang bisa memberikan telur bentes gratis. Gunakan harga yang berlaku.');
             }
             $free=$category==='cracked' && ($requestedFree || $price['cracked_price']==0);
-            $unit=$free?0:$price[$category==='good'?'good_price':'cracked_price']; $itemTotal=round($q['kg']*$unit);
+            $field=EggTypes::PRICE_FIELDS[$category];
+            if(!array_key_exists($field,$price)) throw new ApiProblem('Harga '.EggTypes::LABELS[$category].' belum tersedia. Minta atasan menetapkan harga sebelum menjual.');
+            $unit=$free?0:$price[$field]; $itemTotal=round($q['kg']*$unit);
             $out[]=$q+['id'=>$this->id('item'),'pickup_id'=>$id,'category'=>$category,'unit_price'=>$unit,'is_free'=>$free,'total'=>$itemTotal]; $total+=$itemTotal;
             if(!is_finite($total) || $total>1000000000000) throw new ApiProblem('Total transaksi maksimal Rp1.000.000.000.000.');
         }

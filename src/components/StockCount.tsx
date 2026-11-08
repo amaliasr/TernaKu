@@ -2,30 +2,31 @@
 
 import { useRef, useState, type FormEvent } from "react";
 import { ClipboardList } from "lucide-react";
+import { ALL_EGG_TYPES } from "@/lib/egg-types";
 import { dateLabel, eggStock, number } from "@/lib/domain";
 import { useFarm } from "@/lib/store";
 import type { Category, Quantity, State, StockAdjustmentMethod, StockMovement } from "@/lib/types";
 import { adjustmentMethodLabel, categoryLabel, Dialog, errorMessage, Field, LoadingButton } from "./ModuleUI";
 
-const categories = ["good", "cracked"] as const;
+const categories = ALL_EGG_TYPES;
 const units = [
   { key: "eggs", label: "Butir", unit: "butir" },
   { key: "kg", label: "Berat (kg)", unit: "kg" },
   { key: "trays", label: "Krat", unit: "krat" },
 ] as const;
 const signed = (value: number) => (value > 0 ? "+" : "") + number(value, 3);
-type CountScope = Category | "both";
+type CountScope = Category | "all";
 const methods: StockAdjustmentMethod[] = ["count", "add", "subtract"];
 
 function snapshot(state: State) {
-  return { good: eggStock(state, "good"), cracked: eggStock(state, "cracked") };
+  return Object.fromEntries(categories.map(type => [type, eggStock(state, type)])) as Record<Category, Quantity>;
 }
 
 function initialInputs(stock: ReturnType<typeof snapshot>, method: StockAdjustmentMethod) {
   const fields = (q: Quantity) => method === "count"
     ? { eggs: String(q.eggs), kg: String(q.kg), trays: String(q.trays ?? 0) }
     : { eggs: "", kg: "", trays: "" };
-  return { good: fields(stock.good), cracked: fields(stock.cracked) };
+  return Object.fromEntries(categories.map(type => [type, fields(stock[type])])) as Record<Category, Record<keyof Quantity, string>>;
 }
 
 function applyAmount(before: Quantity, input: Record<keyof Quantity, string>, method: StockAdjustmentMethod): Quantity {
@@ -119,7 +120,7 @@ export default function StockCount() {
 function CountDialog({ close, saved }: { close: () => void; saved: () => void }) {
   const { state, command, refresh } = useFarm();
   const [expected, setExpected] = useState(() => snapshot(state));
-  const [scope, setScope] = useState<CountScope>("good");
+  const [scope, setScope] = useState<CountScope>("skm");
   const [method, setMethod] = useState<StockAdjustmentMethod>("count");
   const [counts, setCounts] = useState(() => initialInputs(expected, method));
   const [reason, setReason] = useState("");
@@ -128,7 +129,7 @@ function CountDialog({ close, saved }: { close: () => void; saved: () => void })
   const [needsRefresh, setNeedsRefresh] = useState(false);
   const [error, setError] = useState("");
   const guard = useRef(false);
-  const selected = scope === "both" ? categories : [scope];
+  const selected = scope === "all" ? categories : [scope];
   const rows = selected.map(category => ({
     category,
     expected: expected[category],
@@ -202,9 +203,8 @@ function CountDialog({ close, saved }: { close: () => void; saved: () => void })
           </Field>
           <Field label="Kategori telur" className="col-12 col-sm-6">
             <select className="form-select" value={scope} onChange={e => { setScope(e.target.value as CountScope); setError(""); }}>
-              <option value="good">Telur bagus</option>
-              <option value="cracked">Telur bentes</option>
-              <option value="both">Telur bagus dan bentes</option>
+              {categories.map(type => <option key={type} value={type}>{categoryLabel(type)}</option>)}
+              <option value="all">Semua jenis telur</option>
             </select>
           </Field>
           </div>

@@ -15,13 +15,13 @@ function fixture(): State {
   ];
   return state;
 }
-const produce = (state: State) => cmd(state, "owner", "production.create", { date: "2026-10-25", category: "good", eggs: 100, kg: 6, trays: 1 });
+const produce = (state: State) => cmd(state, "owner", "production.create", { date: "2026-10-25", category: "skm", eggs: 100, kg: 6, trays: 1 });
 
 const both = { date: "2026-10-24", notes: "Timbang sore", items: [
-  {category:"good", eggs:1240, kg:70, trays:8}, {category:"cracked", eggs:35, kg:2.1, trays:0},
+  {category:"skm", eggs:1240, kg:70, trays:8}, {category:"cracked", eggs:35, kg:2.1, trays:0},
 ] };
 const count = { reason:"Dua butir pecah di rak", items:[
-  {category:"good",expected:{eggs:1240,kg:70},physical:{eggs:1238,kg:69.88}},
+  {category:"skm",expected:{eggs:1240,kg:70},physical:{eggs:1238,kg:69.88}},
   {category:"cracked",expected:{eggs:35,kg:2.1},physical:{eggs:35,kg:2.1}},
 ] };
 test("one mixed harvest yields two linked lines, one audit, exact stock and no partial writes", () => {
@@ -40,7 +40,7 @@ test("warehouse count preserves original harvest, records even a matching count,
   const initial=cmd(fixture(),"owner","production.create",both);
   const counted=cmd(initial,"admin","stock.reconcile",count);
   assert.equal(counted.productions[0].eggs,1240);
-  assert.deepEqual(eggStock(counted,"good"),{eggs:1238,kg:69.88,trays:8});
+  assert.deepEqual(eggStock(counted,"skm"),{eggs:1238,kg:69.88,trays:8});
   const entries=counted.stock_movements!.filter(m=>m.kind==="reconcile");
   assert.equal(entries.length,2);
   assert.equal(entries[0].reference_id,entries[1].reference_id);
@@ -51,35 +51,35 @@ test("warehouse count preserves original harvest, records even a matching count,
   for(const physical of [{eggs:0,kg:1},{eggs:1,kg:0},{eggs:-1,kg:1}])
     assert.throws(()=>cmd(initial,"admin","stock.reconcile",{...count,items:[count.items[0],{...count.items[1],physical}]}));
   assert.throws(()=>cmd(initial,"admin","stock.reconcile",{...count,reason:" "}));
-  assert.equal(eggStock(initial,"good").eggs,1240);
+  assert.equal(eggStock(initial,"skm").eggs,1240);
 });
 test("end-of-day WIB stock includes only movements through the cutoff, independent of period start",()=>{
   const initial=cmd(fixture(),"owner","production.create",both);
   const counted=cmd(initial,"admin","stock.reconcile",count);
-  assert.deepEqual(closingEggStock(counted,"good","2026-10-23","2026-10-25"),{eggs:0,kg:0});
-  assert.deepEqual(closingEggStock(counted,"good","2026-10-24","2026-10-25"),{eggs:1240,kg:70});
+  assert.deepEqual(closingEggStock(counted,"skm","2026-10-23","2026-10-25"),{eggs:0,kg:0});
+  assert.deepEqual(closingEggStock(counted,"skm","2026-10-24","2026-10-25"),{eggs:1240,kg:70});
   // 17:00 UTC is already the following day in Jakarta.
-  const next=executeCommand(counted,"owner","pickup.create",{date:"2026-10-25T17:00:00Z",category:"good",eggs:10,kg:.6,trays:0,area:"Pasar"},new Date("2026-10-26T02:00:00Z"));
-  assert.deepEqual(closingEggStock(next,"good","2026-10-25","2026-10-26"),{eggs:1238,kg:69.88});
-  assert.deepEqual(closingEggStock(next,"good","2026-10-26","2026-10-26"),{eggs:1228,kg:69.28});
-  assert.equal(closingEggStock(next,"good","2026-10-27","2026-10-26"),null);
+  const next=executeCommand(counted,"owner","pickup.create",{date:"2026-10-25T17:00:00Z",category:"skm",eggs:10,kg:.6,trays:0,area:"Pasar"},new Date("2026-10-26T02:00:00Z"));
+  assert.deepEqual(closingEggStock(next,"skm","2026-10-25","2026-10-26"),{eggs:1238,kg:69.88});
+  assert.deepEqual(closingEggStock(next,"skm","2026-10-26","2026-10-26"),{eggs:1228,kg:69.28});
+  assert.equal(closingEggStock(next,"skm","2026-10-27","2026-10-26"),null);
 });
 
 test("single-category adjustments preserve other stock and employee allocations across retries", () => {
   const harvested = cmd(fixture(), "owner", "production.create", both);
   const state = cmd(harvested, "owner", "pickup.create", {
-    date: "2026-10-25", category: "good", eggs: 10, kg: 0.6, trays: 12, area: "Pasar",
+    date: "2026-10-25", category: "skm", eggs: 10, kg: 0.6, trays: 12, area: "Pasar",
   });
-  const expected = eggStock(state, "good");
+  const expected = eggStock(state, "skm");
   assert.equal(expected.trays, 0); // Eggs were repacked into additional trays when picked up.
   const physical = { ...expected, trays: 3 };
-  const item = { category: "good", expected, physical };
+  const item = { category: "skm", expected, physical };
   const payload = { method: "add", reason: "Tiga krat tambahan di gudang", items: [item] };
   const attempt = { request_id: "warehouse-add", fingerprint: "a".repeat(64) };
   const first = applyDemoWrite(state, "admin", "stock.reconcile", payload, attempt, now);
   const retry = applyDemoWrite(first.state, "admin", "stock.reconcile", payload, attempt, now);
   assert.equal(retry.state, first.state);
-  assert.deepEqual(eggStock(first.state, "good"), physical);
+  assert.deepEqual(eggStock(first.state, "skm"), physical);
   assert.deepEqual(eggStock(first.state, "cracked"), eggStock(state, "cracked"));
   assert.equal(eggStock(first.state).trays, 3);
   assert.deepEqual(first.state.pickups, state.pickups);
@@ -93,46 +93,46 @@ test("single-category adjustments preserve other stock and employee allocations 
   }));
   const newStock = { eggs: physical.eggs - 2, kg: 69.3, trays: 2 };
   const reduced = cmd(first.state, "admin", "stock.reconcile", {
-    method: "subtract", reason: "Telur rusak", items: [{ category: "good", expected: physical, physical: newStock }],
+    method: "subtract", reason: "Telur rusak", items: [{ category: "skm", expected: physical, physical: newStock }],
   });
-  assert.deepEqual(eggStock(reduced, "good"), newStock);
+  assert.deepEqual(eggStock(reduced, "skm"), newStock);
 });
 
 test("only a physical count provides a historical baseline for an incomplete warehouse ledger", () => {
   const legacy = produce(fixture());
   legacy.stock_movements = [];
-  const expected = eggStock(legacy, "good");
+  const expected = eggStock(legacy, "skm");
   const physical = { ...expected, eggs: expected.eggs + 2, kg: expected.kg + 0.12 };
   const recorded = cmd(legacy, "admin", "stock.reconcile", {
-    method: "add", reason: "Tambahan telur", items: [{ category: "good", expected, physical }],
+    method: "add", reason: "Tambahan telur", items: [{ category: "skm", expected, physical }],
   });
   const date = "2026-10-25";
-  assert.equal(closingEggStock(recorded, "good", date, "2026-10-26"), null);
+  assert.equal(closingEggStock(recorded, "skm", date, "2026-10-26"), null);
   const counted = cmd(recorded, "admin", "stock.reconcile", {
-    method: "count", reason: "Dihitung langsung", items: [{ category: "good", expected: physical, physical }],
+    method: "count", reason: "Dihitung langsung", items: [{ category: "skm", expected: physical, physical }],
   });
-  assert.deepEqual(closingEggStock(counted, "good", date, "2026-10-26"), { eggs: physical.eggs, kg: physical.kg });
+  assert.deepEqual(closingEggStock(counted, "skm", date, "2026-10-26"), { eggs: physical.eggs, kg: physical.kg });
 });
 
 test("an admin can repair a legacy opening balance with weight but no eggs", () => {
   const legacy = produce(fixture());
   legacy.productions[0].eggs = 0;
-  const expected = eggStock(legacy, "good");
+  const expected = eggStock(legacy, "skm");
   const physical = { eggs: 98, kg: 5.9, trays: 1 };
-  const payload = { reason: "Hitung ulang saldo awal", items: [{ category: "good", expected, physical }] };
+  const payload = { reason: "Hitung ulang saldo awal", items: [{ category: "skm", expected, physical }] };
   const repaired = cmd(legacy, "admin", "stock.reconcile", payload);
-  assert.deepEqual(eggStock(repaired, "good"), physical);
+  assert.deepEqual(eggStock(repaired, "skm"), physical);
   assert.throws(() => cmd(legacy, "admin", "stock.reconcile", {
-    ...payload, items: [{ category: "good", expected, physical: { ...physical, eggs: 0 } }],
+    ...payload, items: [{ category: "skm", expected, physical: { ...physical, eggs: 0 } }],
   }));
 });
 test("a manual mixed harvest belongs to warehouse history only when each line is received",()=>{
   const pending=cmd(cmd(fixture(),"admin","settings.update",{harvest_auto_stock:false}),"owner","production.create",both);
   const received=cmd(pending,"admin","production.receive",{id:pending.productions[0].id});
   assert.equal(eggStock(received,"cracked").eggs,0);
-  assert.deepEqual(closingEggStock(received,"good","2026-10-24","2026-10-25"),{eggs:0,kg:0});
+  assert.deepEqual(closingEggStock(received,"skm","2026-10-24","2026-10-25"),{eggs:0,kg:0});
   const incomplete={...received,stock_movements:[]};
-  assert.equal(closingEggStock(incomplete,"good","2026-10-24","2026-10-25"),null);
+  assert.equal(closingEggStock(incomplete,"skm","2026-10-24","2026-10-25"),null);
 });
 
 test("automatic stock defaults on, including legacy productions without a receipt field", () => {
@@ -152,7 +152,7 @@ test("pending harvest is recorded without warehouse stock or stock movement", ()
   assert.equal(state.productions[0].stocked_at, null);
   assert.deepEqual(eggStock(state), { eggs: 0, kg: 0, trays: 0 });
   assert.equal(state.stock_movements?.length, 0);
-  assert.throws(() => cmd(state, "owner", "pickup.create", { date: "2026-10-25", category: "good", eggs: 1, kg: 0.06, trays: 0, area: "Pasar" }), /Stok tidak cukup/);
+  assert.throws(() => cmd(state, "owner", "pickup.create", { date: "2026-10-25", category: "skm", eggs: 1, kg: 0.06, trays: 0, area: "Pasar" }), /Stok tidak cukup/);
   const toggled = cmd(state, "admin", "settings.update", { harvest_auto_stock: true });
   assert.equal(toggled.productions[0].stocked_at, null);
   assert.equal(eggStock(toggled).eggs, 0);

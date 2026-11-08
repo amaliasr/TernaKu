@@ -92,20 +92,21 @@ Untuk foto, respons API mengumumkan dukungan unggah biner melalui header `X-Tern
 
 ## Perintah
 
-Nama kolom dan struktur respons mengikuti `../src/lib/types.ts` dan `../CONTRACT.md`. ID adalah string; kategori `good`/`cracked`, role `admin`/`employee`, metode pembayaran `cash`/`transfer`/`qris`/`credit`.
+Nama kolom dan struktur respons mengikuti `../src/lib/types.ts` dan `../CONTRACT.md`. ID adalah string; jenis telur baru `skm`/`skm_new`/`cracked`, sedangkan `good` hanya stok bagus lama yang belum dipilah. Role `admin`/`employee`; metode pembayaran `cash`/`transfer`/`qris`/`credit`. Baca [migrasi dan kontrak jenis telur](EGG-TYPES.md) sebelum memasang versi ini.
 
 | Perintah | Payload utama | Hak |
 | --- | --- | --- |
-| `production.create` | date, items[{category, eggs, kg, trays}], barn_id?, notes?, photo?, location? | Semua, satu atau dua kategori unik dalam satu panen |
+| `production.create` | date, items[{category, eggs, kg, trays}], barn_id?, notes?, photo?, location? | Semua, satu sampai tiga jenis baru yang unik dalam satu panen |
 | `production.receive` | id | Pemilik panen/admin, menerima satu baris kategori yang masih menunggu |
-| `stock.reconcile` | items[{category, expected:{eggs,kg}, physical:{eggs,kg}}], reason | Admin, hasil hitung fisik untuk kedua kategori |
+| `stock.reconcile` | items[{category, expected:{eggs,kg,trays?}, physical:{eggs,kg,trays?}}], reason | Admin, satu sampai empat jenis termasuk stok lama |
+| `stock.classify` | category:`skm`/`skm_new`, eggs, kg, trays?, expected_source:{eggs,kg,trays}, expected_target:{eggs,kg,trays}, reason | Admin; memindahkan stok bagus lama ke hasil pilahan |
 | `settings.update` | harvest_auto_stock:boolean | Admin |
 | `pickup.create` | date, category, eggs, kg, trays, area, notes | Semua, pengambil otomatis |
 | `pickup.return` | id, eggs, kg, trays, notes | Pemilik/admin |
 | `sale.create` | date, customer, phone?, stock_source?, items[{pickup_id?,category,eggs?,kg,trays,is_free?}], payment_method, paid, due_date?, notes, photo, expected_price_id? | Admin dan karyawan. Nama pelanggan dan foto dokumentasi wajib. Hanya admin dapat menggratiskan bentes saat harga aktifnya di atas Rp0 |
 | `sale.payment` | id, amount, expected_paid?, method? | Pemilik/admin |
 | `sale.due` | id, due_date | Pemilik/admin |
-| `price.create` | good_price, cracked_price, effective_at | Admin |
+| `price.create` | skm_price, skm_new_price, cracked_price, effective_at | Admin; harga SKM dan SKM Baru positif, bentes boleh nol |
 | `user.create` | name, email, username?, password, password_confirmation?, role, target | Admin |
 | `user.update` | id, name?, email?, username?, photo?, active?, target?, role?, password?, password_confirmation? | Admin; akun admin dan karyawan |
 | `user.delete` | id, reason | Admin; hapus akun karyawan dengan riwayat tetap tersimpan |
@@ -120,8 +121,8 @@ Nama kolom dan struktur respons mengikuti `../src/lib/types.ts` dan `../CONTRACT
 | `feed.due` | id, due_date | Admin |
 | `feed.use` | date, feed_id, barn_id, quantity, notes | Semua |
 | `notification.read` | id atau id:`all` | Notifikasi sendiri |
-| `stock_check.submit` | date, expected_snapshot, status, warehouse_actual?, harvest_actual?, reason? | Karyawan yang ditunjuk admin |
-| `stock_check.review` | id, decision:`approve`/`reject`, reason? | Admin |
+| `stock_check.submit` | schema_version:2, date, expected_snapshot, status, warehouse_actual?, harvest_actual?, reason? | Karyawan yang ditunjuk admin |
+| `stock_check.review` | id, decision:`approve`/`reject`, schema_version:2 untuk approve, reason? | Admin |
 | `correction.request` | entity, id, reason, changes | Pemilik/admin |
 | `correction.apply` | entity, id, reason, changes | Admin atau produksi sendiri yang belum dikunci |
 | `correction.review` | id, approved:boolean | Admin |

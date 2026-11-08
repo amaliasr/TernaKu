@@ -263,19 +263,19 @@ try {
     $s=cmd('user.update',['id'=>$sari['id'],'name'=>'Sari'],$a); check(first($s,'users',fn($u)=>$u['id']===$sari['id'])['photo']===$legacyPhoto,'admin name-only edit preserves oversized legacy profile without resubmitting image');
     $s=cmd('user.update',['id'=>$sari['id'],'email'=>'sari@test.local','photo'=>'','target'=>5000000],$a);
     check(first($s,'users',fn($u)=>$u['id']===$sari['id'])['photo']==='' && !isset(first(req('/bootstrap?compact=1',[],$a,'GET'),'users',fn($u)=>$u['id']===$sari['id'])['photo_ref']),'explicit empty employee photo removes image and compact reference');
-    cmd('price.create',['good_price'=>28000,'cracked_price'=>18000,'effective_at'=>'2026-01-01T00:00:00+07:00'],$e,403); check(true,'employee cannot change prices');
-    $s=cmd('price.create',['good_price'=>28000,'cracked_price'=>18000,'effective_at'=>'2026-01-01T00:00:00+07:00'],$a);
+    cmd('price.create',['skm_price'=>28000,'skm_new_price'=>28000,'cracked_price'=>18000,'effective_at'=>'2026-01-01T00:00:00+07:00'],$e,403); check(true,'employee cannot change prices');
+    $s=cmd('price.create',['skm_price'=>28000,'skm_new_price'=>28000,'cracked_price'=>18000,'effective_at'=>'2026-01-01T00:00:00+07:00'],$a);
     $s=cmd('barn.create',['name'=>'Kandang A','type'=>'ayam','capacity'=>1000,'notes'=>''],$a); $barn=$s['barns'][0]['id'];
-    $baseProd=['date'=>date('Y-m-d'),'barn_id'=>$barn,'category'=>'good','eggs'=>1000,'kg'=>60,'trays'=>6,'notes'=>'Panen'];
-    $s=cmd('production.create',$baseProd,$e); $prod=$s['productions'][0]['id']; check($s['inventory']['good']['eggs']===1000 && $s['inventory']['good']['kg']==60,'production increases shared warehouse');
+    $baseProd=['date'=>date('Y-m-d'),'barn_id'=>$barn,'category'=>'skm','eggs'=>1000,'kg'=>60,'trays'=>6,'notes'=>'Panen'];
+    $s=cmd('production.create',$baseProd,$e); $prod=$s['productions'][0]['id']; check($s['inventory']['skm']['eggs']===1000 && $s['inventory']['skm']['kg']==60,'production increases shared warehouse');
     cmd('production.create',array_replace($baseProd,['kg'=>-1]),$e,422); check(true,'negative quantities rejected');
     cmd('production.create',array_replace($baseProd,['kg'=>1.2345]),$e,422); check(true,'more than three weight decimals rejected');
     cmd('production.create',array_replace($baseProd,['date'=>'2099-01-01']),$e,422); check(true,'future business date rejected');
-    $pick=['date'=>date('Y-m-d'),'category'=>'good','eggs'=>600,'kg'=>36,'trays'=>3,'area'=>'Pasar','notes'=>''];
+    $pick=['date'=>date('Y-m-d'),'category'=>'skm','eggs'=>600,'kg'=>36,'trays'=>3,'area'=>'Pasar','notes'=>''];
     cmd('pickup.create',array_replace($pick,['eggs'=>1000,'kg'=>10]),$e,422); check(true,'pickup cannot strand a weight-only warehouse remainder');
     $s=cmd('pickup.create',$pick,$e); $pickup=$s['pickups'][0]['id'];
     cmd('pickup.create',$pick,$e,422); check(true,'over-pickup rejected in kg and eggs');
-    $salePayload=['date'=>date('Y-m-d'),'customer'=>'Toko A','phone'=>'','photo'=>$profilePhoto,'items'=>[['pickup_id'=>$pickup,'category'=>'good','eggs'=>300,'kg'=>18,'trays'=>1]],'payment_method'=>'credit','paid'=>100000,'notes'=>''];
+    $salePayload=['date'=>date('Y-m-d'),'customer'=>'Toko A','phone'=>'','photo'=>$profilePhoto,'items'=>[['pickup_id'=>$pickup,'category'=>'skm','eggs'=>300,'kg'=>18,'trays'=>1]],'payment_method'=>'credit','paid'=>100000,'notes'=>''];
     $snapshot=businessSnapshot();
     foreach([''," \t\n ",str_repeat('a',191),null] as $customer) cmd('sale.create',array_replace($salePayload,['customer'=>$customer]),$e,422);
     $missingCustomer=$salePayload; unset($missingCustomer['customer']); cmd('sale.create',$missingCustomer,$e,422);
@@ -283,7 +283,7 @@ try {
     $missingPhoto=$salePayload; unset($missingPhoto['photo']); req('/commands',['action'=>'sale.create','payload'=>$missingPhoto,'request_id'=>'invalid-sale-doc-'.bin2hex(random_bytes(10))],$e,'POST',422);
     check(businessSnapshot()===$snapshot,'missing blank invalid or oversized sale customer/documentation fails atomically without sale audit stock or request records');
     cmd('sale.create',array_replace($salePayload,['expected_price_id'=>'stale-price']),$e,409); check(true,'stale price displayed to client requires refresh before sale');
-    cmd('sale.create',array_replace($salePayload,['items'=>[['pickup_id'=>$pickup,'category'=>'good','eggs'=>600,'kg'=>18,'trays'=>1]]]),$e,422); check(true,'sale cannot strand a weight-only pickup remainder');
+    cmd('sale.create',array_replace($salePayload,['items'=>[['pickup_id'=>$pickup,'category'=>'skm','eggs'=>600,'kg'=>18,'trays'=>1]]]),$e,422); check(true,'sale cannot strand a weight-only pickup remainder');
     $s=cmd('sale.create',$salePayload,$e); $sale=$s['sales'][0]; check($sale['total']===504000 && $sale['balance']===404000,'server computes sale total and debt');
     check($sale['payments'][0]['kind']==='initial' && $sale['payments'][0]['amount']===100000 && !isset($sale['payments'][0]['method']), 'initial payment records amount and time without inventing a method for credit sales');
     cmd('sale.due',['id'=>$sale['id'],'due_date'=>date('Y-m-d',strtotime('+3 days'))],$other,403);
@@ -305,19 +305,19 @@ try {
     $legacyChanged=first($s,'sales',fn($r)=>$r['id']===$sale['id']); check($legacyChanged['notes']==='Legacy sale note' && $legacyChanged['photo']==='' && $legacyChanged['customer']==='','unrelated corrections do not require retroactive documentation on legacy sales');
     cmd('sale.create',$salePayload,$other,403); check(true,'other employee cannot sell owned pickup');
     cmd('sale.create',array_replace($salePayload,['items'=>[$salePayload['items'][0],$salePayload['items'][0]]]),$e,422); check(true,'duplicate pickup lines cannot oversell');
-    $s=cmd('price.create',['good_price'=>31000,'cracked_price'=>20000,'effective_at'=>'2026-01-02T00:00:00+07:00'],$a);
+    $s=cmd('price.create',['skm_price'=>31000,'skm_new_price'=>31000,'cracked_price'=>20000,'effective_at'=>'2026-01-02T00:00:00+07:00'],$a);
     $old=first($s,'sales',fn($r)=>$r['id']===$sale['id']); check($old['items'][0]['unit_price']===28000 && $old['total']===504000,'old price snapshot immutable after price change');
-    cmd('price.create',['good_price'=>99000,'cracked_price'=>99000,'effective_at'=>'2099-01-01T00:00:00+07:00'],$a);
-    $s=cmd('sale.create',array_replace($salePayload,['items'=>[['pickup_id'=>$pickup,'category'=>'good','eggs'=>100,'kg'=>6,'trays'=>1]],'paid'=>0]),$e); $new=first($s,'sales',fn($r)=>$r['id']!==$sale['id']); check($new['items'][0]['unit_price']===31000,'future price inactive until effective time');
+    cmd('price.create',['skm_price'=>99000,'skm_new_price'=>99000,'cracked_price'=>99000,'effective_at'=>'2099-01-01T00:00:00+07:00'],$a);
+    $s=cmd('sale.create',array_replace($salePayload,['items'=>[['pickup_id'=>$pickup,'category'=>'skm','eggs'=>100,'kg'=>6,'trays'=>1]],'paid'=>0]),$e); $new=first($s,'sales',fn($r)=>$r['id']!==$sale['id']); check($new['items'][0]['unit_price']===31000,'future price inactive until effective time');
     cmd('pickup.return',['id'=>$pickup,'eggs'=>100,'kg'=>12,'trays'=>1,'notes'=>'Tidak terjual'],$e,422); check(true,'return cannot strand an egg-only pickup remainder');
-    $s=cmd('pickup.return',['id'=>$pickup,'eggs'=>200,'kg'=>12,'trays'=>1,'notes'=>'Tidak terjual'],$e); check($s['inventory']['good']['kg']==36 && $s['inventory']['good']['eggs']===600,'return restores only unsold stock');
+    $s=cmd('pickup.return',['id'=>$pickup,'eggs'=>200,'kg'=>12,'trays'=>1,'notes'=>'Tidak terjual'],$e); check($s['inventory']['skm']['kg']==36 && $s['inventory']['skm']['eggs']===600,'return restores only unsold stock');
     $returns=array_values(array_filter($s['stock_movements'],fn($m)=>$m['kind']==='return')); check(count($returns)===1 && $returns[0]['reference_id']===$pickup && $returns[0]['kg']==12 && substr($returns[0]['date'],0,10)===date('Y-m-d'),'returns have individually dated stock ledger entries');
     cmd('pickup.return',['id'=>$pickup,'eggs'=>1,'kg'=>0.1,'trays'=>0],$e,422); check(true,'repeat/excess return rejected');
     $s=cmd('sale.payment',['id'=>$sale['id'],'amount'=>404000],$e); $paid=first($s,'sales',fn($r)=>$r['id']===$sale['id']); check($paid['payment_status']==='paid' && $paid['balance']===0 && $paid['photo']==='' && $paid['customer']==='','debt repayment settles legacy transaction without requiring new documentation');
     check(count($paid['payments'])===1 && $paid['payments'][0]['amount']===404000 && $paid['paid']-array_sum(array_column($paid['payments'],'amount'))===100000, 'legacy paid total is retained without fictitious historical payment entries');
     cmd('sale.payment',['id'=>$sale['id'],'amount'=>1],$e,422); check(true,'overpayment rejected');
     cmd('correction.apply',['entity'=>'production','id'=>$prod,'reason'=>'','changes'=>['kg'=>61]],$e,422); check(true,'mandatory correction reason');
-    $s=cmd('correction.apply',['entity'=>'production','id'=>$prod,'reason'=>'Timbangan dikalibrasi','changes'=>['kg'=>61]],$e); check($s['inventory']['good']['kg']==37,'unlocked own production correction adjusts stock');
+    $s=cmd('correction.apply',['entity'=>'production','id'=>$prod,'reason'=>'Timbangan dikalibrasi','changes'=>['kg'=>61]],$e); check($s['inventory']['skm']['kg']==37,'unlocked own production correction adjusts stock');
     check(array_sum(array_column($s['stock_movements'],'kg'))==37,'stock ledger includes correction delta and matches physical stock');
     cmd('correction.apply',['entity'=>'production','id'=>$prod,'reason'=>'Koreksi sangat besar','changes'=>['kg'=>1]],$e,422); check(true,'correction cannot make warehouse negative');
     cmd('record.lock',['entity'=>'production','id'=>$prod,'locked'=>true],$a);
@@ -325,7 +325,7 @@ try {
     $s=cmd('correction.request',['entity'=>'production','id'=>$prod,'reason'=>'Catatan revisi','changes'=>['notes'=>'Updated']],$e); $correction=$s['corrections'][0]['id'];
     $s=cmd('correction.review',['id'=>$correction,'approved'=>true],$a); check(first($s,'productions',fn($r)=>$r['id']===$prod)['notes']==='Updated','admin approval applies safe correction');
     cmd('correction.apply',['entity'=>'sale','id'=>$sale['id'],'reason'=>'Tidak boleh ubah harga','changes'=>['total'=>1]],$a,422); check(true,'financial correction cannot rewrite snapshot');
-    $s=cmd('correction.apply',['entity'=>'pickup','id'=>$pickup,'reason'=>'Berat bawaan diperiksa','changes'=>['eggs'=>650,'kg'=>39]],$a); check($s['inventory']['good']['kg']==34 && $s['inventory']['good']['eggs']===550,'pickup quantity correction adjusts warehouse by delta');
+    $s=cmd('correction.apply',['entity'=>'pickup','id'=>$pickup,'reason'=>'Berat bawaan diperiksa','changes'=>['eggs'=>650,'kg'=>39]],$a); check($s['inventory']['skm']['kg']==34 && $s['inventory']['skm']['eggs']===550,'pickup quantity correction adjusts warehouse by delta');
     cmd('correction.apply',['entity'=>'pickup','id'=>$pickup,'reason'=>'Kurang dari yang terjual','changes'=>['eggs'=>300,'kg'=>18]],$a,422); check(true,'pickup correction cannot undercut sales and returns');
     cmd('correction.apply',['entity'=>'pickup','id'=>$pickup,'reason'=>'Koreksi bawaan kembali','changes'=>['eggs'=>600,'kg'=>36]],$a);
     $item=$new['items'][0]; $revised=['id'=>$item['id'],'eggs'=>80,'kg'=>4.8,'trays'=>1];
@@ -359,7 +359,7 @@ try {
     $settled=cmd('feed.payment',array_replace($payment,['amount'=>15000,'expected_paid'=>5000]),$a);
     $inv=first($settled,'feed_purchases',fn($r)=>$r['id']===$payment['id']);
     check($inv['balance']===0 && array_sum(array_column($inv['payments'],'amount'))===20000 && $settled['feed_inventory'][$feed]===$qtyBefore,'supplier settlement closes exact balance without purchasing goods twice');
-    $s=req('/bootstrap',[],$other,'GET'); check(count($s['productions'])===0 && count($s['sales'])===0 && count($s['activity'])===0 && count($s['users'])===1 && $s['inventory']['good']['kg']==37,'employee row-level isolation and shared inventory');
+    $s=req('/bootstrap',[],$other,'GET'); check(count($s['productions'])===0 && count($s['sales'])===0 && count($s['activity'])===0 && count($s['users'])===1 && $s['inventory']['skm']['kg']==37,'employee row-level isolation and shared inventory');
     check(count($s['notifications'])>=3,'price notifications delivered per employee');
     $s=cmd('notification.read',['id'=>'all'],$other); check(count(array_filter($s['notifications'],fn($n)=>!$n['read']))===0,'mark own notifications read');
     $envelope=['action'=>'barn.create','payload'=>['name'=>'Idempotent Barn','type'=>'ayam','capacity'=>0,'notes'=>''],'request_id'=>'test-request-'.bin2hex(random_bytes(10))];
@@ -380,31 +380,31 @@ try {
         $own=first($s,'pickups',fn($p)=>$p['notes']===$marker && $p['user_id']===$actorId); $freePickups[$role]=$own['id'];
         cmd('production.create',array_replace($baseProd,['eggs'=>100,'kg'=>6,'trays'=>0,'notes'=>$marker]),$actorToken);
         $s=cmd('pickup.create',array_replace($pick,['eggs'=>100,'kg'=>6,'trays'=>0,'notes'=>$marker]),$actorToken);
-        $ownGood=first($s,'pickups',fn($p)=>$p['notes']===$marker && $p['category']==='good' && $p['user_id']===$actorId); $goodPickups[$role]=$ownGood['id'];
+        $ownGood=first($s,'pickups',fn($p)=>$p['notes']===$marker && $p['category']==='skm' && $p['user_id']===$actorId); $goodPickups[$role]=$ownGood['id'];
         $gift=['date'=>date('Y-m-d'),'customer'=>'Pak Budi '.$role,'photo'=>$profilePhoto,'items'=>[['pickup_id'=>$own['id'],'category'=>'cracked','eggs'=>20,'kg'=>1.2,'trays'=>0,'is_free'=>true]],'payment_method'=>'credit','paid'=>0];
         $snapshot=businessSnapshot();
         cmd('sale.create',array_replace($gift,['customer'=>'  ']),$actorToken,422);
         cmd('sale.create',array_replace($gift,['photo'=>'']),$actorToken,422);
-        $regular=array_replace($gift,['items'=>[['pickup_id'=>$ownGood['id'],'category'=>'good','eggs'=>5,'kg'=>0.3,'trays'=>0]]]);
+        $regular=array_replace($gift,['items'=>[['pickup_id'=>$ownGood['id'],'category'=>'skm','eggs'=>5,'kg'=>0.3,'trays'=>0]]]);
         cmd('sale.create',array_replace($regular,['customer'=>'']),$actorToken,422); cmd('sale.create',array_replace($regular,['photo'=>'']),$actorToken,422);
         check(businessSnapshot()===$snapshot,$role.' requires customer and documentation for free and regular sales without partial writes');
         if($role==='employee') {
             cmd('sale.create',$gift,$e,422);
             check(businessSnapshot()===$snapshot,'an employee cannot waive a positive price on carried eggs or consume their pickup balance');
-            cmd('price.create',['good_price'=>0,'cracked_price'=>0,'effective_at'=>'2026-02-01T00:00:00+07:00'],$a,422);
-            cmd('price.create',['good_price'=>31000,'cracked_price'=>-1,'effective_at'=>'2026-02-01T00:00:00+07:00'],$a,422);
-            cmd('price.create',['good_price'=>31000,'cracked_price'=>0,'effective_at'=>'2026-02-01T00:00:00+07:00'],$e,403);
-            $s=cmd('price.create',['good_price'=>31000,'cracked_price'=>0,'effective_at'=>'2026-02-01T00:00:00+07:00'],$a);
+            cmd('price.create',['skm_price'=>0,'skm_new_price'=>0,'cracked_price'=>0,'effective_at'=>'2026-02-01T00:00:00+07:00'],$a,422);
+            cmd('price.create',['skm_price'=>31000,'skm_new_price'=>31000,'cracked_price'=>-1,'effective_at'=>'2026-02-01T00:00:00+07:00'],$a,422);
+            cmd('price.create',['skm_price'=>31000,'skm_new_price'=>31000,'cracked_price'=>0,'effective_at'=>'2026-02-01T00:00:00+07:00'],$e,403);
+            $s=cmd('price.create',['skm_price'=>31000,'skm_new_price'=>31000,'cracked_price'=>0,'effective_at'=>'2026-02-01T00:00:00+07:00'],$a);
             check(count(array_filter($s['prices'],fn($p)=>$p['cracked_price']===0))===1,'the admin can set the daily cracked price to zero');
         }
         cmd('sale.create',array_replace($gift,['paid'=>1]),$actorToken,422);
         cmd('sale.create',array_replace($gift,['items'=>[array_replace($gift['items'][0],['is_free'=>'true'])]]),$actorToken,422);
-        cmd('sale.create',array_replace($gift,['items'=>[array_replace($gift['items'][0],['pickup_id'=>$ownGood['id'],'category'=>'good'])]]),$actorToken,422);
+        cmd('sale.create',array_replace($gift,['items'=>[array_replace($gift['items'][0],['pickup_id'=>$ownGood['id'],'category'=>'skm'])]]),$actorToken,422);
         $s=cmd('sale.create',$gift,$actorToken); $free=first($s,'sales',fn($sale)=>$sale['items'][0]['pickup_id']===$own['id']); $freeSales[$role]=$free;
         check($free['user_id']===$actorId && $free['customer']==='Pak Budi '.$role && $free['items'][0]['is_free']===true && $free['items'][0]['unit_price']===0 && $free['total']===0 && $free['paid']===0 && $free['balance']===0 && $free['payment_status']==='paid' && $free['payment_method']==='cash',$role.' records own harvest/pickup/free cracked eggs with named recipient and zero debt');
         check(count(array_filter($s['sales'],fn($sale)=>$sale['items'][0]['pickup_id']===$own['id']))===1,$role.' rejects missing recipient, overpayment, invalid free flag and free good eggs atomically');
     }
-    $mixed=['date'=>date('Y-m-d'),'customer'=>'Penerima campuran','photo'=>$profilePhoto,'items'=>[['pickup_id'=>$goodPickups['employee'],'category'=>'good','eggs'=>10,'kg'=>0.6,'trays'=>0],['pickup_id'=>$freePickups['employee'],'category'=>'cracked','eggs'=>10,'kg'=>0.6,'trays'=>0,'is_free'=>true]],'payment_method'=>'cash','paid'=>18600];
+    $mixed=['date'=>date('Y-m-d'),'customer'=>'Penerima campuran','photo'=>$profilePhoto,'items'=>[['pickup_id'=>$goodPickups['employee'],'category'=>'skm','eggs'=>10,'kg'=>0.6,'trays'=>0],['pickup_id'=>$freePickups['employee'],'category'=>'cracked','eggs'=>10,'kg'=>0.6,'trays'=>0,'is_free'=>true]],'payment_method'=>'cash','paid'=>18600];
     $mixedRequest=['action'=>'sale.create','payload'=>$mixed,'request_id'=>'mixed-'.bin2hex(random_bytes(8)),'response_mode'=>'compact','receipt_for_role'=>'employee'];
     $mixedSale=req('/commands',$mixedRequest,$e)['sale'];
     check($mixedSale['total']===18600 && $mixedSale['balance']===0 && $mixedSale['items'][0]['unit_price']===31000 && !$mixedSale['items'][0]['is_free'] && $mixedSale['items'][1]['is_free'] && $mixedSale['items'][1]['total']===0,'mixed paid/free transaction charges only paid eggs and preserves both snapshots');
@@ -416,7 +416,7 @@ try {
     cmd('correction.apply',['entity'=>'sale','id'=>$free['id'],'reason'=>'Penerima tidak boleh dihapus','changes'=>['customer'=>'']],$a,422);
     cmd('correction.apply',['entity'=>'sale','id'=>$free['id'],'reason'=>'Gratis tidak boleh diubah','changes'=>['items'=>[['id'=>$free['items'][0]['id'],'eggs'=>20,'kg'=>1.2,'trays'=>0,'is_free'=>false]]]],$a,422);
     $s=cmd('correction.apply',['entity'=>'sale','id'=>$free['id'],'reason'=>'Jumlah pemberian diperiksa','changes'=>['items'=>[['id'=>$free['items'][0]['id'],'eggs'=>25,'kg'=>1.5,'trays'=>0]]]],$a);
-    $s=cmd('price.create',['good_price'=>32000,'cracked_price'=>22000,'effective_at'=>'2026-03-01T00:00:00+07:00'],$a); $unchanged=first($s,'sales',fn($sale)=>$sale['id']===$free['id']);
+    $s=cmd('price.create',['skm_price'=>32000,'skm_new_price'=>32000,'cracked_price'=>22000,'effective_at'=>'2026-03-01T00:00:00+07:00'],$a); $unchanged=first($s,'sales',fn($sale)=>$sale['id']===$free['id']);
     check($unchanged['customer']!=='' && $unchanged['items'][0]['is_free'] && $unchanged['items'][0]['unit_price']===0 && $unchanged['total']===0 && $unchanged['balance']===0,'free snapshot and recipient are immutable through price and permitted quantity corrections');
     $beforeReplay=businessSnapshot();
     $replayedGift=req('/commands',$mixedRequest,$e)['sale'];
@@ -442,7 +442,7 @@ try {
     check(first($s,'productions',fn($r)=>$r['id']===$pendingHarvest['id'])['stocked_at']===null && $s['inventory']===$stockBefore,'enabling automatic stock does not retroactively receive pending harvests');
     $receive=['action'=>'production.receive','payload'=>['id'=>$pendingHarvest['id']],'request_id'=>'receive-'.bin2hex(random_bytes(10)),'response_mode'=>'compact'];
     $received=req('/commands',$receive,$e); $again=req('/commands',$receive,$e);
-    check($again['inventory']['good']['eggs']===$stockBefore['good']['eggs']+60 && $again['inventory']['good']['kg']==$stockBefore['good']['kg']+3.6 && count(array_filter($again['stock_movements'],fn($m)=>$m['reference_id']===$pendingHarvest['id']))===1,'receipt and idempotent replay increase corrected quantities exactly once');
+    check($again['inventory']['skm']['eggs']===$stockBefore['skm']['eggs']+60 && $again['inventory']['skm']['kg']==$stockBefore['skm']['kg']+3.6 && count(array_filter($again['stock_movements'],fn($m)=>$m['reference_id']===$pendingHarvest['id']))===1,'receipt and idempotent replay increase corrected quantities exactly once');
     cmd('production.receive',['id'=>$pendingHarvest['id']],$a,409); check(true,'new request cannot receive an already-stocked harvest');
     $s=cmd('settings.update',['harvest_auto_stock'=>false],$a);
     $s=cmd('production.create',array_replace($baseProd,['eggs'=>10,'kg'=>0.6,'trays'=>0,'notes'=>'Concurrent receive fixture']),$e); $raceHarvest=first($s,'productions',fn($r)=>$r['notes']==='Concurrent receive fixture');
@@ -470,7 +470,7 @@ try {
     $nothing=req('/sync/prices?since='.$cursor,[],$e,'GET');
     check($nothing['mode']==='delta' && $nothing['since']===$cursor && $nothing['cursor']===$cursor && !$nothing['more'] && $nothing['prices']===[] && $nothing['notifications']===[],'unchanged five-second poll sends no price or notification history');
     req('/sync/prices?since=oops',[],$e,'GET',400); req('/sync/prices?since=0',[],'','GET',401);
-    $scheduled=['good_price'=>37000,'cracked_price'=>19000,'effective_at'=>date('c',strtotime('+15 days'))];
+    $scheduled=['skm_price'=>37000,'skm_new_price'=>37000,'cracked_price'=>19000,'effective_at'=>date('c',strtotime('+15 days'))];
     cmd('price.create',$scheduled,$a); cmd('price.create',$scheduled,$a);
     $changed=req('/sync/prices?since='.$cursor,[],$e,'GET');
     check(count($changed['prices'])===2 && $changed['prices'][0]['id']!==$changed['prices'][1]['id'] && $changed['prices'][0]['effective_at']===$scheduled['effective_at'] && count($changed['notifications'])===2 && count(array_unique(array_column($changed['notifications'],'user_id')))===1 && $changed['notifications'][0]['user_id']===$sari['id'],'both same-value scheduled updates and only own alerts arrive incrementally');
@@ -493,7 +493,7 @@ try {
     req('/bootstrap?compact=1',[],$e,'GET'); check(true,'employee bootstrap filters foreign rows in SQL and skips restricted collections before parsing');
     $broken->execute(['fixture_own_history','production',$sari['id'],'invalid JSON']); req('/sync/prices',[],$e,'GET'); check(true,'price-only sync does not read transaction history');
     $db->exec("DELETE FROM records WHERE id IN ('fixture_hidden_production','fixture_hidden_purchase','fixture_hidden_audit','fixture_own_history')");
-    $receiptPayload=['date'=>date('Y-m-d'),'customer'=>'Exact receipt fixture','items'=>[['pickup_id'=>$goodPickups['employee'],'category'=>'good','eggs'=>5,'kg'=>0.3,'trays'=>0]],'payment_method'=>'cash','paid'=>9600,'photo'=>$profilePhoto];
+    $receiptPayload=['date'=>date('Y-m-d'),'customer'=>'Exact receipt fixture','items'=>[['pickup_id'=>$goodPickups['employee'],'category'=>'skm','eggs'=>5,'kg'=>0.3,'trays'=>0]],'payment_method'=>'cash','paid'=>9600,'photo'=>$profilePhoto];
     $receiptRequest=['action'=>'sale.create','payload'=>$receiptPayload,'request_id'=>'receipt-'.bin2hex(random_bytes(10)),'response_mode'=>'compact'];
     $confirmed=req('/commands',$receiptRequest,$e); $confirmation=$confirmed['command_result'];
     $confirmedSale=first($confirmed,'sales',fn($sale)=>$sale['id']===$confirmation['record_id']);
@@ -518,18 +518,18 @@ try {
     check($replayed['command_result']===$confirmation && count($replayed['sales'])===count($another['sales']) && first($replayed,'sales',fn($sale)=>$sale['id']===$confirmation['record_id'])['photo']===$profilePhoto,'idempotent retry returns original sale confirmation even after another sale and response mode change');
     mediaReq('/media/sale/'.$confirmation['record_id'],$e); mediaReq('/media/sale/'.$confirmation['record_id'],$other,403); check(true,'sale receipt photos use the same owner-scoped media endpoint');
     // Both harvest lines are one idempotent transaction; legacy flat harvests remain supported.
-    $batch=['date'=>date('Y-m-d'),'notes'=>'Mixed harvest fixture','photo'=>$profilePhoto,'items'=>[['category'=>'good','eggs'=>1240,'kg'=>70,'trays'=>8],['category'=>'cracked','eggs'=>35,'kg'=>2.1,'trays'=>0]]];
+    $batch=['date'=>date('Y-m-d'),'notes'=>'Mixed harvest fixture','photo'=>$profilePhoto,'items'=>[['category'=>'skm','eggs'=>1240,'kg'=>70,'trays'=>8],['category'=>'cracked','eggs'=>35,'kg'=>2.1,'trays'=>0]]];
     $before=req('/bootstrap?compact=1',[],$a,'GET');
     $bad=$batch; $bad['items'][1]['kg']=0; cmd('production.create',$bad,$e,422);
-    $bad=$batch; $bad['items'][1]['category']='good'; cmd('production.create',$bad,$e,422);
+    $bad=$batch; $bad['items'][1]['category']='skm'; cmd('production.create',$bad,$e,422);
     $batchReq=['action'=>'production.create','payload'=>$batch,'request_id'=>'batch-'.bin2hex(random_bytes(8)),'response_mode'=>'compact'];
     $s=req('/commands',$batchReq,$e); $s=req('/commands',$batchReq,$e);
     $lines=array_values(array_filter($s['productions'],fn($p)=>$p['notes']==='Mixed harvest fixture'));
     check(count($lines)===2 && $lines[0]['harvest_id']===$lines[1]['harvest_id'] && $lines[0]['photo_ref']===$lines[1]['photo_ref'],'mixed harvest commits two linked categories once, with one shared photo');
-    check($s['inventory']['good']['eggs']===$before['inventory']['good']['eggs']+1240 && $s['inventory']['cracked']['kg']==round($before['inventory']['cracked']['kg']+2.1,3),'invalid second line/duplicate category and repeated batch do not leave extra stock');
-    $physical=[]; foreach(['good','cracked'] as $cat){
+    check($s['inventory']['skm']['eggs']===$before['inventory']['skm']['eggs']+1240 && $s['inventory']['cracked']['kg']==round($before['inventory']['cracked']['kg']+2.1,3),'invalid second line/duplicate category and repeated batch do not leave extra stock');
+    $physical=[]; foreach(['skm','cracked'] as $cat){
         $expected=['eggs'=>$s['inventory'][$cat]['eggs'],'kg'=>$s['inventory'][$cat]['kg']];
-        $counted=$expected; if($cat==='good'){ $counted['eggs']-=2; $counted['kg']=round($counted['kg']-0.12,3); }
+        $counted=$expected; if($cat==='skm'){ $counted['eggs']-=2; $counted['kg']=round($counted['kg']-0.12,3); }
         $physical[]=['category'=>$cat,'expected'=>$expected,'physical'=>$counted];
     }
     $op=['items'=>$physical,'reason'=>'Pecah saat dipindah ke rak'];
@@ -539,14 +539,14 @@ try {
     $rc=['action'=>'stock.reconcile','payload'=>$op,'request_id'=>'count-'.bin2hex(random_bytes(8)),'response_mode'=>'compact'];
     req('/commands',$rc,$a); $counted=req('/commands',$rc,$a);
     $ledger=array_values(array_filter($counted['stock_movements'],fn($m)=>$m['kind']==='reconcile' && $m['notes']===$op['reason']));
-    check(count($ledger)===2 && $ledger[0]['reference_id']===$ledger[1]['reference_id'] && $counted['inventory']['good']['eggs']===$physical[0]['physical']['eggs'] && $counted['inventory']['good']['kg']==$physical[0]['physical']['kg'],'opname is all-or-nothing, admin-only, and replay does not adjust stock twice');
+    check(count($ledger)===2 && $ledger[0]['reference_id']===$ledger[1]['reference_id'] && $counted['inventory']['skm']['eggs']===$physical[0]['physical']['eggs'] && $counted['inventory']['skm']['kg']==$physical[0]['physical']['kg'],'opname is all-or-nothing, admin-only, and replay does not adjust stock twice');
     check($ledger[0]['physical']['eggs']-$ledger[0]['expected']['eggs']===$ledger[0]['eggs'] && $ledger[1]['physical']['eggs']-$ledger[1]['expected']['eggs']===$ledger[1]['eggs'] && $ledger[0]['method']==='count','warehouse count preserves physical and expected snapshots in each movement');
     cmd('stock.reconcile',$op,$a,409); check(true,'count rejects an outdated expected warehouse balance');
-    $prior = $counted['inventory']['good'];
-    check($prior['trays'] === $s['inventory']['good']['trays'], 'older counts without trays keep warehouse trays intact');
+    $prior = $counted['inventory']['skm'];
+    check($prior['trays'] === $s['inventory']['skm']['trays'], 'older counts without trays keep warehouse trays intact');
     $repacked = $prior;
     $repacked['trays'] += 3;
-    $oneCategory = ['method' => 'add', 'items' => [['category' => 'good', 'expected' => $prior, 'physical' => $repacked]], 'reason' => 'Telur dikemas ulang di gudang'];
+    $oneCategory = ['method' => 'add', 'items' => [['category' => 'skm', 'expected' => $prior, 'physical' => $repacked]], 'reason' => 'Telur dikemas ulang di gudang'];
     $beforeRejected = businessSnapshot();
     cmd('stock.reconcile', $oneCategory, $e, 403);
     cmd('stock.reconcile', array_replace($oneCategory, ['reason' => ' ']), $a, 422);
@@ -565,7 +565,7 @@ try {
     check($beforeRejected === businessSnapshot(), 'unauthorized and invalid warehouse adjustments cannot change inventory or history');
     $adjusted = req('/commands', ['action'=>'stock.reconcile', 'payload'=>$oneCategory, 'response_mode'=>'compact'], $a);
     $movement = first($adjusted, 'stock_movements', fn($m) => $m['notes'] === $oneCategory['reason']);
-    check($adjusted['inventory']['good'] === $repacked && $adjusted['inventory']['cracked'] === $counted['inventory']['cracked']
+    check($adjusted['inventory']['skm'] === $repacked && $adjusted['inventory']['cracked'] === $counted['inventory']['cracked']
         && $adjusted['pickups'] === $counted['pickups'] && $adjusted['sales'] === $counted['sales'],
         'counting only warehouse trays changes just the selected category and keeps employee stock and invoices intact');
     check($movement['expected'] === $prior && $movement['physical'] === $repacked
@@ -576,10 +576,10 @@ try {
     $beforeConflict = businessSnapshot();
     cmd('stock.reconcile', $stale, $a, 409);
     check($beforeConflict === businessSnapshot(), 'a stale tray balance rejects the whole count including the other category');
-    $decrease = ['method' => 'subtract', 'items' => [['category' => 'good', 'expected' => $repacked, 'physical' => $prior]], 'reason' => 'Krat kosong sudah dikeluarkan'];
+    $decrease = ['method' => 'subtract', 'items' => [['category' => 'skm', 'expected' => $repacked, 'physical' => $prior]], 'reason' => 'Krat kosong sudah dikeluarkan'];
     $afterRemoval = cmd('stock.reconcile', $decrease, $a);
     $movement = first($afterRemoval, 'stock_movements', fn($m) => $m['notes'] === $decrease['reason']);
-    check($afterRemoval['inventory']['good'] === $prior && $movement['method'] === 'subtract' && $movement['trays'] === -3,
+    check($afterRemoval['inventory']['skm'] === $prior && $movement['method'] === 'subtract' && $movement['trays'] === -3,
         'outgoing adjustments preserve their method and signed delta in the ledger');
     // Earlier imports can contain a weight with no eggs. Repair the observed row without losing its audit trail.
     $db->exec("UPDATE stock SET eggs=0, kg=0.300, trays=2 WHERE stock_key='egg:cracked'");
@@ -601,14 +601,14 @@ try {
     $boundary['items'][0] = ['category'=>'cracked', 'expected'=>$maxStock, 'physical'=>$measured];
     $reduced = cmd('stock.reconcile', $boundary, $a);
     check($reduced['inventory']['cracked'] === $measured, 'large decimal balances round-trip through HTTP, PDO, and the stock ledger');
-    $warehouseStock=['good'=>['eggs'=>50,'kg'=>5,'trays'=>2],'cracked'=>['eggs'=>20,'kg'=>2,'trays'=>1]];
+    $warehouseStock=['skm'=>['eggs'=>50,'kg'=>5,'trays'=>2],'cracked'=>['eggs'=>20,'kg'=>2,'trays'=>1]];
     $counts=[]; foreach($warehouseStock as $category=>$quantity) $counts[]=['category'=>$category,'expected'=>$reduced['inventory'][$category],'physical'=>$quantity];
     cmd('stock.reconcile',['items'=>$counts,'reason'=>'Hitung persediaan sebelum penjualan gudang'],$a);
     $beforeWarehouse=req('/bootstrap?compact=1',[],$e,'GET');
     $items=[
-        ['category'=>'good','eggs'=>10,'kg'=>1,'trays'=>1],
+        ['category'=>'skm','eggs'=>10,'kg'=>1,'trays'=>1],
         ['category'=>'cracked','eggs'=>2,'kg'=>0.2,'trays'=>0],
-        ['category'=>'good','eggs'=>5,'kg'=>0.5,'trays'=>0,'pickup_id'=>''],
+        ['category'=>'skm','eggs'=>5,'kg'=>0.5,'trays'=>0,'pickup_id'=>''],
     ];
     $warehousePayload=array_replace($salePayload,['stock_source'=>'warehouse','customer'=>'Pembeli di gudang','photo'=>$profilePhoto,'items'=>$items,'paid'=>0]);
     $badSourceSnapshot=businessSnapshot();
@@ -625,11 +625,11 @@ try {
     $form=$envelope; $form['payload']['photo']='';
     [$direct]=multipartCommand($form,$e,$png);
     $saved=$direct['sale']; $saleId=$saved['id']; $invoiceNumber=$saved['number'];
-    $soldGood=first($direct,'stock_movements',fn($m)=>$m['category']==='good');
+    $soldGood=first($direct,'stock_movements',fn($m)=>$m['category']==='skm');
     check($direct['mode']==='sale_receipt' && $saved['stock_source']==='warehouse' && $saved['items'][1]['unit_price']===22000 && !$saved['items'][1]['is_free']
         && $saved['items'][0]['unit_price']>0 && $saved['total']==array_sum(array_column($saved['items'],'total'))
         && array_column($saved['items'],'pickup_id')===['','',''] && $direct['pickups']===[] && $direct['pickup_balances']===[]
-        && $direct['inventory']==['good'=>['eggs'=>35,'kg'=>3.5,'trays'=>1],'cracked'=>['eggs'=>18,'kg'=>1.8,'trays'=>1]]
+        && array_intersect_key($direct['inventory'],array_flip(['skm','cracked']))==['skm'=>['eggs'=>35,'kg'=>3.5,'trays'=>1],'cracked'=>['eggs'=>18,'kg'=>1.8,'trays'=>1]]
         && count($direct['stock_movements'])===2 && $soldGood['eggs']===-15 && $soldGood['kg']==-1.5 && $soldGood['trays']===-1
         && $soldGood['reference_id']===$saleId && $soldGood['kind']==='sale' && $soldGood['user_id']===$sari['id'],
         'one multipart warehouse sale returns a numbered receipt, aggregates repeated categories and uses the active cracked price for an employee sale');
@@ -645,14 +645,14 @@ try {
     $correctionMove=first($correctedWarehouse,'stock_movements',fn($m)=>$m['reference_id']===$saleId && $m['kind']==='correction');
     $replay=req('/commands',$envelope,$e);
     check($replay['sale']['number']===$invoiceNumber && $replay['sale']['items'][0]['unit_price']===$saved['items'][0]['unit_price']
-        && $replay['inventory']['good']==['eggs'=>39,'kg'=>3.9,'trays'=>2] && $replay['inventory']===$correctedWarehouse['inventory']
+        && $replay['inventory']['skm']==['eggs'=>39,'kg'=>3.9,'trays'=>2] && $replay['inventory']===$correctedWarehouse['inventory']
         && $replay['stock_movements']===$direct['stock_movements'] && $correctionMove['eggs']===4 && $correctionMove['kg']==0.4 && $correctionMove['trays']===1,
         'a warehouse correction restores the signed difference and a retry shows the updated inventory and original sale movements');
     $beforeBadCorrection=businessSnapshot(); $correction['changes']['items'][0]['eggs']=100;
     cmd('correction.apply',$correction,$a,422);
     check($beforeBadCorrection===businessSnapshot(),'an overselling correction leaves inventory, invoice, and ledger untouched');
     $jobs=[];
-    $raceItem=['category'=>'good','eggs'=>30,'kg'=>3,'trays'=>1];
+    $raceItem=['category'=>'skm','eggs'=>30,'kg'=>3,'trays'=>1];
     foreach([$a,$e] as $token) {
         $pipes=[]; $worker=proc_open([PHP_BINARY,__DIR__.'/command-worker.php'],[0=>['pipe','r'],1=>['pipe','w'],2=>['pipe','w']],$pipes);
         fwrite($pipes[0],json_encode(['token'=>$token,'action'=>'sale.create','payload'=>array_replace($warehousePayload,['items'=>[$raceItem]])])); fclose($pipes[0]); $jobs[]=[$worker,$pipes];
@@ -663,26 +663,26 @@ try {
         fclose($pipes[1]); fclose($pipes[2]); if(proc_close($worker)!==0) throw new RuntimeException($err);
     }
     sort($results); $afterRace=req('/bootstrap?compact=1',[],$a,'GET');
-    check($results===['200','422'] && $afterRace['inventory']['good']==['eggs'=>9,'kg'=>0.9,'trays'=>1]
+    check($results===['200','422'] && $afterRace['inventory']['skm']==['eggs'=>9,'kg'=>0.9,'trays'=>1]
         && count($afterRace['sales'])===count($correctedWarehouse['sales'])+1
         && count($afterRace['stock_movements'])===count($correctedWarehouse['stock_movements'])+1,
         'simultaneous warehouse sales by admin and employee commit exactly one invoice and one stock deduction');
-    $target=['good'=>['eggs'=>27,'kg'=>0.9,'trays'=>0],'cracked'=>['eggs'=>7,'kg'=>0.5,'trays'=>0]];
+    $target=['skm'=>['eggs'=>27,'kg'=>0.9,'trays'=>0],'cracked'=>['eggs'=>7,'kg'=>0.5,'trays'=>0]];
     $counts=[];
     foreach($target as $category=>$quantity) $counts[]=['category'=>$category,'expected'=>$afterRace['inventory'][$category],'physical'=>$quantity];
     cmd('stock.reconcile',['items'=>$counts,'reason'=>'Hitung sebelum uji penjualan berdasarkan berat'],$a);
     $weighed=array_replace($warehousePayload,['items'=>[
-        ['category'=>'good','kg'=>0.2],
+        ['category'=>'skm','kg'=>0.2],
         ['category'=>'cracked','kg'=>0.25,'eggs'=>null],
-        ['category'=>'good','kg'=>0.2,'eggs'=>9,'eggs_estimated'=>true],
-        ['category'=>'good','kg'=>0.5,'eggs'=>' '],
+        ['category'=>'skm','kg'=>0.2,'eggs'=>9,'eggs_estimated'=>true],
+        ['category'=>'skm','kg'=>0.5,'eggs'=>' '],
     ]]);
     $weightRequest=['action'=>'sale.create','payload'=>$weighed,'request_id'=>'weighed-'.bin2hex(random_bytes(8)),'response_mode'=>'compact','receipt_for_role'=>'employee'];
     $receipt=req('/commands',$weightRequest,$e);
     $weightSale=$receipt['sale'];
     check(array_column($weightSale['items'],'eggs')===[5,4,9,13]
         && array_map(fn($line)=>$line['eggs_estimated']??false,$weightSale['items'])===[true,true,false,true]
-        && $receipt['inventory']==['good'=>['eggs'=>0,'kg'=>0,'trays'=>0],'cracked'=>['eggs'=>3,'kg'=>0.25,'trays'=>0]]
+        && array_intersect_key($receipt['inventory'],array_flip(['skm','cracked']))==['skm'=>['eggs'=>0,'kg'=>0,'trays'=>0],'cracked'=>['eggs'=>3,'kg'=>0.25,'trays'=>0]]
         && $weightSale['total']===34300,'mixed warehouse items reserve explicit counts, estimate per category and exhaust the last weight exactly');
     check($receipt===req('/commands',$weightRequest,$e),'a retried weight-only sale returns the original counts without estimating against reduced stock');
     $beforeInvalid=businessSnapshot();
@@ -718,5 +718,6 @@ try {
     req('/application/config/config.php',[],'','GET',404); check(true,'internal files not exposed by dev router');
     require __DIR__.'/account-policy-checks.php';
     require __DIR__.'/stock-check-checks.php';
+    require __DIR__.'/egg-type-checks.php';
     echo "\n$checks integration checks passed.\n";
 } catch(Throwable $e) { fwrite(STDERR,$e->getMessage()."\n"); exit(1); }

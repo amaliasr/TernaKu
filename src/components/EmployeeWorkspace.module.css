@@ -158,6 +158,8 @@
   background: #f9eee0;
   border-color: #efdfc7 !important;
 }
+.prices > .crackedPrice { grid-column: 1 / -1; display: flex; align-items: center; justify-content: space-between; gap: 10px; padding-block: 6px; }
+.prices > .crackedPrice strong { font-size: calc(18px * var(--font-scale, 1)); }
 .prices > div > span {
   display: flex;
   align-items: center;

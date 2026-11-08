@@ -1,4 +1,6 @@
-export type Category = "good" | "cracked";
+/** Leaf stock identity. `good` is unclassified legacy stock, never a pooled balance. */
+export type Category = "skm" | "skm_new" | "cracked" | "good";
+export type NewEggType = Exclude<Category, "good">;
 export type Role = "admin" | "employee";
 export type RegistrationStatus = "pending" | "approved" | "rejected";
 export interface MediaReference {
@@ -135,7 +137,10 @@ export interface Sale extends InvoiceLedger {
 }
 export interface Price {
   id: string;
-  good_price: number;
+  /** Historical rate for unclassified eggs; never copied to either SKM rate. */
+  good_price?: number;
+  skm_price?: number;
+  skm_new_price?: number;
   cracked_price: number;
   effective_at: string;
   created_at: string;
@@ -209,7 +214,7 @@ export interface StockMovement {
   created_at: string;
   user_id: string;
   category: Category;
-  kind: "production" | "pickup" | "sale" | "return" | "correction" | "reconcile";
+  kind: "production" | "pickup" | "sale" | "return" | "correction" | "reconcile" | "classify_out" | "classify_in";
   /** Older reconcile movements always came from a physical count. */
   method?: StockAdjustmentMethod;
   /** Older physical counts recorded only eggs and kilograms. */
@@ -261,12 +266,14 @@ export interface State {
 }
 export type StockCheckQuantities = Record<Category, Quantity>;
 export interface StockCheckContext {
+  schema_version?: number;
   date: string;
   snapshot: string;
   warehouse: StockCheckQuantities;
   harvest: StockCheckQuantities;
 }
 export interface StockCheck {
+  schema_version?: number;
   id: string;
   user_id: string;
   date: string;

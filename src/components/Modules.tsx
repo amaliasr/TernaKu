@@ -29,7 +29,6 @@ import {
 import { useFarm } from "@/lib/store";
 import { accountRoleLabel } from "@/lib/account-policy";
 import {
-  activePrice,
   dateLabel,
   eggStock,
   feedStock,
@@ -50,6 +49,9 @@ import type {
   User,
 } from "@/lib/types";
 import EntryModal from "./EntryModal";
+import Prices from "./Prices";
+import StockClassification from "./StockClassification";
+import { ALL_EGG_TYPES } from "@/lib/egg-types";
 import { InvoiceDialog, InvoiceTasks } from "./InvoiceLedger";
 import ImagePreview from "./ImagePreview";
 import Avatar from "./Avatar";
@@ -231,14 +233,15 @@ function CategorySelect({
       onChange={(e) => setCategory(e.target.value)}
     >
       <option value="">Semua kategori</option>
-      <option value="good">Telur bagus</option>
-      <option value="cracked">Telur bentes</option>
+      <optgroup label="Telur Bagus"><option value="skm">Telur SKM</option><option value="skm_new">Telur SKM Baru</option></optgroup>
+      <option value="cracked">Telur Bentes</option>
+      <option value="good">Telur bagus (belum dibedakan)</option>
     </select>
   );
 }
 function CategoryPill({ category }: { category: Category }) {
   return (
-    <Pill tone={category === "good" ? "success" : "warning"}>
+    <Pill tone={category === "cracked" ? "warning" : category === "good" ? "neutral" : "success"}>
       {categoryLabel(category)}
     </Pill>
   );
@@ -340,8 +343,7 @@ function ProductionPage({ open }: { open: OpenForm }) {
         b.date.localeCompare(a.date) ||
         b.created_at.localeCompare(a.created_at),
     );
-  const good = rows.filter((p) => p.category === "good");
-  const cracked = rows.filter((p) => p.category === "cracked");
+  const shownTypes = ALL_EGG_TYPES.filter(type => type !== "good" || rows.some(row => row.category === type));
   const opened = state.productions.find((p) => p.id === detail);
   return (
     <>
@@ -366,20 +368,11 @@ function ProductionPage({ open }: { open: OpenForm }) {
             note: `${number(rows.reduce((s, p) => s + p.eggs, 0))} butir · sesuai pilihan`,
             icon: <Egg size={22} />,
           },
-          {
-            label: "Telur bagus",
-            value: `${number(good.reduce((s, p) => s + p.kg, 0))} kg`,
-            note: `${number(good.reduce((s, p) => s + p.eggs, 0))} butir`,
-            icon: <ShieldCheck size={22} />,
-            tone: "blue",
-          },
-          {
-            label: "Telur bentes",
-            value: `${number(cracked.reduce((s, p) => s + p.kg, 0))} kg`,
-            note: `${number(cracked.reduce((s, p) => s + p.eggs, 0))} butir`,
-            icon: <Egg size={22} />,
-            tone: "orange",
-          },
+          ...shownTypes.map(type => {
+            const selected = rows.filter(row => row.category === type);
+            return { label: categoryLabel(type), value: `${number(selected.reduce((s, p) => s + p.kg, 0))} kg`,
+              note: `${number(selected.reduce((s, p) => s + p.eggs, 0))} butir`, icon: <Egg size={22} />, tone: type === "cracked" ? "orange" : "green" };
+          }),
         ]}
       />
       <section className="panel">
@@ -743,8 +736,7 @@ function StockPage({ open }: { open: OpenForm }) {
   const [returned, setReturned] = useState<Pickup | null>(null);
   const [selected, setSelected] = useState<SelectedRecord | null>(null);
   const action = useAction();
-  const good = eggStock(state, "good"),
-    cracked = eggStock(state, "cracked");
+  const stocks = ALL_EGG_TYPES.map(type => ({ type, quantity: eggStock(state, type) })).filter(({type, quantity}) => type !== "good" || quantity.kg > 0 || quantity.eggs > 0 || quantity.trays > 0);
   const carried = state.pickups.reduce(
     (sum, p) => sum + pickupBalance(state, p).kg,
     0,
@@ -769,6 +761,8 @@ function StockPage({ open }: { open: OpenForm }) {
     sale: "Penjualan dari gudang",
     correction: "Koreksi",
     reconcile: "Penyesuaian gudang",
+    classify_out: "Pembagian stok lama keluar",
+    classify_in: "Pembagian stok lama masuk",
   };
   const movements = (
     state.stock_movements
@@ -847,19 +841,8 @@ function StockPage({ open }: { open: OpenForm }) {
       {action.feedback}
       <Stats
         items={[
-          {
-            label: "Stok telur bagus",
-            value: `${formatNumber(good.kg, 3)} kg`,
-            note: `${number(good.eggs)} butir · ${number(good.trays)} krat`,
-            icon: <Egg size={22} />,
-          },
-          {
-            label: "Stok telur bentes",
-            value: `${formatNumber(cracked.kg, 3)} kg`,
-            note: `${number(cracked.eggs)} butir · ${number(cracked.trays)} krat`,
-            icon: <Egg size={22} />,
-            tone: "orange",
-          },
+          ...stocks.map(({type, quantity}) => ({ label: categoryLabel(type), value: `${number(quantity.kg)} kg`,
+            note: `${number(quantity.eggs)} butir · ${number(quantity.trays)} krat`, icon: <Egg size={22} />, tone: type === "cracked" ? "orange" : "green" })),
           {
             label: "Sedang dibawa",
             value: `${number(carried)} kg`,
@@ -873,6 +856,7 @@ function StockPage({ open }: { open: OpenForm }) {
         ]}
       />
       <StockChecks />
+      <StockClassification />
       <StockCount />
       <PendingHarvest />
       <section className="panel">
@@ -1425,135 +1409,6 @@ function FeedPage({ open }: { open: OpenForm }) {
     </>
   );
 }
-function PricesPage({ open }: { open: OpenForm }) {
-  const { state, user } = useFarm();
-  const price = activePrice(state);
-  const now = Date.now();
-  const rows = [...state.prices].sort(
-    (a, b) =>
-      new Date(b.effective_at).getTime() - new Date(a.effective_at).getTime(),
-  );
-  return (
-    <>
-      <Heading
-        eyebrow="HARGA JUAL HARIAN"
-        title="Harga telur"
-        description="Satu acuan harga untuk seluruh tim penjualan."
-      >
-        {user?.role === "admin" && (
-          <AddButton onClick={() => open("price")}>Perbarui harga</AddButton>
-        )}
-      </Heading>
-      <div className="price-cards">
-        <div className="price-feature good">
-          <div className="d-flex justify-content-between align-items-start">
-            <span className="icon-box">
-              <Egg size={25} />
-            </span>
-            <Pill tone="success">Harga aktif</Pill>
-          </div>
-          <span>Telur bagus</span>
-          <h2>
-            {price ? money(price.good_price) : "Belum diatur"}
-            <small>/ kg</small>
-          </h2>
-          <p>
-            {price
-              ? `Berlaku sejak ${dateLabel(price.effective_at, true)}`
-              : "Hubungi atasan untuk menetapkan harga."}
-          </p>
-        </div>
-        <div className="price-feature cracked">
-          <div className="d-flex justify-content-between align-items-start">
-            <span className="icon-box orange">
-              <Egg size={25} />
-            </span>
-            <Pill tone="warning">Harga aktif</Pill>
-          </div>
-          <span>Telur bentes</span>
-          <h2>
-            {price
-              ? price.cracked_price === 0
-                ? "Gratis"
-                : money(price.cracked_price)
-              : "Belum diatur"}
-            <small>/ kg</small>
-          </h2>
-          <p>
-            {price
-              ? `Berlaku sejak ${dateLabel(price.effective_at, true)}`
-              : "Hubungi atasan untuk menetapkan harga."}
-          </p>
-        </div>
-      </div>
-      <section className="panel">
-        <div className="panel-header">
-          <div>
-            <h2>Riwayat perubahan harga</h2>
-            <p>Harga terjadwal aktif otomatis sesuai tanggal dan waktu WIB.</p>
-          </div>
-          <span className="icon-box">
-            <History size={19} />
-          </span>
-        </div>
-        {rows.length ? (
-          <div className="table-responsive">
-            <table className="table farm-table">
-              <thead>
-                <tr>
-                  <th>Mulai berlaku</th>
-                  <th className="text-end">Telur bagus / kg</th>
-                  <th className="text-end">Telur bentes / kg</th>
-                  <th>Ditetapkan oleh</th>
-                  <th>Status</th>
-                </tr>
-              </thead>
-              <tbody>
-                {rows.map((p) => (
-                  <tr key={p.id}>
-                    <td>{dateLabel(p.effective_at, true)}</td>
-                    <td className="text-end fw-semibold">
-                      {money(p.good_price)}
-                    </td>
-                    <td className="text-end fw-semibold">
-                      {p.cracked_price === 0
-                        ? "Gratis"
-                        : money(p.cracked_price)}
-                    </td>
-                    <td>
-                      {state.users.find((u) => u.id === p.created_by)?.name ||
-                        "Admin"}
-                    </td>
-                    <td>
-                      <Pill
-                        tone={
-                          price?.id === p.id
-                            ? "success"
-                            : new Date(p.effective_at).getTime() > now
-                              ? "blue"
-                              : "neutral"
-                        }
-                      >
-                        {price?.id === p.id
-                          ? "Sedang berlaku"
-                          : new Date(p.effective_at).getTime() > now
-                            ? "Terjadwal"
-                            : "Riwayat"}
-                      </Pill>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        ) : (
-          <Empty title="Belum ada riwayat harga" />
-        )}
-        <TableEnd count={rows.length} label="ketentuan harga" />
-      </section>
-    </>
-  );
-}
 function EmployeesPage({ open }: { open: OpenForm }) {
   const { state, user, command } = useFarm();
   const [search, setSearch] = useState("");
@@ -1950,6 +1805,7 @@ function EmployeesPage({ open }: { open: OpenForm }) {
 const actionLabels: Record<string, string> = {
   "production.create": "Produksi dicatat",
   "stock.reconcile": "Penyesuaian stok gudang",
+  "stock.classify": "Pembagian stok telur bagus lama",
   "pickup.create": "Pengambilan telur",
   "pickup.return": "Pengembalian telur",
   "sale.create": "Penjualan dicatat",
@@ -2258,7 +2114,7 @@ export function Modules({ page }: { page: string }) {
       ) : page === "feed" ? (
         <FeedPage open={setKind} />
       ) : page === "prices" ? (
-        <PricesPage open={setKind} />
+        <Prices open={setKind} />
       ) : page === "employees" || page === "users" ? (
         <EmployeesPage open={setKind} />
       ) : page === "activity" ? (

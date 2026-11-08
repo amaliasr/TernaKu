@@ -22,7 +22,9 @@ Karyawan yang ditunjuk dapat membaca panen, penjualan, dan foto dokumentasi kary
 - `stock_checks`: semua pemeriksaan bagi admin; hanya milik sendiri bagi karyawan.
 - `stock_check_assignments`: riwayat penunjukan/pencabutan; semua bagi admin, milik sendiri bagi karyawan. Setiap peristiwa memuat `id`, `user_id`, `assigned`, `created_at`, dan `created_by`. Riwayat ini dipertahankan ketika akun dihapus agar laporan dapat menampilkan hari yang belum diperiksa.
 
-`warehouse` dan `harvest` memakai bentuk `{good:{eggs,kg,trays},cracked:{eggs,kg,trays}}`. `harvest` menjumlahkan semua panen bertanggal hari tersebut, termasuk panen yang belum masuk gudang. Butir dan krat bilangan bulat nonnegatif; kilogram maksimal tiga desimal. Butir dan berat harus sama-sama nol atau sama-sama terisi.
+Context dan catatan baru memakai `schema_version: 2`. `warehouse` dan `harvest` memiliki empat kunci `skm`, `skm_new`, `cracked`, dan `good`, masing-masing `{eggs,kg,trays}`. `good` hanya telur bagus lama yang belum dipilah, bukan total kelompok bagus. `harvest` menjumlahkan semua panen bertanggal hari tersebut, termasuk panen yang belum masuk gudang. Butir dan krat bilangan bulat nonnegatif; kilogram maksimal tiga desimal. Butir dan berat harus sama-sama nol atau sama-sama terisi.
+
+Pemeriksaan lama tanpa versi tetap menyimpan hitungan aslinya. Persetujuan atas pemeriksaan lama yang pending menghasilkan 409 dan meminta pemeriksaan baru; admin masih dapat menolak dengan alasan. Pemeriksaan versi 2 dapat menggantikan konfirmasi lama pada hari yang sama, sambil mempertahankan hitungan serta hasil tinjauan sebelumnya. Jalankan [migrasi jenis telur](EGG-TYPES.md) sebelum mengaktifkan fitur ini.
 
 ## Mengirim hasil hitungan
 
@@ -33,6 +35,7 @@ Gunakan `POST /commands`, dengan `request_id` tetap untuk mengulang simpan yang 
   "action": "stock_check.submit",
   "request_id": "pemeriksaan-perangkat-001",
   "payload": {
+    "schema_version": 2,
     "date": "2026-11-08",
     "expected_snapshot": "snapshot-dari-context-terbaru",
     "status": "confirmed"
@@ -40,18 +43,18 @@ Gunakan `POST /commands`, dengan `request_id` tetap untuk mengulang simpan yang 
 }
 ```
 
-`confirmed` berarti hasil hitung sama dengan catatan dan tidak menerima kolom actual. Untuk selisih, kirim `status: "pending"`, `warehouse_actual`, `harvest_actual`, serta `reason` minimal lima karakter. Semua kategori dan tiga ukuran harus diisi, termasuk angka nol. Jika semua angka sama, pilih konfirmasi. Tanggal wajib hari ini WIB. Snapshot yang berubah atau pergantian hari menghasilkan HTTP 409; muat ulang dan hitung kembali.
+`schema_version: 2` wajib pada setiap pengiriman; versi hilang/salah menghasilkan 409 agar aplikasi lama tidak mengonfirmasi jenis telur yang belum ditampilkannya. `confirmed` berarti hasil hitung sama dengan catatan dan tidak menerima kolom actual. Untuk selisih, kirim `status: "pending"`, `warehouse_actual`, `harvest_actual`, serta `reason` minimal lima karakter. Semua kategori dan tiga ukuran harus diisi, termasuk angka nol. Jika semua angka sama, pilih konfirmasi. Tanggal wajib hari ini WIB. Snapshot yang berubah atau pergantian hari menghasilkan HTTP 409; muat ulang dan hitung kembali.
 
 Pemeriksaan tidak mengubah panen atau gudang saat dikirim. Hasil yang sudah `confirmed` atau `approved` tidak dapat diganti pada hari yang sama. Pengiriman ulang atas hasil `pending` atau `rejected` membuat baris baru; sebelumnya menjadi `superseded` dengan `replaced_by`, sementara hitungan, alasan dan hasil peninjauan sebelumnya tetap tersimpan.
 
 ## Meninjau selisih
 
-Admin menggunakan `stock_check.review` dengan `{id, decision: "approve"|"reject", reason?}`. Penolakan wajib disertai alasan minimal lima karakter.
+Admin menggunakan `stock_check.review` dengan `{id, decision: "approve"|"reject", reason?}`. Persetujuan wajib menyertakan `schema_version: 2` agar aplikasi lama tidak menyetujui jenis yang belum ditampilkan; versi hilang/salah menghasilkan 409. Penolakan tetap menerima payload tanpa versi dan wajib disertai alasan minimal lima karakter.
 
 Sebelum persetujuan, admin mengoreksi **masing-masing catatan panen yang keliru** melalui `correction.apply`. Total panen tanggal pemeriksaan harus tepat sama dengan `harvest_actual`. Jika total sudah sama, koreksi panen tidak diperlukan. Panen salah input dapat dinolkan oleh admin dengan `eggs`, `kg`, dan `trays` semuanya nol; baris dan riwayat koreksinya tetap disimpan. Pembuatan panen baru dan koreksi langsung karyawan tetap memerlukan jumlah positif.
 
 Sesudah pemeriksaan dikirim, hanya koreksi admin terhadap catatan panen yang sudah ada dalam snapshot yang boleh terjadi sebelum persetujuan. Penjualan (termasuk dari bawaan pribadi), panen baru (termasuk tanggal mundur), pengambilan, pengembalian, penyesuaian stok, atau koreksi lain membuat hitungan lama tidak berlaku dan menghasilkan HTTP 409. Minta pemeriksa menghitung ulang. Jika hari sudah berganti, tolak pemeriksaan lama dan buat pemeriksaan hari baru. Admin masih bisa menyetujui pemeriksaan hari sebelumnya apabila tidak ada perubahan yang membuatnya kedaluwarsa dan total panen cocok.
 
-Persetujuan menghitung selisih terhadap **stok setelah koreksi panen**, lalu menyamakan gudang dengan hitungan fisik. Ini mencegah selisih panen dihitung dua kali. Kedua kategori mendapat mutasi `reconcile` dengan referensi ID pemeriksaan. Mutex perintah, transaksi, dan status pending mencegah persetujuan bersamaan atau pengulangan tanpa sengaja. Persetujuan satu pemeriksaan juga membuat hitungan paralel dari pemeriksa lain perlu diperbarui.
+Persetujuan menghitung selisih terhadap **stok setelah koreksi panen**, lalu menyamakan gudang dengan hitungan fisik. Ini mencegah selisih panen dihitung dua kali. Setiap jenis mendapat mutasi `reconcile` dengan referensi ID pemeriksaan. Mutex perintah, transaksi, dan status pending mencegah persetujuan bersamaan atau pengulangan tanpa sengaja. Persetujuan satu pemeriksaan juga membuat hitungan paralel dari pemeriksa lain perlu diperbarui. Pemilahan stok lama melalui `stock.classify` juga membuat pemeriksaan sebelumnya perlu dihitung ulang.
 
 Status yang tersimpan: `confirmed`, `pending`, `approved`, `rejected`, atau `superseded`. Catatan memuat snapshot, daftar ID panen, hitungan sistem dan fisik, waktu serta pengguna pengirim/peninjau, alasan, dan urutan terakhir perubahan stok. Tidak ada produksi asli yang diganti secara diam-diam oleh pemeriksaan.

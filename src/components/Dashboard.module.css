@@ -8,3 +8,37 @@
   white-space: normal;
   justify-content: center;
 }
+
+.pricePanel { display: flex !important; flex-direction: column; }
+.priceValues { padding: 0 20px 16px; flex: 1; }
+.groupLabel { color: var(--muted); font-size: calc(11px * var(--font-scale, 1)); }
+.priceRow { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 8px 0; }
+.priceRow > span { display: flex; align-items: center; gap: 8px; font-size: calc(13px * var(--font-scale, 1)); }
+.priceRow strong { font-size: calc(17px * var(--font-scale, 1)); text-align: right; }
+.priceRow small { margin-left: 4px; color: var(--muted); font-size: calc(10px * var(--font-scale, 1)); font-weight: 400; }
+.bentes { border-top: 1px solid var(--border); margin-top: 6px; padding-top: 12px; }
+.harvestTypes { padding: 18px 20px; margin-bottom: 22px; }
+.harvestTypes h3 { font-size: calc(15px * var(--font-scale, 1)); margin: 0 0 14px; }
+.harvestRows { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; }
+.harvestRows > div { display: grid; gap: 8px; }
+.harvestRows span { display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: calc(13px * var(--font-scale, 1)); }
+.harvestRows strong { font-size: calc(15px * var(--font-scale, 1)); }
+.harvestRows small { font-size: calc(12px * var(--font-scale, 1)); font-weight: 400; }
+.harvestTypes p, .stockSubtotal { margin: 14px 0 0; padding-top: 12px; border-top: 1px solid var(--border); color: var(--muted); font-size: calc(12px * var(--font-scale, 1)); }
+.stockTypes :global(.stock-category) { font-size: calc(12px * var(--font-scale, 1)); }
+.stockTypes strong { flex-shrink: 0; font-size: calc(13px * var(--font-scale, 1)); }
+.stockTypes :global(.stock-percent) { font-size: calc(10px * var(--font-scale, 1)); }
+.stockPanel { min-width: 0; }
+.stockPanel .stockTypes > div { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; }
+@media (max-width: 700px) {
+  .stockPanel { display: block; }
+  .stockPanel :global(.stock-donut-wrap) { margin: 12px 0 24px; }
+  .stockPanel .stockTypes { margin: 12px 20px 20px; }
+  .stockPanel > :global(.btn) { margin: 0 20px; width: calc(100% - 40px) !important; min-height: 44px; font-size: calc(12px * var(--font-scale, 1)); }
+}
+@media (max-width: 600px) {
+  .harvestRows { grid-template-columns: 1fr; gap: 12px; }
+  .harvestRows > div { grid-template-columns: minmax(0, 1fr) auto; align-items: center; }
+  .harvestRows strong { text-align: right; font-size: calc(13px * var(--font-scale, 1)); }
+  .harvestRows small { display: block; margin-top: 4px; }
+}

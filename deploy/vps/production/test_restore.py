@@ -109,6 +109,22 @@ class AccountRestoreTests(unittest.TestCase):
         with self.assertRaises(RuntimeError):
             restore.transfer("disposable", "fixture", 48, ("compact_data",))
 
+    def test_egg_stock_layout_is_complete_legacy_or_current(self):
+        restore.validate_egg_stock_keys(["egg:good", "egg:cracked"])
+        restore.validate_egg_stock_keys(["egg:good", "egg:cracked", "egg:skm", "egg:skm_new"])
+        for keys in [[], ["egg:good"], ["egg:good", "egg:cracked", "egg:skm"],
+                     ["egg:good", "egg:cracked", "egg:unknown"], ["egg:good", "egg:cracked", "egg:good"]]:
+            with self.assertRaises(RuntimeError):
+                restore.validate_egg_stock_keys(keys)
+
+    def test_transfer_preserves_stock_rows_and_quantities_without_reclassification(self):
+        with patch.object(restore, "root_sql", side_effect=["", "", "48"]) as sql:
+            restore.transfer("disposable", "fixture", 48)
+        statement = sql.call_args_list[0].args[1]
+        self.assertIn("INSERT INTO ternaku.stock (`stock_key`,`eggs`,`kg`,`trays`) SELECT", statement)
+        for column in ("stock_key", "eggs", "kg", "trays"):
+            self.assertIn(f"CAST(d.`{column}` AS BINARY) <=> CAST(s.`{column}` AS BINARY)", statement)
+
 
 if __name__ == "__main__":
     unittest.main()

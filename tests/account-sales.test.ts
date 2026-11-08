@@ -16,7 +16,7 @@ function fixture(): State {
     { id: "employee", name: "Sari", email: "sari@example.test", role: "employee", active: true, target: 1000, registration_status: "approved", photo: PHOTO },
     { id: "pending", name: "Baru", email: "baru@example.test", role: "employee", active: false, target: 0, registration_status: "pending" },
   ];
-  state.prices = [{ id: "price", good_price: 28000, cracked_price: 18000, effective_at: `${DATE}T00:00:00+07:00`, created_at: NOW.toISOString(), created_by: "admin" }];
+  state.prices = [{ id: "price", skm_new_price: 29000, skm_price: 28000, cracked_price: 18000, effective_at: `${DATE}T00:00:00+07:00`, created_at: NOW.toISOString(), created_by: "admin" }];
   return state;
 }
 
@@ -73,7 +73,7 @@ test("editing pending employee contact details does not approve or activate the 
 });
 
 function saleFixture(actor: string, free: boolean): { state: State; payload: CommandPayload } {
-  const category = free ? "cracked" : "good";
+  const category = free ? "cracked" : "skm";
   let state = fixture();
   if (free && actor === "employee") state.prices[0].cracked_price = 0;
   state = cmd(state, actor, "production.create", { date: DATE, category, eggs: 100, kg: 6, trays: 1 });

@@ -44,7 +44,7 @@ try {
     $bound=$push->subscribe('push_employee',$tokens['push_employee'],$subscription);
     checkPush($push->subscribe('push_employee',$tokens['push_employee'],$subscription)['binding_id']===$bound['binding_id'] && countPush('push_subscription')===1,'repeated subscribe preserves a single binding');
     $push->unsubscribe('push_other',['endpoint'=>$subscription['endpoint']]); checkPush(countPush('push_subscription')===1,'another user cannot remove a subscription');
-    $price=['good_price'=>28000,'cracked_price'=>0,'effective_at'=>date('c',time()+86400)];
+    $price=['skm_price'=>28000,'skm_new_price'=>35000,'cracked_price'=>0,'effective_at'=>date('c',time()+86400)];
     $state=$farm->command('price.create',$price,'push-price-uuid-1');
     checkPush(countPush('push_job')===1,'price save atomically adds an outbox job');
     $farm->command('price.create',$price,'push-price-uuid-1'); checkPush(countPush('push_job')===1,'same command UUID never enqueues twice');
@@ -53,9 +53,10 @@ try {
     $public=json_encode($farm->bootstrap()); checkPush(!str_contains($public,$subscription['endpoint']) && !str_contains($public,$browserKeys['publicKey']) && !str_contains($public,'push_job'),'bootstrap never leaks endpoints, encryption keys, or queue');
     $result=$push->drain(); checkPush($result['sent']===2 && count($deliveries)===2 && $deliveries[0]['tag']!==$deliveries[1]['tag'],'different price IDs produce distinct notifications');
     checkPush(str_contains($deliveries[0]['body'],'Gratis') && str_contains($deliveries[0]['body'],date('d/m/Y',time()+86400)),'free bentes and future effective date are explicit');
+    checkPush(str_contains($deliveries[0]['body'],'Telur SKM Rp28.000/kg') && str_contains($deliveries[0]['body'],'Telur SKM Baru Rp35.000/kg') && $deliveries[0]['skm_price']===28000 && $deliveries[0]['skm_new_price']===35000,'push snapshot names both independently priced SKM types');
     checkPush($push->drain()['sent']===0,'delivered jobs are never resent by the next worker');
     $harvest=['date'=>date('Y-m-d'),'notes'=>'RAHASIA lokasi','items'=>[
-        ['category'=>'good','eggs'=>30,'kg'=>1.8],['category'=>'cracked','eggs'=>10,'kg'=>0.6],
+        ['category'=>'skm','eggs'=>30,'kg'=>1.8],['category'=>'cracked','eggs'=>10,'kg'=>0.6],
     ]];
     $state=$farm->command('production.create',$harvest,'activity-combined-1');
     $notices=array_values(array_filter($state['notifications'],fn($n)=>($n['type']??'')==='farm.activity'));
@@ -75,17 +76,17 @@ try {
     $pending=$farm->command('production.create',$harvest,'activity-pending');
     $unreceived=array_values(array_filter($pending['productions'],fn($p)=>$p['stocked_at']===null));
     $farm->command('production.receive',['id'=>$unreceived[0]['id']],'activity-receive');
-    $pickupState=$farm->command('pickup.create',['date'=>date('Y-m-d'),'category'=>'good','eggs'=>10,'kg'=>0.6,'area'=>'RAHASIA area'],'activity-pickup');
+    $pickupState=$farm->command('pickup.create',['date'=>date('Y-m-d'),'category'=>'skm','eggs'=>10,'kg'=>0.6,'area'=>'RAHASIA area'],'activity-pickup');
     $farm->command('pickup.return',['id'=>$pickupState['pickups'][0]['id'],'eggs'=>3,'kg'=>0.18,'notes'=>'RAHASIA retur'],'activity-return');
     $farm->command('price.create',array_replace($price,['effective_at'=>date('c',time()-60)]),'activity-current-price');
     $proof='data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aC9sAAAAASUVORK5CYII=';
     $sale=['date'=>date('Y-m-d'),'stock_source'=>'warehouse','customer'=>'RAHASIA pelanggan','photo'=>$proof,'notes'=>'RAHASIA transaksi',
-        'items'=>[['category'=>'good','kg'=>0.06],['category'=>'cracked','kg'=>0.12]],'payment_method'=>'cash','paid'=>0];
+        'items'=>[['category'=>'skm','kg'=>0.06],['category'=>'cracked','kg'=>0.12]],'payment_method'=>'cash','paid'=>0];
     $sold=$farm->command('sale.create',$sale,'activity-sale');
-    $balance=$sold['inventory']['good']; $added=$balance; $added['eggs']+=10; $added['kg']+=0.6;
-    $addition=['method'=>'add','reason'=>'RAHASIA pergudangan','items'=>[['category'=>'good','expected'=>$balance,'physical'=>$added]]];
+    $balance=$sold['inventory']['skm']; $added=$balance; $added['eggs']+=10; $added['kg']+=0.6;
+    $addition=['method'=>'add','reason'=>'RAHASIA pergudangan','items'=>[['category'=>'skm','expected'=>$balance,'physical'=>$added]]];
     $farm->command('stock.reconcile',$addition,'activity-add');
-    $farm->command('stock.reconcile',['method'=>'count','reason'=>'RAHASIA hitung ulang','items'=>[['category'=>'good','expected'=>$added,'physical'=>$added]]],'activity-count');
+    $farm->command('stock.reconcile',['method'=>'count','reason'=>'RAHASIA hitung ulang','items'=>[['category'=>'skm','expected'=>$added,'physical'=>$added]]],'activity-count');
     $saleId=$sold['command_result']['record_id'];
     $farm->command('correction.apply',['entity'=>'sale','id'=>$saleId,'reason'=>'RAHASIA koreksi','changes'=>['notes'=>'RAHASIA catatan']],'activity-correct');
     $deliveryStart=count($deliveries);

@@ -64,9 +64,9 @@ cmd('user.delete',['id'=>$managerId,'reason'=>'Admin cannot be deleted'],$a,422)
 cmd('user.delete',['id'=>$archive['id'],'reason'=>'No permission'],$archiveToken,403);
 cmd('user.delete',['id'=>$archive['id'],'reason'=>''],$a,422);
 cmd('settings.update',['harvest_auto_stock'=>true],$a);
-$history=cmd('production.create',['date'=>date('Y-m-d'),'barn_id'=>$employeeState['barns'][0]['id'],'category'=>'good','eggs'=>10,'kg'=>0.6,'trays'=>0],$archiveToken);
+$history=cmd('production.create',['date'=>date('Y-m-d'),'barn_id'=>$employeeState['barns'][0]['id'],'category'=>'skm','eggs'=>10,'kg'=>0.6,'trays'=>0],$archiveToken);
 $historyId=$history['productions'][0]['id'];
-$picked=cmd('pickup.create',['date'=>date('Y-m-d'),'category'=>'good','eggs'=>10,'kg'=>0.6,'trays'=>0,'area'=>'Before account deletion'],$archiveToken);
+$picked=cmd('pickup.create',['date'=>date('Y-m-d'),'category'=>'skm','eggs'=>10,'kg'=>0.6,'trays'=>0,'area'=>'Before account deletion'],$archiveToken);
 $held=first($picked,'pickups',fn($p)=>$p['user_id']===$archive['id']);
 cmd('user.delete',['id'=>$archive['id'],'reason'=>'Still carrying eggs'],$a,422);
 cmd('pickup.return',['id'=>$held['id'],'eggs'=>10,'kg'=>0.6,'trays'=>0],$archiveToken);

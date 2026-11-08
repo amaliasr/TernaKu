@@ -1,7 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { emptyState, executeCommand, eggStock, today, visibleState } from "../src/lib/domain";
+import { emptyState, executeCommand, allEggStock, eggStock, today, visibleState } from "../src/lib/domain";
 import { demoStockCheckContext, harvestCounts } from "../src/lib/stock-checks";
+import { emptyEggQuantities } from "../src/lib/egg-types";
 import type { State, User } from "../src/lib/types";
 
 const day = today(), now = new Date(`${day}T10:00:00+07:00`);
@@ -10,12 +11,12 @@ const cmd = (state: State, actor: string, action: string, payload: Record<string
 function fixture() {
   let state: State = { ...emptyState(), users: [user("admin", "admin"), user("checker", "employee"), user("worker", "employee")] };
   state = cmd(state, "admin", "user.update", { id: "checker", can_check_stock: true });
-  return cmd(state, "worker", "production.create", { date: day, category: "good", eggs: 100, kg: 10, trays: 1 });
+  return cmd(state, "worker", "production.create", { date: day, category: "skm", eggs: 100, kg: 10, trays: 1 });
 }
-const context = (state: State) => demoStockCheckContext(state, day, { good: eggStock(state, "good"), cracked: eggStock(state, "cracked") });
+const context = (state: State) => demoStockCheckContext(state, day, allEggStock(state));
 function submit(state: State, eggs = 105, kg = 10.5, harvestEggs = 110, harvestKg = 11) {
   const baseline = context(state), zero = { eggs: 0, kg: 0, trays: 0 };
-  return cmd(state, "checker", "stock_check.submit", { date: day, expected_snapshot: baseline.snapshot, status: "pending", warehouse_actual: { good: { eggs, kg, trays: 1 }, cracked: zero }, harvest_actual: { good: { eggs: harvestEggs, kg: harvestKg, trays: 1 }, cracked: zero }, reason: "Hasil hitung ulang di gudang" });
+  return cmd(state, "checker", "stock_check.submit", { schema_version: 2, date: day, expected_snapshot: baseline.snapshot, status: "pending", warehouse_actual: { ...emptyEggQuantities(), skm: { eggs, kg, trays: 1 }, cracked: zero }, harvest_actual: { ...emptyEggQuantities(), skm: { eggs: harvestEggs, kg: harvestKg, trays: 1 }, cracked: zero }, reason: "Hasil hitung ulang di gudang" });
 }
 test("only admin appoints eligible employees, and appointment history survives revocation", () => {
   const state = fixture();
@@ -33,25 +34,25 @@ test("assigned readers see team records with redacted identities but cannot edit
   assert.equal(scoped.users.find(u => u.id === worker.id)?.email, "");
   assert.equal(visibleState(state, { ...checker, can_check_stock: false }).productions.length, 0);
   assert.throws(() => cmd(state, "checker", "correction.apply", { entity: "production", id: state.productions[0].id, reason: "Saya memeriksa panen", changes: { eggs: 110, kg: 11 } }), /akses/);
-  assert.throws(() => cmd(state, "worker", "stock_check.submit", { date: day, expected_snapshot: context(state).snapshot, status: "confirmed" }), /petugas/);
+  assert.throws(() => cmd(state, "worker", "stock_check.submit", { schema_version: 2, date: day, expected_snapshot: context(state).snapshot, status: "confirmed" }), /petugas/);
 });
 test("approval requires corrected individual harvests and adjusts warehouse only once", () => {
   let state = submit(fixture());
   const id = state.stock_checks![0].id;
-  assert.throws(() => cmd(state, "admin", "stock_check.review", { id, decision: "approve" }), /Perbaiki catatan panen/);
+  assert.throws(() => cmd(state, "admin", "stock_check.review", { schema_version: 2, id, decision: "approve" }), /Perbaiki catatan panen/);
   state = cmd(state, "admin", "correction.apply", { entity: "production", id: state.productions[0].id, reason: "Disesuaikan dengan hasil pemeriksaan", changes: { eggs: 110, kg: 11, trays: 1 } });
-  state = cmd(state, "admin", "stock_check.review", { id, decision: "approve" });
-  assert.deepEqual(eggStock(state, "good"), { eggs: 105, kg: 10.5, trays: 1 });
+  state = cmd(state, "admin", "stock_check.review", { schema_version: 2, id, decision: "approve" });
+  assert.deepEqual(eggStock(state, "skm"), { eggs: 105, kg: 10.5, trays: 1 });
   assert.equal(state.productions[0].eggs, 110);
   assert.equal(state.stock_checks![0].status, "approved");
-  assert.throws(() => cmd(state, "admin", "stock_check.review", { id, decision: "approve" }), /menunggu/);
+  assert.throws(() => cmd(state, "admin", "stock_check.review", { schema_version: 2, id, decision: "approve" }), /menunggu/);
 });
 test("new business movements and employee corrections cannot be approved against an old count", () => {
   const state = submit(fixture(), 105, 10.5, 100, 10), id = state.stock_checks![0].id;
-  const changed = cmd(state, "worker", "production.create", { date: day, category: "good", eggs: 10, kg: 1, trays: 0 });
-  assert.throws(() => cmd(changed, "admin", "stock_check.review", { id, decision: "approve" }), /pergerakan stok baru/);
+  const changed = cmd(state, "worker", "production.create", { date: day, category: "skm", eggs: 10, kg: 1, trays: 0 });
+  assert.throws(() => cmd(changed, "admin", "stock_check.review", { schema_version: 2, id, decision: "approve" }), /pergerakan stok baru/);
   const employeeEdit = cmd(state, "worker", "correction.apply", { entity: "production", id: state.productions[0].id, reason: "Karyawan mengoreksi sendiri", changes: { eggs: 105, kg: 10.5 } });
-  assert.throws(() => cmd(employeeEdit, "admin", "stock_check.review", { id, decision: "approve" }), /pergerakan stok baru/);
+  assert.throws(() => cmd(employeeEdit, "admin", "stock_check.review", { schema_version: 2, id, decision: "approve" }), /pergerakan stok baru/);
 });
 test("rechecks retain superseded attempts and reject stale or wrong-day submissions", () => {
   let state = submit(fixture());
@@ -60,12 +61,12 @@ test("rechecks retain superseded attempts and reject stale or wrong-day submissi
   assert.equal(state.stock_checks!.length, 2);
   assert.equal(state.stock_checks![0].status, "superseded");
   assert.equal(state.stock_checks![0].replaced_by, state.stock_checks![1].id);
-  assert.throws(() => cmd(state, "admin", "stock_check.review", { id: previous, decision: "approve" }), /menunggu/);
-  assert.throws(() => cmd(state, "checker", "stock_check.submit", { date: "2000-01-01", expected_snapshot: context(state).snapshot, status: "confirmed" }), /hari ini/);
-  assert.throws(() => cmd(state, "checker", "stock_check.submit", { date: day, expected_snapshot: "stale", status: "confirmed" }), /sudah berubah/);
-  const confirmed = cmd(fixture(), "checker", "stock_check.submit", { date: day, expected_snapshot: context(fixture()).snapshot, status: "confirmed" });
+  assert.throws(() => cmd(state, "admin", "stock_check.review", { schema_version: 2, id: previous, decision: "approve" }), /menunggu/);
+  assert.throws(() => cmd(state, "checker", "stock_check.submit", { schema_version: 2, date: "2000-01-01", expected_snapshot: context(state).snapshot, status: "confirmed" }), /hari ini/);
+  assert.throws(() => cmd(state, "checker", "stock_check.submit", { schema_version: 2, date: day, expected_snapshot: "stale", status: "confirmed" }), /sudah berubah/);
+  const confirmed = cmd(fixture(), "checker", "stock_check.submit", { schema_version: 2, date: day, expected_snapshot: context(fixture()).snapshot, status: "confirmed" });
   assert.equal(confirmed.stock_checks![0].status, "confirmed");
-  assert.throws(() => cmd(confirmed, "checker", "stock_check.submit", { date: day, expected_snapshot: context(confirmed).snapshot, status: "confirmed" }), /sudah selesai/);
+  assert.throws(() => cmd(confirmed, "checker", "stock_check.submit", { schema_version: 2, date: day, expected_snapshot: context(confirmed).snapshot, status: "confirmed" }), /sudah selesai/);
 });
 test("an admin can void an erroneous harvest with zero quantities while retaining its audit", () => {
   const original = fixture(), production = original.productions[0];

@@ -1,6 +1,7 @@
 import { eggStock, number, pickupBalance } from "./domain";
 import { resolveSaleEggs, saleEggCount } from "./sale-eggs";
 import type { Category, Quantity, Sale, State } from "./types";
+import { ALL_EGG_TYPES } from "./egg-types";
 
 export type SaleStockSource = NonNullable<Sale["stock_source"]>;
 type LineStock = { pickup_id: string; category?: Category };
@@ -13,7 +14,7 @@ export function saleStockKey(line: LineStock, source: SaleStockSource) {
 }
 
 export function warehouseSaleOptions(state: State) {
-  return (["good", "cracked"] as const)
+  return ALL_EGG_TYPES
     .map(category => ({ id: category, category, balance: eggStock(state, category), area: "Gudang", date: "" }))
     .filter(option => option.balance.eggs > 0 && option.balance.kg > 0);
 }

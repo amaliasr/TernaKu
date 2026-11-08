@@ -211,7 +211,7 @@ TernaKu menggunakan hasil static export Next.js. Hosting frontend cukup melayani
 Setelah website terbuka:
 
 1. Pastikan tidak ada label **DEMO**, lalu login memakai email/password admin yang dibuat installer. Akun demo `admin@ternaku.id` tidak otomatis dibuat di production.
-2. Tetapkan harga telur bagus dan bentes yang sudah mulai berlaku.
+2. Tetapkan harga telur SKM, SKM Baru, dan bentes yang sudah mulai berlaku.
 3. Buat akun karyawan dan jenis pakan sesuai kebutuhan.
 4. Catat data pertama yang benar, muat ulang halaman, lalu pastikan data tetap ada. Periksa pengambilan, penjualan, dan nota saat mulai bertransaksi.
 
@@ -243,6 +243,8 @@ Setelah server siap, login pada HP dan tekan **Aktifkan notifikasi**, lalu beri 
 | `.env` atau file internal dapat diunduh | Hentikan setup sampai aturan penolakan server berfungsi. Jika rahasia sudah terpapar, ganti password terkait. |
 
 ## Pembaruan API berikutnya
+
+Versi pemisahan SKM/SKM Baru membutuhkan `php scripts/migrate-egg-types.php` sebelum API baru diaktifkan. Migrasi mempertahankan seluruh stok dan riwayat bagus lama sebagai belum dipilah; saldo SKM dan SKM Baru mulai nol. Pasang frontend baru bersama pembaruan ini. Lihat [panduan jenis telur](EGG-TYPES.md) untuk pemilahan stok, harga, serta penanganan pemeriksaan dan draft lama.
 
 Sebelum memperbarui, cadangkan database MySQL, `.env`, dan `application/config/push-keys.php` bila tersedia di lokasi privat. Ekstrak paket terbaru sambil mempertahankan `.env` dan kunci push milik hosting. Ikuti petunjuk migrasi pada rilis jika ada; jangan mengosongkan database atau mengimpor data contoh. Installer awal tidak menggantikan migrasi schema untuk perubahan versi mendatang. Setelah pembaruan, periksa `/health`, login kembali, dan coba notifikasi pada perangkat sendiri.
 

@@ -43,6 +43,8 @@ import {
 import { useFarm } from "@/lib/store";
 import { FarmArt } from "./App";
 import { printReceipt } from "@/lib/export";
+import { ALL_EGG_TYPES, NEW_EGG_TYPES, EGG_TYPES, eggTypePrice } from "@/lib/egg-types";
+import { summarizeEggTypes } from "@/lib/egg-report";
 import styles from "./Dashboard.module.css";
 
 export default function Dashboard({
@@ -82,12 +84,19 @@ export default function Dashboard({
   if (!state || !user) return null;
   const price = activePrice(state);
   const stock = eggStock(state);
-  const good = eggStock(state, "good"),
-    cracked = eggStock(state, "cracked");
+  const stockTypes = ALL_EGG_TYPES.map(type => ({ type, ...eggStock(state, type) }))
+    .filter(row => row.type !== "good" || row.eggs !== 0 || row.kg !== 0 || row.trays !== 0);
+  let stockPercent = 0;
+  const stockGradient = stockTypes.map(row => {
+    const start = stockPercent;
+    stockPercent += stock.kg ? row.kg / stock.kg * 100 : 0;
+    return `${EGG_TYPES[row.type].color} ${start}% ${stockPercent}%`;
+  }).join(", ");
   const dailyProduction = state.productions.filter(
     (p) => businessDate(p.date) === day,
   );
   const dailySales = state.sales.filter((s) => businessDate(s.date) === day);
+  const harvestSummary = summarizeEggTypes(dailyProduction);
   const production = dailyProduction.reduce((a, x) => a + x.kg, 0);
   const eggs = dailyProduction.reduce((a, x) => a + x.eggs, 0);
   const revenue = dailySales.reduce((a, x) => a + x.total, 0);
@@ -194,7 +203,7 @@ export default function Dashboard({
             <Leaf size={130} />
           </span>
         </section>
-        <section className="price-panel">
+        <section className={`price-panel ${styles.pricePanel}`}>
           <div className="price-panel-top">
             <span className="icon-box green">
               <Wallet size={20} />
@@ -210,31 +219,15 @@ export default function Dashboard({
               Aktif
             </span>
           </div>
-          <div className="price-values">
-            <div>
-              <span>
-                <i className="dot green-dot" />
-                Telur bagus
-              </span>
-              <strong>
-                {price ? money(price.good_price) : "—"}
-                <small>/kg</small>
-              </strong>
-            </div>
-            <div>
-              <span>
-                <i className="dot amber-dot" />
-                Telur bentes
-              </span>
-              <strong>
-                {price
-                  ? price.cracked_price === 0
-                    ? "Gratis"
-                    : money(price.cracked_price)
-                  : "—"}
-                {price && price.cracked_price > 0 && <small>/kg</small>}
-              </strong>
-            </div>
+          <div className={styles.priceValues}>
+            <span className={styles.groupLabel}>Telur bagus</span>
+            {NEW_EGG_TYPES.map(type => {
+              const value = eggTypePrice(price, type);
+              return <div key={type} className={`${styles.priceRow} ${type === "cracked" ? styles.bentes : ""}`}>
+                <span><i className="dot" style={{ backgroundColor: EGG_TYPES[type].color }} />{EGG_TYPES[type].shortLabel}</span>
+                <strong>{value === undefined ? "Belum diatur" : type === "cracked" && value === 0 ? "Gratis" : money(value)}{value !== undefined && value > 0 && <small>/kg</small>}</strong>
+              </div>;
+            })}
           </div>
           {user.role === "admin" && (
             <div className={styles.priceActions}>
@@ -254,6 +247,16 @@ export default function Dashboard({
           </button>
         </section>
       </div>
+      <section className={`panel ${styles.harvestTypes}`} aria-label="Panen hari ini per jenis">
+        <h3>Panen hari ini per jenis</h3>
+        <div className={styles.harvestRows}>
+          {ALL_EGG_TYPES.filter(type => type !== "good" || harvestSummary.hasLegacy).map(type => <div key={type}>
+            <span><i className="dot" style={{ backgroundColor: EGG_TYPES[type].color }} />{type === "good" ? EGG_TYPES[type].label : EGG_TYPES[type].shortLabel}</span>
+            <strong>{number(harvestSummary.byType[type].eggs, 0)} butir <small>· {number(harvestSummary.byType[type].kg, 3)} kg</small></strong>
+          </div>)}
+        </div>
+        <p>Subtotal bagus (SKM + SKM Baru): <strong>{number(harvestSummary.bagus.eggs, 0)} butir · {number(harvestSummary.bagus.kg, 3)} kg</strong></p>
+      </section>
       <div className="section-bar">
         <h3>
           {user.role === "admin"
@@ -472,7 +475,7 @@ export default function Dashboard({
             Setiap catatan membantu Anda mengambil keputusan lebih baik.
           </div>
         </section>
-        <section className="panel stock-panel">
+        <section className={`panel stock-panel ${styles.stockPanel}`}>
           <div className="panel-header">
             <div>
               <h3>Komposisi stok</h3>
@@ -491,8 +494,8 @@ export default function Dashboard({
               className="stock-donut"
               style={{
                 background: stock.kg
-                  ? `conic-gradient(#377a50 0% ${(good.kg / stock.kg) * 100}%, #e9ce91 ${(good.kg / stock.kg) * 100}% 100%)`
-                  : "#edf0e9",
+                  ? `conic-gradient(${stockGradient})`
+                  : "var(--border)",
               }}
             >
               <div>
@@ -505,31 +508,13 @@ export default function Dashboard({
               <Leaf size={19} />
             </span>
           </div>
-          <div className="stock-breakdown">
-            <div>
-              <span className="stock-category">
-                <span className="dot green-dot" />
-                Telur bagus
-              </span>
-              <strong>
-                {number(good.kg)} <small>kg</small>
-              </strong>
-              <span className="stock-percent">
-                {stock.kg ? Math.round((good.kg / stock.kg) * 100) : 0}%
-              </span>
-            </div>
-            <div>
-              <span className="stock-category">
-                <span className="dot amber-dot" />
-                Telur bentes
-              </span>
-              <strong>
-                {number(cracked.kg)} <small>kg</small>
-              </strong>
-              <span className="stock-percent">
-                {stock.kg ? Math.round((cracked.kg / stock.kg) * 100) : 0}%
-              </span>
-            </div>
+          <div className={`stock-breakdown ${styles.stockTypes}`}>
+            {stockTypes.map(row => <div key={row.type}>
+              <span className="stock-category"><i className="dot" style={{ backgroundColor: EGG_TYPES[row.type].color }} />{row.type === "good" ? EGG_TYPES[row.type].label : EGG_TYPES[row.type].shortLabel}</span>
+              <strong>{number(row.kg, 3)} <small>kg</small></strong>
+              <span className="stock-percent">{stock.kg ? Math.round(row.kg / stock.kg * 100) : 0}%</span>
+            </div>)}
+            <p className={styles.stockSubtotal}>Bagus (SKM + SKM Baru): {number(stockTypes.filter(row => row.type === "skm" || row.type === "skm_new").reduce((total, row) => total + row.kg, 0), 3)} kg</p>
           </div>
           <button className="btn btn-soft w-100" onClick={() => go("stock")}>
             Lihat pergerakan stok
