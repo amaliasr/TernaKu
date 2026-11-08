@@ -5,7 +5,7 @@ import { useFarm } from "@/lib/store";
 import { number, today } from "@/lib/domain";
 import type { Category, CommandPayload } from "@/lib/types";
 import { NEW_EGG_TYPES } from "@/lib/egg-types";
-import { classifyHarvestDraft, hasLegacyHarvest, normalizeHarvestRows, type HarvestDraftRows } from "@/lib/harvest-draft";
+import { hasLegacyHarvest, normalizeHarvestRows, type HarvestDraftRows } from "@/lib/harvest-draft";
 import { Field, LoadingButton, categoryLabel } from "./ModuleUI";
 import { useDraftField } from "./DraftBoundary";
 import PhotoUpload from "./PhotoUpload";
@@ -47,8 +47,8 @@ export default function HarvestForm({
     .filter((row) => row.eggs || row.kg || row.trays);
   const update = (category: Category, key: keyof Row, value: string) =>
     setRows((previous) => ({
-      ...previous,
-      [category]: { ...rows[category], [key]: value },
+      ...normalizeHarvestRows(previous),
+      [category]: { ...normalizeHarvestRows(previous)[category], [key]: value },
     }));
   return (
     <form
@@ -59,7 +59,7 @@ export default function HarvestForm({
       onSubmit={(e) => {
         e.preventDefault();
         if (busy || photoBusy) return;
-        if (legacy) { setMessage("Pilih jenis telur untuk draf bagus lama sebelum menyimpan."); return; }
+        if (legacy) { setMessage("Periksa angka pada draf lama sebelum menyimpan."); return; }
         if (!items.length) {
           setMessage(
             "Isi jumlah butir dan berat untuk sedikitnya satu jenis telur.",
@@ -94,15 +94,7 @@ export default function HarvestForm({
           Isi hasil timbangan untuk setiap jenis telur. Kosongkan baris yang
           tidak dipanen.
         </p>
-        {legacy && <div className="alert alert-warning" role="alert">
-          <strong>Draf telur bagus belum dibedakan</strong>
-          <p className="mb-2">{rows.good.eggs || "0"} butir · {rows.good.kg || "0"} kg. Pilih jenis yang benar. Foto dan isian lain tetap tersimpan.</p>
-          <div className="d-flex flex-column flex-sm-row gap-2">
-            {(["skm", "skm_new"] as const).map(type => <button key={type} type="button" className="btn btn-outline-secondary" onClick={() => {
-              try { setRows(classifyHarvestDraft(rows, type)); setMessage(""); } catch (cause) { setMessage(cause instanceof Error ? cause.message : "Periksa draf panen."); }
-            }}>Pindahkan ke {categoryLabel(type)}</button>)}
-          </div>
-        </div>}
+        {legacy && <p className="alert alert-warning" role="alert">Angka pada draf lama belum bisa dibaca. Jumlah sebelumnya: {rows.good.eggs || "0"} butir, {rows.good.kg || "0"} kg. Periksa draf sebelum menyimpan.</p>}
         {categories.map((c) => {
           const row = rows[c],
             estimate = Number(row.trays) * 10;

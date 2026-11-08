@@ -1,6 +1,6 @@
 import type { CommandPayload, Production, State, StockCheckContext, StockCheckQuantities, User } from "./types";
 import { ApiError } from "./request-errors";
-import { ALL_EGG_TYPES, emptyEggQuantities } from "./egg-types";
+import { ALL_EGG_TYPES, canonicalEggType, emptyEggQuantities } from "./egg-types";
 
 const categories = ALL_EGG_TYPES;
 const round = (n: number) => Math.round((n + Number.EPSILON) * 1000) / 1000;
@@ -14,7 +14,7 @@ function dayOf(value: string): string {
 export function harvestCounts(productions: Production[], day: string): StockCheckQuantities {
   const counts: StockCheckQuantities = emptyEggQuantities();
   for (const p of productions) if (dayOf(p.date) === day) {
-    const q = counts[p.category]; q.eggs += p.eggs; q.kg = round(q.kg + p.kg); q.trays += p.trays;
+    const q = counts[canonicalEggType(p.category)]; q.eggs += p.eggs; q.kg = round(q.kg + p.kg); q.trays += p.trays;
   }
   return counts;
 }
@@ -38,7 +38,7 @@ export function demoStockCheckContext(state: State, day: string, warehouse: Stoc
 function actual(value: unknown): StockCheckQuantities {
   ensure(!!value && typeof value === "object" && !Array.isArray(value), "Isi hasil hitungan untuk setiap jenis telur.");
   const data = value as StockCheckQuantities;
-  ensure(Object.keys(data).sort().join(",") === [...categories].sort().join(","), "Isi SKM, SKM Baru, Bentes, dan stok bagus lama yang belum dibedakan.");
+  ensure(Object.keys(data).sort().join(",") === [...categories].sort().join(","), "Muat ulang aplikasi, lalu periksa jumlah SKM, SKM Baru, dan Bentes.");
   for (const c of categories) {
     const q = data[c];
     ensure(!!q && typeof q === "object" && Object.keys(q).sort().join(",") === "eggs,kg,trays", "Isi jumlah butir, berat, dan krat.");
@@ -46,6 +46,7 @@ function actual(value: unknown): StockCheckQuantities {
       ensure(typeof q[key] === "number" && Number.isFinite(q[key]) && q[key] >= 0 && q[key] <= 1_000_000_000 && (key === "kg" ? round(q[key]) === q[key] : Number.isInteger(q[key])), "Masukkan jumlah yang valid; berat maksimal tiga angka desimal.");
     ensure((q.eggs === 0) === (q.kg === 0), "Jumlah butir dan berat harus sama-sama nol atau terisi.");
   }
+  ensure(Object.values(data.good).every(n => n === 0), "Telur bagus lama sudah menjadi SKM. Catat hitungannya pada SKM.");
   return structuredClone(data);
 }
 function reason(value: unknown): string {

@@ -43,7 +43,7 @@ import {
 import { useFarm } from "@/lib/store";
 import { FarmArt } from "./App";
 import { printReceipt } from "@/lib/export";
-import { ALL_EGG_TYPES, NEW_EGG_TYPES, EGG_TYPES, eggTypePrice } from "@/lib/egg-types";
+import { NEW_EGG_TYPES, EGG_TYPES, eggTypePrice } from "@/lib/egg-types";
 import { summarizeEggTypes } from "@/lib/egg-report";
 import styles from "./Dashboard.module.css";
 
@@ -84,8 +84,7 @@ export default function Dashboard({
   if (!state || !user) return null;
   const price = activePrice(state);
   const stock = eggStock(state);
-  const stockTypes = ALL_EGG_TYPES.map(type => ({ type, ...eggStock(state, type) }))
-    .filter(row => row.type !== "good" || row.eggs !== 0 || row.kg !== 0 || row.trays !== 0);
+  const stockTypes = NEW_EGG_TYPES.map(type => ({ type, ...eggStock(state, type) }));
   let stockPercent = 0;
   const stockGradient = stockTypes.map(row => {
     const start = stockPercent;
@@ -220,14 +219,14 @@ export default function Dashboard({
             </span>
           </div>
           <div className={styles.priceValues}>
-            <span className={styles.groupLabel}>Telur bagus</span>
-            {NEW_EGG_TYPES.map(type => {
+            {(["skm", "cracked"] as const).map(type => {
               const value = eggTypePrice(price, type);
               return <div key={type} className={`${styles.priceRow} ${type === "cracked" ? styles.bentes : ""}`}>
-                <span><i className="dot" style={{ backgroundColor: EGG_TYPES[type].color }} />{EGG_TYPES[type].shortLabel}</span>
+                <span><i className="dot" style={{ backgroundColor: EGG_TYPES[type].color }} />{type === "skm" ? "Telur Bagus" : "Telur Bentes"}</span>
                 <strong>{value === undefined ? "Belum diatur" : type === "cracked" && value === 0 ? "Gratis" : money(value)}{value !== undefined && value > 0 && <small>/kg</small>}</strong>
               </div>;
             })}
+            <p className={styles.sharedPriceNote}>SKM dan SKM Baru memakai harga Telur Bagus.</p>
           </div>
           {user.role === "admin" && (
             <div className={styles.priceActions}>
@@ -250,8 +249,8 @@ export default function Dashboard({
       <section className={`panel ${styles.harvestTypes}`} aria-label="Panen hari ini per jenis">
         <h3>Panen hari ini per jenis</h3>
         <div className={styles.harvestRows}>
-          {ALL_EGG_TYPES.filter(type => type !== "good" || harvestSummary.hasLegacy).map(type => <div key={type}>
-            <span><i className="dot" style={{ backgroundColor: EGG_TYPES[type].color }} />{type === "good" ? EGG_TYPES[type].label : EGG_TYPES[type].shortLabel}</span>
+          {NEW_EGG_TYPES.map(type => <div key={type}>
+            <span><i className="dot" style={{ backgroundColor: EGG_TYPES[type].color }} />{EGG_TYPES[type].shortLabel}</span>
             <strong>{number(harvestSummary.byType[type].eggs, 0)} butir <small>· {number(harvestSummary.byType[type].kg, 3)} kg</small></strong>
           </div>)}
         </div>
@@ -510,7 +509,7 @@ export default function Dashboard({
           </div>
           <div className={`stock-breakdown ${styles.stockTypes}`}>
             {stockTypes.map(row => <div key={row.type}>
-              <span className="stock-category"><i className="dot" style={{ backgroundColor: EGG_TYPES[row.type].color }} />{row.type === "good" ? EGG_TYPES[row.type].label : EGG_TYPES[row.type].shortLabel}</span>
+              <span className="stock-category"><i className="dot" style={{ backgroundColor: EGG_TYPES[row.type].color }} />{EGG_TYPES[row.type].shortLabel}</span>
               <strong>{number(row.kg, 3)} <small>kg</small></strong>
               <span className="stock-percent">{stock.kg ? Math.round(row.kg / stock.kg * 100) : 0}%</span>
             </div>)}

@@ -13,7 +13,7 @@ const salePhoto = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC
 function legacy(): State {
   const state = emptyState();
   state.users = ["sari", "budi"].map(id => ({id, name:id, role:"employee", active:true, target:0, email:`${id}@test.local`}));
-  state.prices.push({ id:"harga", skm_new_price: 29000, skm_price:28000, cracked_price:18000, effective_at:date, created_by:"admin", created_at:at.toISOString() });
+  state.prices.push({ id:"harga", good_price:28000, cracked_price:18000, effective_at:date, created_by:"admin", created_at:at.toISOString() });
   return state;
 }
 

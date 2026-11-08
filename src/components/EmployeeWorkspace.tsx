@@ -37,7 +37,7 @@ import {
 } from "@/lib/domain";
 import type { Pickup, Production, Sale } from "@/lib/types";
 import { employeeHistoryWindow, employeeRecords, nextJakartaDayDelay } from "@/lib/employee-history";
-import { ALL_EGG_TYPES, NEW_EGG_TYPES, EGG_TYPES, eggTypePrice } from "@/lib/egg-types";
+import { NEW_EGG_TYPES, eggTypePrice } from "@/lib/egg-types";
 import EntryModal from "./EntryModal";
 import type { SaleStart } from "./SaleStockSource";
 import InstallApp from "./InstallApp";
@@ -213,7 +213,7 @@ export default function EmployeeWorkspace() {
       }).format(new Date(priceSync.lastSuccessAt))
     : null;
   const optionalPage = ["feed", "reports", "corrections"].includes(page);
-  const warehouseTypes = ALL_EGG_TYPES.filter(type => type !== "good" || eggStock(state, type).kg > 0 || eggStock(state, type).eggs > 0);
+  const warehouseTypes = NEW_EGG_TYPES;
 
   async function reload() {
     setRefreshing(true);
@@ -294,11 +294,12 @@ export default function EmployeeWorkspace() {
           </span>
         </div>
         <div className={styles.prices} aria-live="polite" aria-atomic="true">
-          {NEW_EGG_TYPES.map(type => <div key={type} className={type === "cracked" ? styles.crackedPrice : styles.goodPrice}>
-            <span><Egg size={17} /> {EGG_TYPES[type].shortLabel}</span>
+          {(["skm", "cracked"] as const).map(type => <div key={type} className={type === "cracked" ? styles.crackedPrice : styles.goodPrice}>
+            <span><Egg size={17} /> {type === "skm" ? "Telur bagus" : "Telur bentes"}</span>
             <strong>{eggTypePrice(price, type) === undefined ? "Belum ada" : eggTypePrice(price, type) === 0 ? "Gratis" : money(eggTypePrice(price, type)!)}
               {eggTypePrice(price, type) !== undefined && eggTypePrice(price, type)! > 0 && <small>/kg</small>}
             </strong>
+            {type === "skm" && <small className={styles.priceSubtypes}>SKM & SKM Baru</small>}
           </div>)}
         </div>
         <p
@@ -650,7 +651,6 @@ export default function EmployeeWorkspace() {
                   </strong>
                   <p>{number(stock.eggs)} butir</p>
                   <small>{quantity(stock.trays)} krat</small>
-                  {type === "good" && <p className="small mt-2">Data lama. Minta atasan membaginya ke SKM atau SKM Baru.</p>}
                 </article>
               ); })}
             </div>

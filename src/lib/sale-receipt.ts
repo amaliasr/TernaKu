@@ -1,9 +1,10 @@
+import { canonicalEggType, isEggType } from "./egg-types";
 import type { CommandPayload, Sale, State } from "./types";
 
 const text = (value: unknown) =>
   typeof value === "string" ? value.trim() : "";
 
-function matchesPayload(sale: Sale, payload: CommandPayload): boolean {
+function matchesPayload(sale: Sale, payload: CommandPayload, allowAlias: boolean): boolean {
   const items = Array.isArray(payload.items) ? payload.items : [];
   const submittedAt = Date.parse(text(payload.date));
   if (
@@ -29,7 +30,7 @@ function matchesPayload(sale: Sale, payload: CommandPayload): boolean {
       : item.eggs_estimated !== true && item.eggs === Number(line.eggs);
     return (
       item.pickup_id === (line.pickup_id ?? "") &&
-      item.category === line.category &&
+      (item.category === line.category || (allowAlias && isEggType(line.category) && canonicalEggType(item.category) === canonicalEggType(line.category))) &&
       countMatches &&
       item.kg === Number(line.kg) &&
       item.trays === Number(line.trays ?? 0) &&
@@ -68,7 +69,7 @@ export function findSavedSale(
     (sale) =>
       sale.user_id === userId &&
       !previous.has(sale.id) &&
-      matchesPayload(sale, payload),
+      matchesPayload(sale, payload, typeof requestId === "string" && previousSaleIds !== undefined),
   );
   return candidates.length === 1 ? candidates[0] : null;
 }

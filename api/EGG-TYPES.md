@@ -1,60 +1,52 @@
-# SKM, SKM Baru, dan bentes
+# Jenis telur dan satu harga telur bagus
 
-Kelompok **Telur Bagus** terdiri dari SKM dan SKM Baru. Keduanya memiliki harga dan saldo stok tersendiri. API mempertahankan nama kolom `category` untuk identitas jenis:
+**Telur SKM** dan **Telur SKM Baru** memiliki stok masing-masing, tetapi memakai satu harga **Telur Bagus**. Telur bentes memiliki harga tersendiri dan boleh Rp0. Seluruh data bagus lama kini dianggap SKM sesuai keputusan pemilik.
 
-| Nilai | Arti | Panen/pengambilan baru |
+| `category` | Jenis | Harga yang dipakai |
 | --- | --- | --- |
-| `skm` | Telur SKM | Ya |
-| `skm_new` | Telur SKM Baru | Ya |
-| `cracked` | Telur bentes | Ya |
-| `good` | Telur bagus lama, belum dipilah | Tidak |
+| `skm` | Telur SKM | `good_price` |
+| `skm_new` | Telur SKM Baru | `good_price` |
+| `cracked` | Telur bentes | `cracked_price` |
 
-`inventory` memuat empat saldo mandiri. `good` tidak boleh dijumlahkan kembali sebagai total bagus; ia bukan alias untuk SKM. Butir, berat dan krat tetap dicatat terpisah. Pembuatan panen mendukung tiga jenis sekaligus, dan foto bersama tetap memakai mekanisme dokumentasi yang sama.
+`good` adalah alias permintaan lama untuk SKM. Saldo respons tetap memuat kunci `good` bernilai nol untuk kompatibilitas perangkat lama; kunci ini bukan total kelompok bagus. Panen dapat mencatat ketiga jenis sekaligus. Butir, kilogram, dan krat tetap terpisah.
 
-## Migrasi instalasi yang sudah berjalan
+## Migrasi data operasional
 
-Cadangkan database, siapkan kode API baru, kemudian jalankan pada container API sebelum menerima transaksi versi baru:
+Cadangkan database dan hentikan penulisan dari API lama selama konversi. Pastikan migrasi dasar jenis telur sudah dijalankan sehingga baris `egg:good`, `egg:skm`, `egg:skm_new`, dan `egg:cracked` tersedia. Kemudian jalankan:
 
 ```sh
-php scripts/migrate-egg-types.php
+php scripts/migrate-shared-good-price.php --legacy-to-skm
 ```
 
-Migrasi memakai mutex transaksi yang sama dengan perintah operasional. Ia menambahkan saldo nol `egg:skm` dan `egg:skm_new`, serta penanda `schema_egg_types_v2`. Aman dijalankan kembali. Saldo `egg:good`, `egg:cracked`, seluruh dokumen JSON lama, foto, penjualan, snapshot harga, pengambilan pribadi dan sesi pengguna tetap dipertahankan. Migrasi tidak menganggap telur lama sebagai SKM secara otomatis. `schema.sql` untuk instalasi baru sudah menyediakan keempat saldo.
+Flag wajib karena operasi ini menyatakan seluruh data bagus lama sebagai SKM. Installer biasa tidak menjalankan konversi ini secara otomatis. Untuk instalasi sebelum penambahan SKM/SKM Baru, jalankan `php scripts/migrate-egg-types.php` terlebih dahulu.
 
-Pasang frontend baru bersama perubahan ini. Draft lama dengan `category: good` untuk panen/pengambilan baru perlu dipilih ulang jenisnya; server menolaknya tanpa menyimpan atau mengubah saldo. Klien lama tidak dapat membuat harga dua kategori lagi. Riwayat dan nota lama tetap dapat dibaca.
+Konversi berjalan dalam satu transaksi dengan mutex perintah:
 
-## Memilah stok bagus lama
+- Saldo `egg:good` ditambahkan ke `egg:skm`, lalu saldo `egg:good` menjadi nol. Berat dijumlahkan dalam gram bulat untuk menjaga ketelitian tiga desimal.
+- Kategori bagus lama pada panen, pengambilan, item penjualan dan mutasi stok menjadi `skm`. Stok SKM Baru dan bentes tetap terpisah.
+- Hitungan bagus lama pada pemeriksaan gudang/panen dijumlahkan ke SKM. Pemeriksaan selesai mempertahankan status dan tinjauannya. Pemeriksaan pending ditolak dengan alasan sistem agar dihitung ulang.
+- Foto, nominal nota, snapshot harga satuan, pembayaran, ID dan tanggal tetap dipertahankan. Dokumen harga, antrean push, hasil retry, serta audit sebelum/sesudah yang sudah ada tidak ditulis ulang.
 
-Hanya admin dapat mengirim `stock.classify`:
+Migrasi menambahkan penanda `schema_shared_good_v3` dan satu audit ringkas berisi saldo sebelum/sesudah, jumlah dokumen yang diubah per jenis, dan SHA-256 gabungan dokumen asal/hasil. **Tidak ada mutasi stok transfer baru**, karena ledger historis sudah dikategorikan ulang; menambah mutasi transfer lagi akan menghitung perubahan dua kali. Migrasi ulang tidak menambah saldo atau audit. Konflik marker, saldo melebihi kapasitas, atau data JSON rusak membatalkan transaksi.
 
-```json
-{
-  "action": "stock.classify",
-  "request_id": "pemilahan-gudang-001",
-  "payload": {
-    "category": "skm_new",
-    "eggs": 100,
-    "kg": 6,
-    "trays": 1,
-    "expected_source": {"eggs": 200, "kg": 12, "trays": 2},
-    "expected_target": {"eggs": 0, "kg": 0, "trays": 0},
-    "reason": "Hasil pilahan fisik di gudang"
-  }
-}
-```
+Aktifkan API serta frontend baru sesudah konversi selesai, lalu tetapkan harga bagus bersama. Periksa saldo gabungan, riwayat penjualan, pengambilan yang belum selesai, dan pemeriksaan yang perlu diulang.
 
-Sumber selalu `good`; tujuan hanya `skm` atau `skm_new`. Butir dan kilogram wajib positif; krat boleh nol dan bawaan nol. `expected_source` dan `expected_target` harus sama dengan saldo saat perintah dijalankan. Perubahan saldo menghasilkan 409; muat ulang sebelum mencoba lagi. Jumlah dan krat tidak boleh melebihi sumber. Pengulangan karena jaringan harus memakai `request_id` yang sama.
+## Harga berlaku
 
-Transfer mencatat pasangan `classify_out`/`classify_in` dengan satu referensi, waktu, pelaksana dan alasan minimal lima karakter. Total butir, berat, dan krat tidak berubah. Panen, penjualan dan pengambilan lama tidak ditulis ulang. Pemilahan hanya mencakup saldo di gudang; telur yang masih dibawa karyawan tetap berjenis lama sampai dijual atau dikembalikan. Retur masuk kembali ke stok `good` dan dapat dipilah setelahnya.
+`price.create` menerima `good_price`, `cracked_price`, dan `effective_at`. Harga bagus wajib positif; harga bentes boleh nol. Record baru menyimpan `pricing_mode: "shared_good"` serta alias kompatibilitas `skm_price = skm_new_price = good_price`. Permintaan harga terpisah dari aplikasi lama ditolak dengan petunjuk memperbarui aplikasi.
 
-## Harga dan penjualan
+Sesudah ada record harga bersama yang mulai berlaku, server memakai record harga bersama terbaru yang sudah aktif. Jadwal dengan kebijakan harga lama tidak dapat menimpanya meskipun tanggal jadwal itu lebih akhir. Harga bentes diambil dari record bersama yang sama.
 
-`price.create` mewajibkan `skm_price`, `skm_new_price`, `cracked_price`, dan `effective_at`. SKM dan SKM Baru harus positif; bentes boleh nol. Payload tidak menerima perubahan `good_price`; stok lama memakai tarif bagus dari riwayat lama yang sudah ada.
+Sebelum harga bersama pertama aktif, server memeriksa record lama terbaru yang sudah berlaku. `good_price` lama dapat dipakai bersama. Bila hanya tarif SKM/SKM Baru tersedia, keduanya harus sama. Tarif yang berbeda membuat penjualan telur bagus ditolak sampai atasan menetapkan satu harga; server tidak memilih salah satunya secara diam-diam. Bentes tetap memakai tarif dari record lama tersebut.
 
-Server mengambil nilai terbaru yang sudah berlaku **untuk masing-masing kolom harga**. Jadwal lama yang hanya berisi bagus/bentes tetap dapat mengubah kedua tarif lamanya tanpa menghapus tarif SKM/SKM Baru. Jika tarif suatu jenis belum tersedia, penjualannya ditolak; tidak ada peminjaman harga jenis lain. Identitas `expected_price_id` memakai record harga berlaku paling baru, sedangkan setiap item menyimpan harga satuannya sendiri. Penjualan yang sudah tersimpan tidak mengikuti perubahan harga berikutnya.
+Harga disalin ke item ketika penjualan dibuat. Perubahan kebijakan atau harga berikutnya tidak mengubah harga, total, atau pembayaran nota lama. `expected_price_id` mengikuti record yang benar-benar digunakan oleh kebijakan di atas.
 
-Penjualan gudang dapat memakai `good` secara eksplisit selama stok lama mencukupi. Penjualan dari pengambilan lama harus tetap memakai kategori pengambilan tersebut; tidak dapat menggantinya dengan SKM atau SKM Baru. Estimasi butir dari berat, pengurangan stok, koreksi, dan pengembalian semuanya dihitung per jenis. Stok SKM yang banyak tidak dapat menutup kekurangan SKM Baru.
+Setiap penyimpanan harga tetap menghasilkan ID dan notifikasi baru, termasuk nominal yang sama. Pesan baru menyebut harga Telur Bagus (SKM dan SKM Baru) serta harga bentes. Setelah harga bersama efektif, worker membatalkan antrean `price.updated` berkebijakan lama yang belum terkirim, dengan alasan `obsolete_pricing_policy`; payload dan teks aslinya tetap disimpan sebagai bukti. Sebelum harga bersama efektif, antrean lama tetap boleh dikirim. Peristiwa baru berkebijakan bersama tetap terkirim masing-masing meskipun nominalnya sama.
 
-Setiap penyimpanan harga menghasilkan ID dan notifikasi baru, termasuk nominal yang sama. Pesan baru menyebut SKM, SKM Baru dan bentes. Antrean notifikasi lama tetap berisi pesan dari peristiwa asalnya.
+## Perangkat dan draft lama
 
-Pemeriksaan gudang memakai `schema_version: 2` dan empat saldo. Lihat [pemeriksaan harian](STOCK-CHECKS.md) untuk penanganan hitungan lama dan persetujuan setelah koreksi panen. Batas hari tetap tengah malam WIB.
+API menghitung fingerprint serta mencari hasil `request_id` sebelum menormalkan alias kategori. Permintaan yang sudah tersimpan sebelum konversi mengembalikan nota yang sama dengan kategori SKM, tanpa transaksi ganda. Draft yang belum tersimpan dan masih memakai `category: "good"` disimpan sebagai SKM pada panen, pengambilan, penjualan, atau penyesuaian stok.
+
+Payload dan ID retry yang sudah dikirim harus dipertahankan persis saat jaringan terputus. Mengganti payload menjadi `skm` dengan ID lama tetap menghasilkan 409 karena fingerprint aslinya berbeda. Hitungan stok lama yang tidak cocok dengan saldo gabungan juga menghasilkan 409; muat ulang sebelum mengubah stok.
+
+Pengambilan lama sudah menjadi SKM, sehingga retur dan koreksi otomatis memakai SKM. Harga bersama tidak menggabungkan saldo SKM dan SKM Baru: kekurangan satu jenis tetap tidak boleh diambil dari jenis lain. Pemeriksaan baru tetap membutuhkan `schema_version: 2` dan empat kunci kuantitas dengan `good` nol; lihat [pemeriksaan harian](STOCK-CHECKS.md). Batas hari tetap tengah malam WIB.

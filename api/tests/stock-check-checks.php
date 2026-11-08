@@ -45,7 +45,7 @@ check(req('/sync/prices?since=0',[],$ca,'GET')['user']['can_check_stock'],'five-
 cmd('stock_check.submit',['date'=>$day,'expected_snapshot'=>'bad','status'=>'confirmed'],$sn,403);
 check(!isset(scState($sn)['stock_check_context']) && count(scState($sn)['stock_check_assignments'])===0,'ordinary employees receive no checker context or other assignment history');
 
-cmd('price.create',['skm_price'=>28000,'skm_new_price'=>28000,'cracked_price'=>18000,'effective_at'=>$day],$sa);
+cmd('price.create',['good_price'=>28000,'cracked_price'=>18000,'effective_at'=>$day],$sa);
 $harvest=['date'=>$day,'category'=>'skm','eggs'=>1000,'kg'=>60,'trays'=>10,'photo'=>$profilePhoto,'notes'=>'Today harvest'];
 $state=cmd('production.create',$harvest,$sn); $todayProd=first($state,'productions',fn($p)=>$p['notes']==='Today harvest');
 cmd('production.create',array_replace($harvest,['category'=>'cracked','eggs'=>100,'kg'=>6,'trays'=>1,'notes'=>'Cracked harvest']),$sn);

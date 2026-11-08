@@ -13,6 +13,7 @@ import {
 import {
   accountAccessError,
   emptyState,
+  normalizeFarmState,
   registerDemoEmployee,
   visibleState,
 } from "./domain";
@@ -24,6 +25,7 @@ import { commandPhotoForm } from "./command-photo";
 import { requestTimeout } from "./request-timeout";
 import { isPriceSyncResponse, mergePriceSync, refreshKind, validPriceCursor } from "./price-sync";
 import { isReceiptDelta, mergeReceiptDelta } from "./receipt-delta";
+import { legacyReceiptIdentity } from "./legacy-receipt";
 import { MediaCache, mediaPath } from "./media-cache";
 import { readPendingRequestIds, rememberCommandRequest } from "./request-retries";
 import { detachBrowserPush } from "./push-client";
@@ -225,6 +227,7 @@ export function FarmProvider({ children }: { children: ReactNode }) {
   const lastFullRefresh = useRef(0);
   const mediaCache = useRef(new MediaCache());
   const commit = useCallback((next: State, checkedPrices = true) => {
+    next = normalizeFarmState(next);
     stateRef.current = next;
     setAllState(next);
     if (checkedPrices) setPriceSync((previous) => ({
@@ -763,7 +766,15 @@ export function FarmProvider({ children }: { children: ReactNode }) {
             next = mergeReceiptDelta(stateRef.current, response);
             receiptOnly = true;
           } else if (isState(response)) next = response; // Compatible with servers before receipt deltas.
-          else throw new Error("Struktur data API tidak sesuai.");
+          else {
+            const identity = action === "sale.create" ? legacyReceiptIdentity(response, currentUser.id, request_id) : null;
+            if (!identity) throw new Error("Struktur data API tidak sesuai.");
+            const full = await request<unknown>("/bootstrap?compact=1", sessionToken);
+            if (!sessionUnchanged()) throw new Error("Sesi berubah. Buka kembali riwayat setelah masuk.");
+            if (!isState(full) || !full.sales.some(s => s.id === identity.record_id && s.user_id === currentUser.id))
+              throw new Error("Penjualan sudah diterima, tetapi nota belum dapat dimuat. Coba lagi dengan isian yang sama.");
+            next = { ...normalizeFarmState(full), command_result: identity };
+          }
           if (fingerprint && sensitiveCommand) sensitiveCommandRetries.current.delete(fingerprint);
           else if (fingerprint) {
             try {
@@ -783,7 +794,7 @@ export function FarmProvider({ children }: { children: ReactNode }) {
           throw new Error("Sesi berubah. Buka kembali riwayat setelah masuk untuk melihat hasil penyimpanan.");
         // Receipts consume the confirmed response directly. Do not keep a last
         // command result in general state where a later poll could make it stale.
-        const state = { ...next };
+        const state = { ...normalizeFarmState(next) };
         delete state.command_result;
         commit(state, !receiptOnly);
         if (!receiptOnly) lastFullRefresh.current = Date.now();

@@ -2,31 +2,31 @@
 
 import { useRef, useState, type FormEvent } from "react";
 import { ClipboardList } from "lucide-react";
-import { ALL_EGG_TYPES } from "@/lib/egg-types";
+import { NEW_EGG_TYPES } from "@/lib/egg-types";
 import { dateLabel, eggStock, number } from "@/lib/domain";
 import { useFarm } from "@/lib/store";
-import type { Category, Quantity, State, StockAdjustmentMethod, StockMovement } from "@/lib/types";
+import type { NewEggType, Quantity, State, StockAdjustmentMethod, StockMovement } from "@/lib/types";
 import { adjustmentMethodLabel, categoryLabel, Dialog, errorMessage, Field, LoadingButton } from "./ModuleUI";
 
-const categories = ALL_EGG_TYPES;
+const categories = NEW_EGG_TYPES;
 const units = [
   { key: "eggs", label: "Butir", unit: "butir" },
   { key: "kg", label: "Berat (kg)", unit: "kg" },
   { key: "trays", label: "Krat", unit: "krat" },
 ] as const;
 const signed = (value: number) => (value > 0 ? "+" : "") + number(value, 3);
-type CountScope = Category | "all";
+type CountScope = NewEggType | "all";
 const methods: StockAdjustmentMethod[] = ["count", "add", "subtract"];
 
 function snapshot(state: State) {
-  return Object.fromEntries(categories.map(type => [type, eggStock(state, type)])) as Record<Category, Quantity>;
+  return Object.fromEntries(categories.map(type => [type, eggStock(state, type)])) as Record<NewEggType, Quantity>;
 }
 
 function initialInputs(stock: ReturnType<typeof snapshot>, method: StockAdjustmentMethod) {
   const fields = (q: Quantity) => method === "count"
     ? { eggs: String(q.eggs), kg: String(q.kg), trays: String(q.trays ?? 0) }
     : { eggs: "", kg: "", trays: "" };
-  return Object.fromEntries(categories.map(type => [type, fields(stock[type])])) as Record<Category, Record<keyof Quantity, string>>;
+  return Object.fromEntries(categories.map(type => [type, fields(stock[type])])) as Record<NewEggType, Record<keyof Quantity, string>>;
 }
 
 function applyAmount(before: Quantity, input: Record<keyof Quantity, string>, method: StockAdjustmentMethod): Quantity {

@@ -21,15 +21,19 @@ test("three-type harvest recap matches the supplied 1,173 eggs / 66.3 kg example
   assert.equal(summary.hasLegacy, false);
 });
 
-test("legacy good remains separate from both SKM types and the classified Bagus subtotal", () => {
+test("legacy good is included in SKM and Bagus exactly once without changing the total", () => {
   const records = [...counts, { category: "good" as const, eggs: 17, kg: 1.001, trays: 0 }];
   const summary = summarizeEggTypes(records);
-  assert.equal(summary.bagus.kg, 64);
+  assert.equal(summary.bagus.kg, 65.001);
   assert.equal(summary.total.kg, 67.301);
   assert.equal(summary.total.eggs, 1190);
-  assert.equal(summary.byType.good.kg, 1.001);
+  assert.equal(summary.byType.skm.kg, 29.001);
+  assert.equal(summary.byType.skm.eggs, 502);
+  assert.equal(summary.byType.good.kg, 0);
   const rows = eggSummaryRows(records);
-  assert.deepEqual(rows[3], ["Telur bagus (belum dibedakan)", 17, 1.001, 0]);
+  assert.deepEqual(rows[0], ["Telur SKM", 502, 29.001, 3]);
+  assert.equal(rows.length, 5);
+  assert.deepEqual(rows[3], ["Subtotal bagus (SKM + SKM Baru)", 1152, 65.001, 7]);
   assert.deepEqual(rows.at(-1), ["Total seluruh telur", 1190, 67.301, 8]);
 });
 
@@ -50,15 +54,16 @@ test("mixed invoice payments and debt are counted once while type revenue uses e
   assert.deepEqual(totals, { total: 166000, paid: 100000, balance: 66000 });
   const report = summarizeEggTypes(invoice.items);
   assert.equal(report.total.amount, totals.total);
-  assert.equal(report.bagus.amount, 141000);
+  assert.equal(report.bagus.amount, 166000);
   assert.equal(report.byType.cracked.amount, 0);
-  assert.equal(report.byType.good.amount, 25000);
+  assert.equal(report.byType.skm.amount, 79000);
+  assert.equal(report.byType.good.amount, 0);
   assert.equal(eggSummaryRows(invoice.items, true).at(-1)?.[4], 166000);
 });
 
-test("receipt labels and immutable unit prices preserve all four identities including free Bentes", () => {
+test("receipt normalizes old good to SKM while preserving every historic unit price and total", () => {
   const rows = receiptEggRows(mixedItems);
-  assert.deepEqual(rows.map(row => row[0]), ["Telur SKM", "Telur SKM Baru", "Telur Bentes - Gratis", "Telur bagus (belum dibedakan)"]);
+  assert.deepEqual(rows.map(row => row[0]), ["Telur SKM", "Telur SKM Baru", "Telur Bentes - Gratis", "Telur SKM"]);
   assert.deepEqual(rows.map(row => row[4]), [money(27000), money(29000), "Gratis", money(25000)]);
   assert.deepEqual(rows.map(row => row[5]), [money(54000), money(87000), money(0), money(25000)]);
   assert.equal(receiptEggRows([item("cracked", 18000)])[0][0], "Telur Bentes");
@@ -75,11 +80,12 @@ test("Excel recap round-trip keeps all types, explicit subtotal and numeric gram
   assert.equal(sheet.getCell("A2").value, "Telur SKM");
   assert.equal(sheet.getCell("A3").value, "Telur SKM Baru");
   assert.equal(sheet.getCell("A4").value, "Telur Bentes");
-  assert.equal(sheet.getCell("A5").value, "Telur bagus (belum dibedakan)");
-  assert.equal(sheet.getCell("C5").value, 1.001);
-  assert.equal(sheet.getCell("A6").value, "Subtotal bagus (SKM + SKM Baru)");
-  assert.equal(sheet.getCell("B6").value, 1135);
-  assert.equal(sheet.getCell("C6").value, 64);
-  assert.equal(sheet.getCell("B7").value, 1190);
-  assert.equal(sheet.getCell("C7").value, 67.301);
+  assert.equal(sheet.getCell("B2").value, 502);
+  assert.equal(sheet.getCell("C2").value, 29.001);
+  assert.equal(sheet.getCell("A5").value, "Subtotal bagus (SKM + SKM Baru)");
+  assert.equal(sheet.getCell("B5").value, 1152);
+  assert.equal(sheet.getCell("C5").value, 65.001);
+  assert.equal(sheet.getCell("A6").value, "Total seluruh telur");
+  assert.equal(sheet.getCell("B6").value, 1190);
+  assert.equal(sheet.getCell("C6").value, 67.301);
 });

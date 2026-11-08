@@ -19,6 +19,7 @@ type CheckMode = "confirmed" | "pending";
 const categories = ALL_EGG_TYPES;
 const units = [{ key: "kg", label: "Berat (kg)" }, { key: "eggs", label: "Butir" }, { key: "trays", label: "Krat" }] as const;
 const quantityText = (value: Quantity) => `${number(value.kg, 3)} kg · ${number(value.eggs)} butir · ${number(value.trays)} krat`;
+const hasQuantity = (value: Quantity | undefined) => !!value && (value.eggs !== 0 || value.kg !== 0 || value.trays !== 0);
 const inputTotals = (totals: Totals): Inputs => Object.fromEntries(categories.map(category => [category, {
   kg: String(totals[category].kg), eggs: String(totals[category].eggs), trays: String(totals[category].trays),
 }])) as Inputs;
@@ -36,14 +37,14 @@ function latestChecks(state: State, day: string) {
   return checks;
 }
 function TotalsCards({ totals }: { totals: Partial<Totals> }) {
-  return <div className={styles.totals}>{categories.filter(category => totals[category] !== undefined).map(category => {
+  return <div className={styles.totals}>{categories.filter(category => totals[category] !== undefined && (category !== "good" || hasQuantity(totals.good))).map(category => {
     const quantity = totals[category]!;
     return <div className={styles.total} key={category}><span>{categoryLabel(category)}</span><strong>{number(quantity.kg, 3)}<small>kg</small></strong>
       <small>{number(quantity.eggs)} butir · {number(quantity.trays)} krat</small></div>;
   })}</div>;
 }
 function Comparison({ title, expected, actual }: { title: string; expected: Partial<Totals>; actual: Partial<Totals> }) {
-  return <section><h3>{title}</h3><div className={styles.totals}>{categories.filter(category => expected[category] !== undefined || actual[category] !== undefined).map(category => <div className={styles.total} key={category}>
+  return <section><h3>{title}</h3><div className={styles.totals}>{categories.filter(category => (expected[category] !== undefined || actual[category] !== undefined) && (category !== "good" || hasQuantity(expected.good) || hasQuantity(actual.good))).map(category => <div className={styles.total} key={category}>
     <b>{categoryLabel(category)}</b><span>Tercatat saat diperiksa</span><p className="small mb-1">{expected[category] ? quantityText(expected[category]!) : "Belum dicatat"}</p>
     <span>Hasil hitung petugas</span><p className="small mb-0 fw-semibold">{actual[category] ? quantityText(actual[category]!) : "Belum dicatat"}</p>
   </div>)}</div></section>;
@@ -79,7 +80,7 @@ function EmployeeChecks() {
       {check ? <Pill tone={statusTone[check.status]}>{statusLabel[check.status]}</Pill> : <Pill tone="warning">Belum diperiksa hari ini</Pill>}
     </div>
     {check && <p className={styles.caption}>Terakhir diperiksa {dateLabel(check.updated_at || check.created_at, true)} WIB.</p>}
-    {check && check.schema_version !== 2 && <p className={styles.note}>Pemeriksaan lama belum membedakan SKM dan SKM Baru. Periksa kembali dengan jenis telur sekarang.</p>}
+    {check && check.schema_version !== 2 && <p className={styles.note}>Pemeriksaan sebelumnya memakai format lama. Catatan telur bagus lama sekarang termasuk SKM. Periksa kembali jumlah hari ini.</p>}
     {check?.review_reason && <p className={styles.note}>Catatan atasan: {check.review_reason}</p>}
     {error && <p className="alert alert-danger" role="alert">{error}</p>}
     {notice && <p className="alert alert-success" role="status">{notice}</p>}
@@ -164,7 +165,7 @@ function CountCheckDialog({ context, mode, close, saved }: { context: StockCheck
   </Dialog>;
 }
 function ActualInputs({ title, value, onChange }: { title: string; value: Inputs; onChange: (value: Inputs) => void }) {
-  return <fieldset className="mb-4"><legend>{title}</legend><div className={styles.entries}>{categories.map(category => <div className={styles.entry} key={category}>
+  return <fieldset className="mb-4"><legend>{title}</legend><div className={styles.entries}>{categories.filter(category => category !== "good" || Object.values(value.good).some(n => Number(n) !== 0)).map(category => <div className={styles.entry} key={category}>
     <h3>{categoryLabel(category)}</h3><div className={styles.quantities}>{units.map(({ key, label }) => <Field key={key} label={label}>
       <input className="form-control" aria-label={`${title} ${categoryLabel(category)} ${label}`} type="number" inputMode={key === "kg" ? "decimal" : "numeric"} min="0" step={key === "kg" ? "0.001" : "1"} required value={value[category][key]}
         onChange={event => onChange({ ...value, [category]: { ...value[category], [key]: event.target.value } })} />
@@ -235,7 +236,7 @@ function ReviewCheck({ check, close }: { check: StockCheck; close: () => void })
       {check.reason && <p className={styles.note}>{check.reason}</p>}
       <Comparison title="Stok gudang" expected={check.expected.warehouse} actual={check.warehouse_actual} />
       <Comparison title="Panen pada tanggal pemeriksaan" expected={check.expected.harvest} actual={check.harvest_actual} />
-      {legacy && <p className="alert alert-warning mb-0">Ini pemeriksaan lama sebelum SKM dan SKM Baru dipisahkan. Angka asli tetap ditampilkan. {pending ? "Minta petugas melakukan pemeriksaan baru; hasil lama ini tidak bisa disetujui." : ""}</p>}
+      {legacy && <p className="alert alert-warning mb-0">Pemeriksaan ini memakai format sebelumnya. Catatan telur bagus lama sekarang ditampilkan sebagai SKM. {pending ? "Minta petugas melakukan pemeriksaan baru; hasil lama ini tidak bisa disetujui." : ""}</p>}
       {pending && <><section><h3>Catatan panen saat ini</h3><TotalsCards totals={harvest} /></section>
         <p className={harvestMatches ? "alert alert-success mb-0" : "alert alert-warning mb-0"}>{harvestMatches ? "Total panen sudah sesuai dengan hasil pemeriksaan petugas. Periksa hasil hitung gudang sebelum menyetujui." : "Total panen masih berbeda. Koreksi catatan panen yang salah satu per satu sebelum menyetujui."}</p>
         <section><h3>Catatan panen yang diperiksa</h3><div className={styles.entries}>{productions.map(row => <article className={styles.entry} key={row.id}>

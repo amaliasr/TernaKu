@@ -179,7 +179,6 @@
   color: #fff;
   border-radius: 14px;
 }
-.priceBar > div:last-child { grid-column: 1 / -1; grid-template-columns: 1fr auto; align-items: center; border-top: 1px solid #ffffff30; padding-top: 10px; }
 .priceBar > div {
   display: grid;
   gap: 5px;
