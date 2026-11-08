@@ -1,5 +1,6 @@
 import { emptyState, money, today } from "./domain";
 import type { Category, State } from "./types";
+import { withUsernames } from "./usernames";
 
 export const DEMO_PASSWORD = "Demo123!";
 export const DEMO_ACCOUNTS = [
@@ -377,5 +378,6 @@ export function createDemoState(now = new Date()): State {
         notes: "Sisa distribusi dikembalikan sore hari.",
       });
   }
+  state.users = withUsernames(state.users);
   return state;
 }

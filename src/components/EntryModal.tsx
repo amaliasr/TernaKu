@@ -32,6 +32,8 @@ import { DraftBoundary, DraftFields, useDraftField, useEntryDraft, useSaleDueDat
 import { draftKey, type DraftAttempt } from "@/lib/entry-drafts";
 import Photo from "./PhotoUpload";
 import { SaleDetail } from "./RecordDialogs";
+import { normalizeUsername } from "@/lib/usernames";
+import UsernameInput, { optionalUsernameHint } from "./UsernameInput";
 import {
   categoryLabel,
   dataFrom,
@@ -639,7 +641,12 @@ function UserForm({ onSave, busy, onClose }: FormProps) {
       onSubmit={(e) => {
         e.preventDefault();
         const data = dataFrom(e.currentTarget);
-        void onSave("user.create", { ...data, target: Number(data.target) });
+        const { username, ...account } = data;
+        void onSave("user.create", {
+          ...account,
+          target: Number(data.target),
+          ...(String(username || "").trim() ? { username: normalizeUsername(String(username)) } : {}),
+        });
       }}
     >
       <div className="row g-3">
@@ -662,6 +669,13 @@ function UserForm({ onSave, busy, onClose }: FormProps) {
             autoComplete="off"
             maxLength={150}
           />
+        </Field>
+        <Field
+          className="col-12"
+          label="Username (opsional)"
+          hint={optionalUsernameHint}
+        >
+          <UsernameInput name="username" />
         </Field>
         <Field
           className="col-12"

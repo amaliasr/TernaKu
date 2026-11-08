@@ -14,6 +14,8 @@ import {
 import { printReceipt } from "@/lib/export";
 import ImagePreview from "./ImagePreview";
 import PhotoUpload from "./PhotoUpload";
+import { normalizeUsername } from "@/lib/usernames";
+import UsernameInput, { optionalUsernameHint, usernameHint } from "./UsernameInput";
 import { InvoiceDialog, InvoiceHistory } from "./InvoiceLedger";
 import type { Pickup, Production, RecordEntity, Sale, User } from "@/lib/types";
 import {
@@ -491,6 +493,9 @@ export function EmployeeDialog({
               ...(isEmployee
                 ? {
                     email: data.email,
+                    ...(normalizeUsername(String(data.username || "")) !== (employee.username || "")
+                      ? { username: normalizeUsername(String(data.username || "")) }
+                      : {}),
                     ...(photoChanged ? { photo } : {}),
                   }
                 : {}),
@@ -545,7 +550,7 @@ export function EmployeeDialog({
                 <Field
                   className="d-block mt-3"
                   label="Alamat email"
-                  hint="Email ini digunakan karyawan untuk masuk ke TernaKu."
+                  hint="Karyawan dapat masuk memakai email ini atau username."
                 >
                   <input
                     className="form-control"
@@ -557,6 +562,18 @@ export function EmployeeDialog({
                     spellCheck={false}
                     maxLength={190}
                     required
+                  />
+                </Field>
+                <Field
+                  className="d-block mt-3"
+                  label="Username"
+                  hint={employee.username ? usernameHint : optionalUsernameHint}
+                >
+                  <UsernameInput
+                    name="username"
+                    defaultValue={employee.username || ""}
+                    autoComplete="off"
+                    required={Boolean(employee.username)}
                   />
                 </Field>
                 <div className="mt-3">

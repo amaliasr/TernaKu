@@ -13,6 +13,8 @@ import {
   Warehouse,
 } from "lucide-react";
 import { useFarm } from "@/lib/store";
+import { normalizeUsername } from "@/lib/usernames";
+import UsernameInput, { optionalUsernameHint, usernameHint } from "./UsernameInput";
 import { Dialog, Field, errorMessage } from "./ModuleUI";
 import PhotoUpload from "./PhotoUpload";
 import Avatar from "./Avatar";
@@ -23,6 +25,7 @@ export default function ProfileSettings({ onClose }: { onClose: () => void }) {
   const { user, command, logout } = useFarm();
   const { theme, setTheme, fontSize, setFontSize } = useTheme();
   const [name, setName] = useState(user?.name || "");
+  const [username, setUsername] = useState(user?.username || "");
   const [photo, setPhoto] = useState(user?.photo || "");
   const [photoChanged, setPhotoChanged] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -31,7 +34,8 @@ export default function ProfileSettings({ onClose }: { onClose: () => void }) {
   const [error, setError] = useState("");
   const [saved, setSaved] = useState(false);
   if (!user) return null;
-  const changed = name.trim() !== user.name || photoChanged;
+  const usernameChanged = normalizeUsername(username) !== (user.username || "");
+  const changed = name.trim() !== user.name || usernameChanged || photoChanged;
   const saving = busy || settingsBusy;
   async function save(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -42,9 +46,11 @@ export default function ProfileSettings({ onClose }: { onClose: () => void }) {
     try {
       const confirmed = await command("profile.update", {
         name: name.trim(),
+        ...(usernameChanged ? { username: normalizeUsername(username) } : {}),
         ...(photoChanged ? { photo } : {}),
       });
       setName(name.trim());
+      setUsername(confirmed.users.find(row => row.id === user?.id)?.username || "");
       setPhoto(confirmed.users.find(row => row.id === user?.id)?.photo || "");
       setPhotoChanged(false);
       setSaved(true);
@@ -117,6 +123,17 @@ export default function ProfileSettings({ onClose }: { onClose: () => void }) {
                 autoComplete="name"
                 maxLength={120}
                 required
+              />
+            </Field>
+            <Field label="Username" hint={`Bisa digunakan untuk masuk, selain email. ${user.username ? usernameHint : optionalUsernameHint}`}>
+              <UsernameInput
+                name="username"
+                value={username}
+                onChange={(event) => {
+                  setUsername(event.target.value.toLowerCase());
+                  setSaved(false);
+                }}
+                required={Boolean(user.username)}
               />
             </Field>
             <PhotoUpload

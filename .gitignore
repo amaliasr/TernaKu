@@ -8,6 +8,7 @@ out/
 !.env.example
 *.tsbuildinfo
 *.log
+__pycache__/
 .runtime/
 test-results/
 release/

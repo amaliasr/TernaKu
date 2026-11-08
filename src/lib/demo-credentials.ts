@@ -1,3 +1,7 @@
+import { accountAccessError } from "./domain";
+import type { User } from "./types";
+import { findLoginUser } from "./usernames";
+
 type SavedCredential = string | { hash: string; saltEmail: string };
 export type DemoCredentials = Record<string, SavedCredential>;
 
@@ -42,6 +46,26 @@ export async function demoPasswordMatches(
   const credential = credentials[key];
   const { hash, saltEmail } = typeof credential === "string" ? { hash: credential, saltEmail: key } : credential;
   return hash === await hashPassword(saltEmail, password);
+}
+
+/** Both aliases resolve to the same account; the password remains salted with its email. */
+export async function demoLoginUser(options: {
+  users: User[];
+  credentials: DemoCredentials;
+  identifier: string;
+  password: string;
+  seedPassword: string;
+  seedUserIds: string[];
+  hashPassword: (email: string, password: string) => Promise<string>;
+}): Promise<User> {
+  const { users, credentials, identifier, password, seedPassword, seedUserIds, hashPassword } = options;
+  const user = findLoginUser(users, identifier);
+  const matches = await demoPasswordMatches(credentials, user?.email ?? "", password,
+    user && seedUserIds.includes(user.id) ? seedPassword : null, hashPassword);
+  if (!user || !matches) throw new Error("Username, email, atau kata sandi tidak sesuai.");
+  const accessError = accountAccessError(user);
+  if (accessError) throw new Error(accessError);
+  return user;
 }
 
 /** A quota failure must not leave the login email out of step with the user record. */

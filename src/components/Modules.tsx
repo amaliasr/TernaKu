@@ -1611,7 +1611,7 @@ function EmployeesPage({ open }: { open: OpenForm }) {
   const rows = state.users
     .filter(
       (u) =>
-        `${u.name} ${u.email}`.toLowerCase().includes(search.toLowerCase()) &&
+        `${u.name} ${u.username || ""} ${u.email}`.toLowerCase().includes(search.toLowerCase()) &&
         (!status || accountStatus(u) === status),
     )
     .sort((a, b) => omzet(b.id) - omzet(a.id));
@@ -1703,8 +1703,8 @@ function EmployeesPage({ open }: { open: OpenForm }) {
             <Search size={17} />
             <input
               className="form-control"
-              aria-label="Cari nama atau email karyawan"
-              placeholder="Cari nama atau email karyawan…"
+              aria-label="Cari nama, username, atau email karyawan"
+              placeholder="Cari nama, username, atau email…"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
             />
@@ -1747,6 +1747,7 @@ function EmployeesPage({ open }: { open: OpenForm }) {
                           <Avatar user={u} size="sm" />
                           <div>
                             <strong>{u.name}</strong>
+                            {u.username && <small>Username: {u.username}</small>}
                             <small>{u.email}</small>
                           </div>
                         </div>

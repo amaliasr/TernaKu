@@ -24,6 +24,8 @@ jobs:
       - uses: actions/checkout@v7
         with:
           persist-credentials: false
+      - name: Check legacy and username schema compatibility
+        run: python3 deploy/vps/production/test_restore.py
       - name: Start an isolated empty MySQL 8.4 target
         run: |
           docker network create ternaku-prod-ingress
@@ -36,7 +38,7 @@ jobs:
           dump="$RUNNER_TEMP/synthetic.sql"
           sed -e '/^INSERT IGNORE INTO /d' -e 's/DEFAULT CHARSET=utf8mb4;/DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_uca1400_ai_ci;/' api/schema.sql > "$dump"
           cat >> "$dump" <<'SQL'
-          INSERT INTO users(id,name,email,password_hash,role) VALUES ('demo','Test','test@example.invalid','fake','admin');
+          INSERT INTO users(id,name,email,username,password_hash,role) VALUES ('demo','Test','test@example.invalid','test.username','fake','admin');
           INSERT INTO tokens(token_hash,user_id,expires_at) VALUES (REPEAT('a',64),'demo','2030-01-01');
           INSERT INTO command_requests(user_id,request_id,fingerprint) VALUES ('demo','once',REPEAT('f',64));
           INSERT INTO command_mutex VALUES (1,7);
@@ -62,6 +64,10 @@ jobs:
               SELECT AUTO_INCREMENT FROM information_schema.tables WHERE table_schema=DATABASE() AND table_name=\"records\";
             "
           ' | grep -x 48
+          docker compose exec -T db sh -ec '
+            export MYSQL_PWD="$MYSQL_PASSWORD"
+            exec mysql -N -s -u "$MYSQL_USER" "$MYSQL_DATABASE" -e "SELECT username FROM users WHERE id=\"demo\";"
+          ' | grep -Fx 'test.username'
       - name: Verify production service readiness with disposable notification keys
         run: |
           umask 077

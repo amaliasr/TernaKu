@@ -80,11 +80,17 @@ def schema(cid, db):
     for row in rows:
         table, col = row.split("\t")
         actual.setdefault(table, []).append(col)
-    require(actual == {t: cols.split() for t, (cols, _) in TABLES.items()}, "Unexpected table or column layout in " + db)
+    expected = {t: cols.split() for t, (cols, _) in TABLES.items()}
+    legacy = {t: [c for c in cols if c != "username"] for t, cols in actual.items()}
+    require(legacy == expected and actual.get("users", []).count("username") <= 1,
+            "Unexpected table or column layout in " + db)
+    require(all("username" not in cols for t, cols in actual.items() if t != "users"),
+            "Unexpected username column outside users in " + db)
     require(root_sql(cid, "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='" + db +
                      "' AND engine='InnoDB';") == "7", "All seven tables must be InnoDB.")
     require(root_sql(cid, "SELECT COUNT(*) FROM information_schema.triggers WHERE trigger_schema='" + db + "';") == "0",
             "Unexpected database triggers.")
+    return "username" in actual["users"]
 
 
 FRESH = """(SELECT COUNT(*) FROM users)=0 AND (SELECT COUNT(*) FROM records)=0
@@ -124,7 +130,7 @@ def next_sequence_query(db):
     return "SELECT AUTO_INCREMENT FROM information_schema.tables WHERE table_schema='" + db + "' AND table_name='records'"
 
 
-def transfer(cid, scratch, next_sequence):
+def transfer(cid, scratch, next_sequence, include_username=False):
     # An assertion failure terminates the batch before COMMIT. Closing the
     # connection rolls back the entire data transfer, including the two seed rows.
     statements = ["SET NAMES utf8mb4; SET time_zone='+00:00';",
@@ -140,6 +146,8 @@ def transfer(cid, scratch, next_sequence):
     for name, (columns, pk) in TABLES.items():
         src, dst = scratch + "." + name, "ternaku." + name
         columns = columns.split()
+        if name == "users" and include_username:
+            columns.append("username")
         names = ",".join("`" + c + "`" for c in columns)
         statements.append(f"INSERT INTO {dst} ({names}) SELECT {names} FROM {src};")
         check(f"(SELECT COUNT(*) FROM {src})=(SELECT COUNT(*) FROM {dst})")
@@ -178,7 +186,7 @@ def main():
         require(set(expected) == set(TABLES), "The counts must include all seven tables.")
     cid = offline_db()
     require(root_sql(cid, "SELECT VERSION() LIKE '8.4.%';") == "1", "Expected MySQL 8.4.")
-    schema(cid, "ternaku")
+    target_username = schema(cid, "ternaku")
     require(root_sql(cid, "SELECT " + FRESH + ";") == "1", "Production contains existing data. Refusing to overwrite.")
     suffix = secrets.token_hex(8)
     scratch, account, password = "ternaku_restore_" + suffix, "tmp_" + suffix, secrets.token_hex(28)
@@ -190,7 +198,9 @@ def main():
             import_scratch(cid, args.dump, args.sha256.lower(), scratch, account, password)
         finally:
             root_sql(cid, f"DROP USER '{account}'@'localhost';")
-        schema(cid, scratch)
+        source_username = schema(cid, scratch)
+        require(not source_username or target_username,
+                "Source contains usernames. Upgrade the empty target schema before restoring.")
         source = counts(cid, scratch)
         require(expected is None or source == expected, "Independent source counts do not match this dump.")
         require(root_sql(cid, "SELECT COUNT(*) FROM " + scratch + ".users WHERE active=1 AND role='admin';") != "0", "No active admin in source.")
@@ -201,7 +211,7 @@ def main():
         print("Verified dump counts", source, flush=True)
         if args.apply:
             require(offline_db() == cid, "Database container changed before restore.")
-            transfer(cid, scratch, next_sequence)
+            transfer(cid, scratch, next_sequence, source_username)
             require(counts(cid, "ternaku") == source, "Post-commit counts differ. Keep production offline.")
             print("Committed and verified every column in every row, including photo payloads, sessions, push subscriptions and pending jobs.")
     finally:
