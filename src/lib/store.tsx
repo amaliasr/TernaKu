@@ -237,7 +237,10 @@ export function FarmProvider({ children }: { children: ReactNode }) {
         (u) => u.id === userRef.current?.id && !accountAccessError(u),
       );
       if (updated) {
-        if (userRef.current.role !== updated.role) sensitiveCommandRetries.current.clear();
+        if (userRef.current.role !== updated.role || !!userRef.current.can_check_stock !== !!updated.can_check_stock) {
+          sensitiveCommandRetries.current.clear();
+          mediaCache.current.clear();
+        }
         userRef.current = updated;
         setUser(updated);
       } else {
@@ -247,7 +250,7 @@ export function FarmProvider({ children }: { children: ReactNode }) {
     }
   }, []);
   const setSessionUser = useCallback((next: User | null) => {
-    if (userRef.current?.id !== next?.id || userRef.current?.role !== next?.role) {
+    if (userRef.current?.id !== next?.id || userRef.current?.role !== next?.role || !!userRef.current?.can_check_stock !== !!next?.can_check_stock) {
       sensitiveCommandRetries.current.clear();
       sync.current.invalidate();
       liveCommandTail.current = Promise.resolve();
@@ -306,7 +309,7 @@ export function FarmProvider({ children }: { children: ReactNode }) {
               if (snapshot.user.id !== sessionUserId.current) throw new Error("Data akun tidak sesuai. Silakan muat ulang aplikasi.");
               const accessError = accountAccessError(snapshot.user);
               if (accessError) throw new ApiError(accessError, 401);
-              if (snapshot.user.role !== userRef.current?.role || (snapshot.more && page >= 7)) {
+              if (snapshot.user.role !== userRef.current?.role || !!snapshot.user.can_check_stock !== !!userRef.current?.can_check_stock || (snapshot.more && page >= 7)) {
                 next = await request<State>("/bootstrap?compact=1", refreshToken);
                 full = true;
                 if (!isState(next)) throw new Error("Struktur data API tidak sesuai.");

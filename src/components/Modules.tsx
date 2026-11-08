@@ -55,6 +55,7 @@ import ImagePreview from "./ImagePreview";
 import Avatar from "./Avatar";
 import PendingHarvest from "./PendingHarvest";
 import StockCount from "./StockCount";
+import StockChecks from "./StockChecks";
 import {
   adjustmentMethodLabel,
   businessDate,
@@ -871,6 +872,7 @@ function StockPage({ open }: { open: OpenForm }) {
           },
         ]}
       />
+      <StockChecks />
       <StockCount />
       <PendingHarvest />
       <section className="panel">

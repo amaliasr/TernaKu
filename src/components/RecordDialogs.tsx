@@ -92,6 +92,7 @@ export function CorrectionDialog({
   const direct =
     user?.role === "admin" ||
     (entity === "production" && !record.locked && record.user_id === user?.id);
+  const canCancelProduction = entity === "production" && user?.role === "admin";
   return (
     <Dialog
       title={direct ? "Koreksi pencatatan" : "Ajukan koreksi"}
@@ -164,7 +165,7 @@ export function CorrectionDialog({
                   name="eggs"
                   className="form-control"
                   type="number"
-                  min="1"
+                  min={canCancelProduction ? "0" : "1"}
                   step="1"
                   defaultValue={(record as Production).eggs}
                   required
@@ -175,7 +176,7 @@ export function CorrectionDialog({
                   name="kg"
                   className="form-control"
                   type="number"
-                  min="0.001"
+                  min={canCancelProduction ? "0" : "0.001"}
                   step="0.001"
                   defaultValue={(record as Production).kg}
                   required
@@ -194,6 +195,7 @@ export function CorrectionDialog({
               </Field>
             </div>
           )}
+          {canCancelProduction && <p className="small text-muted mt-2">Untuk membatalkan catatan panen yang keliru, isi butir, berat, dan krat dengan 0. Catatan dan alasan perubahan tetap disimpan.</p>}
           {entity === "sale" && (
             <>
               <Field className="d-block" label="Pelanggan">
@@ -460,6 +462,8 @@ export function EmployeeDialog({ employee, onClose, onSaved, onDeleted }: {
   const [photoChanged, setPhotoChanged] = useState(false);
   const [photoBusy, setPhotoBusy] = useState(false);
   const [passwordEdit, setPasswordEdit] = useState(false);
+  const [nextRole, setNextRole] = useState(employee.role);
+  const [canCheckStock, setCanCheckStock] = useState(Boolean(employee.can_check_stock));
   const [deleting, setDeleting] = useState(false);
   const savingRef = useRef(false);
   const photoBusyRef = useRef(false);
@@ -486,6 +490,8 @@ export function EmployeeDialog({ employee, onClose, onSaved, onDeleted }: {
             id: employee.id, name: data.name, email: data.email, target: Number(data.target || 0),
             ...(normalizeUsername(String(data.username || "")) !== (employee.username || "") ? { username: normalizeUsername(String(data.username || "")) } : {}),
             ...(photoChanged ? { photo } : {}),
+            ...(user?.role === "admin" && (canCheckStock && nextRole === "employee") !== Boolean(employee.can_check_stock)
+              ? { can_check_stock: canCheckStock && nextRole === "employee" } : {}),
             ...(!protectedAccount && reviewed && data.role !== employee.role ? { role: data.role } : {}),
             ...(passwordEdit && !protectedAccount ? { password: data.password, password_confirmation: data.password_confirmation } : {}),
           });
@@ -514,10 +520,18 @@ export function EmployeeDialog({ employee, onClose, onSaved, onDeleted }: {
             <UsernameInput name="username" defaultValue={employee.username || ""} autoComplete="off" required={Boolean(employee.username)} />
           </Field>
           <Field className="d-block mt-3" label="Peran akun" hint={employee.id === user?.id ? "Jika menjadi karyawan, akses pengelolaan Anda akan langsung dibatasi." : "Atasan dapat mengelola harga, laporan, dan akun tim."}>
-            <select className="form-select" name="role" defaultValue={employee.role} disabled={protectedAccount || !reviewed}>
+            <select className="form-select" name="role" value={nextRole} onChange={event => setNextRole(event.target.value as User["role"])} disabled={protectedAccount || !reviewed}>
               <option value="employee">Karyawan</option><option value="admin">{protectedAccount ? "Superadmin" : "Atasan"}</option>
             </select>
           </Field>
+          {user?.role === "admin" && <div className="mt-3 border rounded-3 p-3">
+            <label className="d-flex align-items-start gap-2 py-2">
+              <input className="form-check-input mt-1" type="checkbox" checked={canCheckStock && nextRole === "employee"}
+                disabled={nextRole !== "employee" || !reviewed || !employee.active} onChange={event => setCanCheckStock(event.target.checked)} />
+              <span>Petugas pemeriksa gudang</span>
+            </label>
+            <p className="small text-muted mb-0">Petugas mencocokkan hasil panen dan stok gudang setiap hari, lalu melaporkan jika ada selisih. Penugasan tersedia untuk karyawan aktif yang sudah disetujui.</p>
+          </div>}
           <div className="mt-3"><PhotoUpload value={photo} photoRef={photoChanged ? undefined : employee.photo_ref}
             onChange={value => { setPhoto(value); setPhotoChanged(true); }}
             onBusyChange={value => { photoBusyRef.current = value; setPhotoBusy(value); }}

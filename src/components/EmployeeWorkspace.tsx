@@ -2,7 +2,7 @@
 
 import { InvoiceTasks } from "./InvoiceLedger";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowLeft,
   ArrowRight,
@@ -12,6 +12,7 @@ import {
   ClipboardList,
   Egg,
   House,
+  History,
   LogOut,
   Package,
   Pencil,
@@ -26,7 +27,6 @@ import {
 import { useFarm } from "@/lib/store";
 import {
   activePrice,
-  businessDate,
   dateLabel,
   eggStock,
   isProductionStocked,
@@ -35,7 +35,8 @@ import {
   pickupBalance,
   today,
 } from "@/lib/domain";
-import type { Pickup, Sale } from "@/lib/types";
+import type { Pickup, Production, Sale } from "@/lib/types";
+import { employeeHistoryWindow, employeeRecords, nextJakartaDayDelay } from "@/lib/employee-history";
 import EntryModal from "./EntryModal";
 import type { SaleStart } from "./SaleStockSource";
 import InstallApp from "./InstallApp";
@@ -45,6 +46,7 @@ import ProfileSettings from "./ProfileSettings";
 import Avatar from "./Avatar";
 import ImagePreview from "./ImagePreview";
 import PendingHarvest from "./PendingHarvest";
+import StockChecks from "./StockChecks";
 import { usePageNavigation } from "@/lib/navigation";
 import Modules from "./Modules";
 import Reports from "./Reports";
@@ -65,6 +67,9 @@ type Page =
   | "stock"
   | "feed"
   | "reports"
+  | "history"
+  | "team-records"
+  | "invoices"
   | "corrections";
 const tabs = [
   { id: "home", label: "Beranda", icon: House },
@@ -79,6 +84,9 @@ const pageNames: Record<Page, string> = {
   stock: "Telur di gudang",
   feed: "Pakan ternak",
   reports: "Laporan saya",
+  history: "Riwayat saya",
+  "team-records": "Catatan seluruh tim",
+  invoices: "Tagihan saya",
   corrections: "Perbaikan catatan",
 };
 const quantity = (value: number) => number(value, 3);
@@ -113,17 +121,69 @@ export default function EmployeeWorkspace() {
   const [paymentSale, setPaymentSale] = useState<Sale | null>(null);
   const [correction, setCorrection] = useState<SelectedRecord | null>(null);
   const [refreshing, setRefreshing] = useState(false);
+  const [day, setDay] = useState(() => today());
+  const [historyKind, setHistoryKind] = useState<"production" | "sales">("production");
+  const [historyDates, setHistoryDates] = useState<{ from: string; to: string } | null>(null);
+  const [historyEmployee, setHistoryEmployee] = useState("");
+  const [productionDetail, setProductionDetail] = useState<Production | null>(null);
+  const [readingNotification, setReadingNotification] = useState<string | null>(null);
+  const [notificationError, setNotificationError] = useState("");
+  const notificationPending = useRef(false);
+
+  useEffect(() => {
+    let currentDay = today();
+    let timer: number;
+    const checkDay = () => {
+      window.clearTimeout(timer);
+      const nextDay = today();
+      setDay(nextDay);
+      if (currentDay !== nextDay) {
+        currentDay = nextDay;
+        void refresh().catch(() => {});
+      }
+      timer = window.setTimeout(checkDay, nextJakartaDayDelay());
+    };
+    const onVisible = () => { if (document.visibilityState === "visible") checkDay(); };
+    checkDay();
+    window.addEventListener("focus", checkDay);
+    window.addEventListener("pageshow", checkDay);
+    document.addEventListener("visibilitychange", onVisible);
+    return () => {
+      window.clearTimeout(timer);
+      window.removeEventListener("focus", checkDay);
+      window.removeEventListener("pageshow", checkDay);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
+  }, [refresh]);
 
   useEffect(() => {
     setShown(8);
     setMore(false);
-  }, [page]);
+  }, [page, day, historyKind, historyDates, historyEmployee]);
 
   useEffect(() => {
     if (!confirmation) return;
     const timer = window.setTimeout(() => setConfirmation(null), 8000);
     return () => window.clearTimeout(timer);
   }, [confirmation]);
+
+  const historyWindow = useMemo(() => employeeHistoryWindow(day), [day]);
+  const historyRange = historyDates ? {
+    from: historyDates.from && historyDates.from < historyWindow.from ? historyWindow.from : historyDates.from > day ? day : historyDates.from,
+    to: historyDates.to > day ? day : historyDates.to && historyDates.to < historyWindow.from ? historyWindow.from : historyDates.to,
+  } : historyWindow;
+  const teamHistory = page === "team-records" && user?.can_check_stock === true;
+  const harvestedToday = useMemo(() => user ? employeeRecords(state.productions, user, { from: day, to: day }) : [], [state.productions, user?.id, day]);
+  const salesToday = useMemo(() => user ? employeeRecords(state.sales, user, { from: day, to: day }) : [], [state.sales, user?.id, day]);
+  const historyProductions = useMemo(() => user ? employeeRecords(state.productions, user, historyRange, teamHistory ? "team" : "mine", historyEmployee) : [],
+    [state.productions, user?.id, user?.can_check_stock, historyRange.from, historyRange.to, teamHistory, historyEmployee]);
+  const historySales = useMemo(() => user ? employeeRecords(state.sales, user, historyRange, teamHistory ? "team" : "mine", historyEmployee) : [],
+    [state.sales, user?.id, user?.can_check_stock, historyRange.from, historyRange.to, teamHistory, historyEmployee]);
+  const historyOwners = useMemo(() => {
+    if (!teamHistory) return [];
+    const ids = new Set([...state.productions, ...state.sales].map(row => row.user_id));
+    return state.users.filter(owner => ids.has(owner.id));
+  }, [state.users, state.productions, state.sales, teamHistory]);
 
   if (!user) return null;
   const go = (next: Page) => {
@@ -133,10 +193,6 @@ export default function EmployeeWorkspace() {
     window.scrollTo({ top: 0, behavior: "auto" });
   };
   const price = activePrice(state);
-  const ownProductions = latest(
-    state.productions.filter((row) => row.user_id === user.id),
-  );
-  const ownSales = latest(state.sales.filter((row) => row.user_id === user.id));
   const ownPickups = latest(
     state.pickups.filter((row) => row.user_id === user.id),
   );
@@ -147,11 +203,6 @@ export default function EmployeeWorkspace() {
     state.notifications.filter((row) => row.user_id === user.id),
   );
   const unread = notifications.filter((row) => !row.read).length;
-  const day = today();
-  const harvestedToday = ownProductions.filter(
-    (row) => businessDate(row.date) === day,
-  );
-  const salesToday = ownSales.filter((row) => businessDate(row.date) === day);
   const checkedAt = priceSync.lastSuccessAt
     ? new Intl.DateTimeFormat("id-ID", {
         timeZone: "Asia/Jakarta",
@@ -176,6 +227,23 @@ export default function EmployeeWorkspace() {
     } finally {
       setRefreshing(false);
     }
+  }
+
+  function openHistory(kind: "production" | "sales", team = false) {
+    setHistoryKind(kind);
+    setHistoryDates(null);
+    setHistoryEmployee("");
+    go(team ? "team-records" : "history");
+  }
+
+  async function markNotificationRead(id: string) {
+    if (notificationPending.current) return;
+    notificationPending.current = true;
+    setReadingNotification(id);
+    setNotificationError("");
+    try { await command("notification.read", { id }); }
+    catch (cause) { setNotificationError(cause instanceof Error ? cause.message : "Pemberitahuan belum dapat ditandai. Coba lagi."); }
+    finally { notificationPending.current = false; setReadingNotification(null); }
   }
 
   return (
@@ -378,6 +446,12 @@ export default function EmployeeWorkspace() {
             )}
             <InstallApp />
             <PushNotifications />
+            <button className={styles.historyLink} onClick={() => openHistory("production")}>
+              <History size={22} /><span><strong>Riwayat saya</strong><small>Panen dan penjualan 30 hari terakhir</small></span><ArrowRight size={20} />
+            </button>
+            {user.can_check_stock && <button className={styles.historyLink} onClick={() => openHistory("production", true)}>
+              <ClipboardList size={22} /><span><strong>Catatan seluruh tim</strong><small>Untuk pemeriksaan stok gudang</small></span><ArrowRight size={20} />
+            </button>}
             <section className={styles.moreSection}>
               <button
                 className={styles.moreToggle}
@@ -436,7 +510,7 @@ export default function EmployeeWorkspace() {
         {page === "production" && (
           <>
             <PageHeading
-              title="Catatan panen"
+              title="Panen hari ini"
               description={state.settings?.harvest_auto_stock !== false ? "Catat hasil telur dari kandang. Panen baru langsung menambah stok gudang." : "Catat hasil telur dari kandang. Setelah disimpan, terima panen di menu Gudang agar stok bertambah."}
             />
             <button
@@ -446,67 +520,34 @@ export default function EmployeeWorkspace() {
               <Plus size={23} /> Catat panen baru
             </button>
             <div className={styles.records}>
-              {ownProductions.slice(0, shown).map((row) => (
-                <article className={styles.record} key={row.id}>
-                  <div className={styles.recordTop}>
-                    <span
-                      className={
-                        row.category === "good"
-                          ? styles.goodBadge
-                          : styles.crackedBadge
-                      }
-                    >
-                      {categoryLabel(row.category)}
-                    </span>
-                    <small>{dateLabel(row.date)}</small>
-                  </div>
-                  <div className={styles.recordQuantity}>
-                    <strong>
-                      {quantity(row.kg)} <small>kg</small>
-                    </strong>
-                    <span>
-                      {number(row.eggs)} butir · {quantity(row.trays)} krat
-                    </span>
-                  </div>
-                  <p>
-                    {state.barns.find((barn) => barn.id === row.barn_id)
-                      ?.name || "Kandang"}
-                  </p>
-                  {row.notes && <p className={styles.notes}>{row.notes}</p>}
-                  <p className={isProductionStocked(row) ? "text-success" : "text-warning"}>{isProductionStocked(row) ? "Sudah masuk gudang" : "Belum masuk gudang"}</p>
-                  {(row.photo || row.photo_ref) && (
-                    <ImagePreview src={row.photo} photoRef={row.photo_ref} alt="Foto panen" />
-                  )}
-                  <button
-                    className={styles.textButton}
-                    onClick={() =>
-                      setCorrection({ entity: "production", record: row })
-                    }
-                  >
-                    <Pencil size={17} />{" "}
-                    {row.locked ? "Ajukan perbaikan" : "Perbaiki catatan"}
-                  </button>
-                </article>
+              {harvestedToday.slice(0, shown).map((row) => (
+                <ProductionCard key={row.id} row={row}
+                  barnName={state.barns.find(barn => barn.id === row.barn_id)?.name || "Kandang"}
+                  onDetail={() => setProductionDetail(row)}
+                  onCorrect={() => setCorrection({ entity: "production", record: row })} />
               ))}
             </div>
-            {ownProductions.length === 0 && (
+            {harvestedToday.length === 0 && (
               <EmptyNote
                 icon="egg"
-                title="Belum ada catatan panen"
+                title="Belum ada catatan panen hari ini"
                 text="Tekan Catat panen baru untuk mulai."
               />
             )}
-            {ownProductions.length > shown && (
+            {harvestedToday.length > shown && (
               <MoreRecords onClick={() => setShown(shown + 8)} />
             )}
+            <button className={styles.historyLink} onClick={() => openHistory("production")}>
+              <History size={22} /><span><strong>Lihat riwayat panen</strong><small>Catatan saya selama 30 hari terakhir</small></span><ArrowRight size={20} />
+            </button>
           </>
         )}
 
         {page === "sales" && (
           <>
             <PageHeading
-              title="Catatan penjualan"
-              description="Lihat penjualan dan nota Anda di sini."
+              title="Penjualan hari ini"
+              description={`Penjualan Anda pada ${dateLabel(day)}. Catatan sebelumnya ada di Riwayat.`}
             />
             <button
               className={styles.primaryButton}
@@ -515,84 +556,88 @@ export default function EmployeeWorkspace() {
             >
               <Plus size={23} /> Catat penjualan baru
             </button>
-            <InvoiceTasks invoices={ownSales} />
             <div className={styles.records}>
-              {ownSales.slice(0, shown).map((row) => (
-                <article className={styles.record} key={row.id}>
-                  <div className={styles.recordTop}>
-                    <span
-                      className={
-                        row.balance === 0
-                          ? styles.goodBadge
-                          : styles.crackedBadge
-                      }
-                    >
-                      {row.balance === 0
-                        ? "Lunas"
-                        : row.paid > 0
-                          ? "Dibayar sebagian"
-                          : "Belum lunas"}
-                    </span>
-                    <small>{dateLabel(row.date)}</small>
-                  </div>
-                  <h2 className={styles.saleTotal}>
-                    {row.total === 0 ? "Gratis" : money(row.total)}
-                  </h2>
-                  <p>{row.customer || "Pelanggan umum"}</p>
-                  <div className={styles.saleItems}>
-                    {row.items.map((item) => (
-                      <span key={item.id}>
-                        {categoryLabel(item.category)} · {quantity(item.kg)} kg
-                        {item.category === "cracked" &&
-                          item.unit_price === 0 &&
-                          " · Gratis"}
-                      </span>
-                    ))}
-                  </div>
-                  {row.balance > 0 && (
-                    <p className={styles.balance}>
-                      Belum dibayar: <strong>{money(row.balance)}</strong>
-                    </p>
-                  )}
-                  <div className={styles.recordButtons}>
-                    <button
-                      className={styles.secondaryButton}
-                      onClick={() => setSaleDetail(row)}
-                    >
-                      <ReceiptText size={18} /> Lihat nota
-                    </button>
-                    {row.balance > 0 && (
-                      <button
-                        className={styles.secondaryButton}
-                        onClick={() => setPaymentSale(row)}
-                      >
-                        Catat pembayaran
-                      </button>
-                    )}
-                  </div>
-                  <button
-                    className={styles.textButton}
-                    onClick={() =>
-                      setCorrection({ entity: "sale", record: row })
-                    }
-                  >
-                    <Pencil size={17} /> Ajukan perbaikan
-                  </button>
-                </article>
+              {salesToday.slice(0, shown).map((row) => (
+                <SaleCard key={row.id} row={row} onDetail={() => setSaleDetail(row)}
+                  onPayment={() => setPaymentSale(row)}
+                  onCorrect={() => setCorrection({ entity: "sale", record: row })} />
               ))}
             </div>
-            {ownSales.length === 0 && (
+            {salesToday.length === 0 && (
               <EmptyNote
                 icon="sale"
-                title="Belum ada penjualan"
+                title="Belum ada catatan penjualan hari ini"
                 text="Setelah menjual telur, catat hasilnya di sini."
               />
             )}
-            {ownSales.length > shown && (
+            {salesToday.length > shown && (
               <MoreRecords onClick={() => setShown(shown + 8)} />
             )}
+            <button className={styles.historyLink} onClick={() => openHistory("sales")}>
+              <History size={22} /><span><strong>Lihat riwayat penjualan</strong><small>Nota saya selama 30 hari terakhir</small></span><ArrowRight size={20} />
+            </button>
+            <button className={styles.historyLink} onClick={() => go("invoices")}>
+              <ReceiptText size={22} /><span><strong>Tagihan saya</strong><small>Pembayaran pelanggan dari semua tanggal</small></span><ArrowRight size={20} />
+            </button>
           </>
         )}
+
+        {(page === "history" || page === "team-records") && (
+          <>
+            <button className={styles.backButton} onClick={() => go(historyKind === "production" ? "production" : "sales")}>
+              <ArrowLeft size={20} /> Kembali ke catatan hari ini
+            </button>
+            <PageHeading title={teamHistory ? "Catatan seluruh tim" : "Riwayat saya"}
+              description={teamHistory ? "Panen dan penjualan seluruh tim dalam 30 hari terakhir. Gunakan untuk memeriksa stok gudang." : "Lihat kembali panen, penjualan, dan nota Anda selama 30 hari terakhir."} />
+            {page === "team-records" && !user.can_check_stock && <p className={styles.warning}>Akses catatan tim hanya untuk pemeriksa stok. Di bawah ini adalah catatan Anda sendiri.</p>}
+            {teamHistory && <p className={styles.scopeNote}>Hanya untuk melihat. Catatan saya di Beranda tetap dihitung dari pekerjaan saya sendiri.</p>}
+            <div className={styles.historyTabs} aria-label="Jenis riwayat">
+              <button aria-pressed={historyKind === "production"} onClick={() => setHistoryKind("production")}><Egg size={21} /> Panen</button>
+              <button aria-pressed={historyKind === "sales"} onClick={() => setHistoryKind("sales")}><ShoppingBag size={21} /> Penjualan</button>
+            </div>
+            <div className={styles.historyFilters}>
+              {teamHistory && <label className={styles.employeeFilter}>Nama petugas
+                <select className="form-select" aria-label="Nama petugas" value={historyEmployee} onChange={event => setHistoryEmployee(event.target.value)}>
+                  <option value="">Seluruh tim</option>
+                  {historyOwners.map(owner => <option value={owner.id} key={owner.id}>{owner.name}{owner.deleted_at ? " (akun dihapus)" : ""}</option>)}
+                </select>
+              </label>}
+              <label>Dari tanggal<input className="form-control" type="date" min={historyWindow.from} max={day} value={historyRange.from}
+                onChange={event => setHistoryDates({ ...historyRange, from: event.target.value })} /></label>
+              <label>Sampai tanggal<input className="form-control" type="date" min={historyWindow.from} max={day} value={historyRange.to}
+                onChange={event => setHistoryDates({ ...historyRange, to: event.target.value })} /></label>
+              <button className={styles.textButton} onClick={() => { setHistoryDates(null); setHistoryEmployee(""); }}>Tampilkan 30 hari terakhir</button>
+            </div>
+            {(!historyRange.from || !historyRange.to || historyRange.from > historyRange.to) ?
+              <p className={styles.warning} role="alert">Pilih tanggal awal dan akhir. Tanggal akhir harus sama atau setelah tanggal awal.</p> :
+              <p className={styles.rangeLabel}>{dateLabel(historyRange.from)}–{dateLabel(historyRange.to)} · {historyKind === "production" ? historyProductions.length : historySales.length} catatan</p>}
+            <div className={styles.records}>
+              {historyKind === "production" ? historyProductions.slice(0, shown).map(row => <ProductionCard key={row.id} row={row}
+                barnName={state.barns.find(barn => barn.id === row.barn_id)?.name || "Kandang"}
+                ownerName={teamHistory ? state.users.find(owner => owner.id === row.user_id)?.name || "Petugas" : undefined}
+                onDetail={() => setProductionDetail(row)}
+                onCorrect={!teamHistory && row.user_id === user.id ? () => setCorrection({ entity: "production", record: row }) : undefined} />) :
+                historySales.slice(0, shown).map(row => <SaleCard key={row.id} row={row}
+                  ownerName={teamHistory ? state.users.find(owner => owner.id === row.user_id)?.name || "Petugas" : undefined}
+                  onDetail={() => setSaleDetail(row)}
+                  onPayment={!teamHistory && row.user_id === user.id ? () => setPaymentSale(row) : undefined}
+                  onCorrect={!teamHistory && row.user_id === user.id ? () => setCorrection({ entity: "sale", record: row }) : undefined} />)}
+            </div>
+            {(historyKind === "production" ? historyProductions.length : historySales.length) === 0 && <EmptyNote
+              icon={historyKind === "production" ? "egg" : "sale"} title="Tidak ada catatan pada tanggal ini"
+              text="Coba pilih tanggal lain dalam 30 hari terakhir." />}
+            {(historyKind === "production" ? historyProductions.length : historySales.length) > shown && <MoreRecords onClick={() => setShown(shown + 8)} />}
+            {!teamHistory && historyKind === "sales" && <button className={styles.historyLink} onClick={() => go("invoices")}>
+              <ReceiptText size={22} /><span><strong>Tagihan saya</strong><small>Termasuk nota lebih dari 30 hari lalu</small></span><ArrowRight size={20} />
+            </button>}
+          </>
+        )}
+
+        {page === "invoices" && <>
+          <button className={styles.backButton} onClick={() => go("sales")}><ArrowLeft size={20} /> Kembali ke penjualan hari ini</button>
+          <PageHeading title="Tagihan saya" description="Pantau pembayaran pelanggan dari seluruh penjualan Anda, termasuk nota lama. Pilih tagihan untuk mencatat pembayaran." />
+          <InvoiceTasks invoices={state.sales.filter(row => row.user_id === user.id)} />
+        </>}
 
         {page === "stock" && (
           <>
@@ -600,6 +645,10 @@ export default function EmployeeWorkspace() {
               title="Telur di gudang"
               description="Hanya telur yang sudah diterima di gudang yang tersedia untuk diambil dan dijual."
             />
+            {user.can_check_stock && <StockChecks />}
+            {user.can_check_stock && <button className={styles.historyLink} onClick={() => openHistory("production", true)}>
+              <ClipboardList size={22} /><span><strong>Lihat catatan seluruh tim</strong><small>Bandingkan panen dan penjualan</small></span><ArrowRight size={20} />
+            </button>}
             <PendingHarvest />
             <div className={styles.stockCards}>
               {[
@@ -817,6 +866,13 @@ export default function EmployeeWorkspace() {
           onClose={() => setSaleDetail(null)}
         />
       )}
+      {productionDetail && <Dialog title="Rincian panen" onClose={() => setProductionDetail(null)}>
+        <div className="modal-body-custom">
+          <ProductionCard row={state.productions.find(row => row.id === productionDetail.id) || productionDetail}
+            barnName={state.barns.find(barn => barn.id === productionDetail.barn_id)?.name || "Kandang"}
+            ownerName={state.users.find(owner => owner.id === productionDetail.user_id)?.name || "Petugas"} expanded />
+        </div>
+      </Dialog>}
       {paymentSale && (
         <PaymentDialog
           sale={
@@ -837,6 +893,14 @@ export default function EmployeeWorkspace() {
           onClose={() => setNotificationsOpen(false)}
         >
           <div className={styles.notifications}>
+            {notificationError && <p className={styles.warning} role="alert">{notificationError}</p>}
+            <div className={styles.notificationActions}>
+              <p aria-live="polite">{unread > 0 ? `${unread} pemberitahuan belum dibaca` : "Semua pemberitahuan sudah dibaca"}</p>
+              <button className={styles.secondaryButton} disabled={unread === 0 || readingNotification !== null}
+                onClick={() => void markNotificationRead("all")}>
+                <Check size={20} /> {readingNotification === "all" ? "Menandai pemberitahuan…" : "Tandai sudah dibaca semua"}
+              </button>
+            </div>
             {notifications.length === 0 && <p>Belum ada pemberitahuan.</p>}
             {notifications.map((row) => (
               <article
@@ -850,20 +914,10 @@ export default function EmployeeWorkspace() {
                 <small>{dateLabel(row.created_at, true)}</small>
                 {!row.read && (
                   <button
-                    onClick={async () => {
-                      try {
-                        await command("notification.read", { id: row.id });
-                      } catch (cause) {
-                        setNotice(
-                          cause instanceof Error
-                            ? cause.message
-                            : "Pemberitahuan belum dapat ditandai.",
-                        );
-                        setNotificationsOpen(false);
-                      }
-                    }}
+                    disabled={readingNotification !== null}
+                    onClick={() => void markNotificationRead(row.id)}
                   >
-                    <Check size={18} /> Sudah dibaca
+                    <Check size={18} /> {readingNotification === row.id ? "Menandai…" : "Sudah dibaca"}
                   </button>
                 )}
               </article>
@@ -873,6 +927,50 @@ export default function EmployeeWorkspace() {
       )}
     </div>
   );
+}
+
+function ProductionCard({ row, barnName, ownerName, onDetail, onCorrect, expanded = false }: {
+  row: Production; barnName: string; ownerName?: string; onDetail?: () => void; onCorrect?: () => void; expanded?: boolean;
+}) {
+  return <article className={styles.record}>
+    <div className={styles.recordTop}>
+      <span className={row.category === "good" ? styles.goodBadge : styles.crackedBadge}>{categoryLabel(row.category)}</span>
+      <small>{dateLabel(row.date, row.date.length > 10)}{row.date.length > 10 ? " WIB" : ""}</small>
+    </div>
+    {ownerName && <p className={styles.recordOwner}>Dicatat oleh <strong>{ownerName}</strong></p>}
+    <div className={styles.recordQuantity}><strong>{quantity(row.kg)} <small>kg</small></strong><span>{number(row.eggs)} butir · {quantity(row.trays)} krat</span></div>
+    <p>{barnName}</p>
+    <p className={isProductionStocked(row) ? "text-success" : "text-warning"}>{isProductionStocked(row) ? "Sudah masuk gudang" : "Belum masuk gudang"}</p>
+    {expanded && <>
+      <p>Waktu input: {dateLabel(row.created_at, true)} WIB</p>
+      {row.stocked_at && <p>Masuk gudang: {dateLabel(row.stocked_at, true)} WIB</p>}
+      {row.notes && <p className={styles.notes}>{row.notes}</p>}
+      {(row.photo || row.photo_ref) && <ImagePreview src={row.photo} photoRef={row.photo_ref} alt="Foto panen" />}
+    </>}
+    {onDetail && <div className={styles.recordButtons}><button className={styles.secondaryButton} onClick={onDetail}><ClipboardList size={19} /> Lihat rincian panen</button></div>}
+    {onCorrect && <button className={styles.textButton} onClick={onCorrect}><Pencil size={17} /> {row.locked ? "Ajukan perbaikan" : "Perbaiki catatan"}</button>}
+  </article>;
+}
+
+function SaleCard({ row, ownerName, onDetail, onPayment, onCorrect }: {
+  row: Sale; ownerName?: string; onDetail: () => void; onPayment?: () => void; onCorrect?: () => void;
+}) {
+  return <article className={styles.record}>
+    <div className={styles.recordTop}>
+      <span className={row.balance === 0 ? styles.goodBadge : styles.crackedBadge}>{row.balance === 0 ? "Lunas" : row.paid > 0 ? "Dibayar sebagian" : "Belum lunas"}</span>
+      <small>{dateLabel(row.date, row.date.length > 10)}{row.date.length > 10 ? " WIB" : ""}</small>
+    </div>
+    {ownerName && <p className={styles.recordOwner}>Dicatat oleh <strong>{ownerName}</strong></p>}
+    <h2 className={styles.saleTotal}>{row.total === 0 ? "Gratis" : money(row.total)}</h2>
+    <p>{row.customer || "Pelanggan umum"}</p>
+    <div className={styles.saleItems}>{row.items.map(item => <span key={item.id}>{categoryLabel(item.category)} · {quantity(item.kg)} kg{item.category === "cracked" && item.unit_price === 0 && " · Gratis"}</span>)}</div>
+    {row.balance > 0 && <p className={styles.balance}>Belum dibayar: <strong>{money(row.balance)}</strong></p>}
+    <div className={styles.recordButtons}>
+      <button className={styles.secondaryButton} onClick={onDetail}><ReceiptText size={18} /> Lihat nota</button>
+      {row.balance > 0 && onPayment && <button className={styles.secondaryButton} onClick={onPayment}>Catat pembayaran</button>}
+    </div>
+    {onCorrect && <button className={styles.textButton} onClick={onCorrect}><Pencil size={17} /> Ajukan perbaikan</button>}
+  </article>;
 }
 
 function PageHeading({
@@ -910,7 +1008,7 @@ function EmptyNote({
 function MoreRecords({ onClick }: { onClick: () => void }) {
   return (
     <button className={styles.moreRecords} onClick={onClick}>
-      Lihat catatan sebelumnya <ChevronDown size={18} />
+      Lihat catatan lainnya <ChevronDown size={18} />
     </button>
   );
 }

@@ -120,6 +120,8 @@ Nama kolom dan struktur respons mengikuti `../src/lib/types.ts` dan `../CONTRACT
 | `feed.due` | id, due_date | Admin |
 | `feed.use` | date, feed_id, barn_id, quantity, notes | Semua |
 | `notification.read` | id atau id:`all` | Notifikasi sendiri |
+| `stock_check.submit` | date, expected_snapshot, status, warehouse_actual?, harvest_actual?, reason? | Karyawan yang ditunjuk admin |
+| `stock_check.review` | id, decision:`approve`/`reject`, reason? | Admin |
 | `correction.request` | entity, id, reason, changes | Pemilik/admin |
 | `correction.apply` | entity, id, reason, changes | Admin atau produksi sendiri yang belum dikunci |
 | `correction.review` | id, approved:boolean | Admin |
@@ -131,7 +133,9 @@ Gunakan `sale.payment` untuk penerimaan uang pelanggan dan `feed.payment` untuk 
 
 Kolom `payments` pada setiap nota berisi pembayaran awal dan cicilan yang tercatat, beserta jenis (`initial` atau `installment`), nominal, pengguna, waktu server, dan metode jika diketahui. Untuk nota lama, selisih antara `paid` dan jumlah riwayat ini adalah pembayaran terdahulu tanpa rincian tanggal. Daftar tagihan mengelompokkan nota per pelanggan atau pemasok, termasuk transaksi di luar rentang tanggal laporan. Tampilan awal memperlihatkan tagihan yang masih bersaldo. Pilih filter **Lunas** untuk melihat pembayaran pada nota yang sudah selesai.
 
-Koreksi memakai entity `production`, `pickup`, atau `sale`; alasan minimal 5 karakter. Produksi boleh mengubah eggs/kg/trays/notes selama stok tidak menjadi negatif. Pickup dapat mengubah eggs/kg/trays/notes/area; jumlah baru harus mencukupi seluruh penjualan dan pengembalian, sedangkan selisih pengambilan disesuaikan ke stok gudang dan ledger.
+Koreksi memakai entity `production`, `pickup`, atau `sale`; alasan minimal 5 karakter. Produksi boleh mengubah eggs/kg/trays/notes selama stok tidak menjadi negatif. Admin dapat menolkan seluruh butir, berat, dan krat pada panen yang salah input; baris asli tetap memiliki riwayat audit. Pickup dapat mengubah eggs/kg/trays/notes/area; jumlah baru harus mencukupi seluruh penjualan dan pengembalian, sedangkan selisih pengambilan disesuaikan ke stok gudang dan ledger.
+
+Admin dapat menunjuk pemeriksa melalui `user.update` dengan `can_check_stock: true`. Lihat [pemeriksaan panen dan gudang harian](STOCK-CHECKS.md) untuk migrasi, batas akses riwayat/foto karyawan lain, penugasan harian, dan alur persetujuan setelah koreksi panen.
 
 Sale dapat mengubah notes/customer dan kuantitas item melalui `changes.items:[{id,eggs,kg,trays}]`. Seluruh item lama harus dicantumkan tepat sekali; tidak boleh menambah/menghapus item, memindahkan sumber/kategori, atau mengubah snapshot harga. Total dan sisa tagihan dihitung ulang memakai harga lama, dengan validasi saldo pickup yang mengecualikan versi lama penjualan. Koreksi tidak boleh membuat total lebih kecil dari pembayaran yang sudah diterima karena refund/pembatalan/reversal finansial belum didukung. Koreksi pickup/sale dilakukan admin atau melalui permintaan yang disetujui admin. Admin dapat mengunci catatan; penjualan baru dikunci secara default. Pembayaran tambahan dan pengembalian tetap dapat dilakukan karena merupakan mutasi bisnis tersendiri yang diaudit.
 

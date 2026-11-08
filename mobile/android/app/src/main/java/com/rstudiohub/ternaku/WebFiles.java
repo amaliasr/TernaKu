@@ -18,24 +18,27 @@ final class WebFiles extends WebChromeClient {
     private final MainActivity activity;
     private ValueCallback<Uri[]> upload;
     private Uri cameraUri;
-    private boolean cameraCleanupStarted;
+    private volatile File cameraFile;
     private byte[] document;
     private GeolocationPermissions.Callback location;
     private String locationOrigin;
 
     WebFiles(MainActivity activity) { this.activity = activity; }
+    File activeCameraFile() { return cameraFile; }
 
     @Override public boolean onShowFileChooser(WebView web, ValueCallback<Uri[]> callback, FileChooserParams params) {
         if (!MainActivity.trusted(Uri.parse(String.valueOf(web.getUrl())))) return false;
         if (upload != null) upload.onReceiveValue(null);
         upload = callback;
         cameraUri = null;
+        cameraFile = null;
         try {
             Intent intent;
             if (params.isCaptureEnabled()) {
                 File dir = new File(activity.getCacheDir(), "camera");
                 if (!dir.isDirectory() && !dir.mkdirs()) throw new IOException();
                 File photo = File.createTempFile("foto-", ".jpg", dir);
+                cameraFile = photo;
                 cameraUri = FileProvider.getUriForFile(activity, activity.getPackageName() + ".photos", photo);
                 intent = new Intent(MediaStore.ACTION_IMAGE_CAPTURE).putExtra(MediaStore.EXTRA_OUTPUT, cameraUri);
                 intent.setClipData(ClipData.newRawUri("Foto", cameraUri));
@@ -45,19 +48,10 @@ final class WebFiles extends WebChromeClient {
                         .setType("image/*").putExtra(Intent.EXTRA_ALLOW_MULTIPLE, params.getMode() == FileChooserParams.MODE_OPEN_MULTIPLE);
             }
             activity.startActivityForResult(intent, PICK);
-            if (cameraUri != null && !cameraCleanupStarted) {
-                cameraCleanupStarted = true;
-                File dir = new File(activity.getCacheDir(), "camera");
-                new Thread(() -> {
-                    File[] photos = dir.listFiles();
-                    if (photos == null) return;
-                    long cutoff = System.currentTimeMillis() - 86400000L;
-                    for (File file : photos) if (file.lastModified() < cutoff) file.delete();
-                }, "ternaku-photo-cache").start();
-            }
         } catch (ActivityNotFoundException | IOException failed) {
             callback.onReceiveValue(null);
             upload = null;
+            cameraFile = null;
             activity.notice("Kamera atau galeri belum tersedia. Coba pilih foto lain.");
         }
         return true;
@@ -99,11 +93,15 @@ final class WebFiles extends WebChromeClient {
                             || (activity.getPackageName() + ".photos").equals(uri.getAuthority())) { chosen = null; break; }
                 }
             }
+            // The WebView reads the selected file asynchronously after this callback.
+            // Give a just-returned capture a full retention period, even after a long camera session.
+            if (cameraFile != null && chosen != null) cameraFile.setLastModified(System.currentTimeMillis());
             upload.onReceiveValue(chosen);
             upload = null;
             if (cameraUri != null) activity.revokeUriPermission(cameraUri,
                     Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_WRITE_URI_PERMISSION);
             cameraUri = null;
+            cameraFile = null;
         } else if (code == SAVE && document != null) {
             byte[] bytes = document;
             document = null;

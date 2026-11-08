@@ -47,6 +47,7 @@ export interface User {
   role: Role;
   active: boolean;
   is_superadmin?: boolean;
+  can_check_stock?: boolean;
   deleted_at?: string | null;
   registration_status?: RegistrationStatus;
   target: number;
@@ -191,6 +192,7 @@ export interface Notification {
 export interface Activity {
   id: string;
   user_id: string;
+  actor_role?: Role;
   action: string;
   description: string;
   created_at: string;
@@ -253,6 +255,44 @@ export interface State {
   stock_movements?: StockMovement[];
   inventory?: Record<Category, Quantity>;
   feed_inventory?: Record<string, number>;
+  stock_check_context?: StockCheckContext;
+  stock_checks?: StockCheck[];
+  stock_check_assignments?: StockCheckAssignment[];
+}
+export type StockCheckQuantities = Record<Category, Quantity>;
+export interface StockCheckContext {
+  date: string;
+  snapshot: string;
+  warehouse: StockCheckQuantities;
+  harvest: StockCheckQuantities;
+}
+export interface StockCheck {
+  id: string;
+  user_id: string;
+  date: string;
+  snapshot: string;
+  status: "confirmed" | "pending" | "approved" | "rejected" | "superseded";
+  expected: Pick<StockCheckContext, "warehouse" | "harvest">;
+  warehouse_actual: StockCheckQuantities;
+  harvest_actual: StockCheckQuantities;
+  production_ids: string[];
+  movement_sequence: number;
+  /** Demo equivalent of the server's stock movement sequence. */
+  movement_ids?: string[];
+  reason: string;
+  created_at: string;
+  updated_at: string;
+  reviewed_at: string | null;
+  reviewed_by: string | null;
+  review_reason: string;
+  replaced_by?: string;
+}
+export interface StockCheckAssignment {
+  id: string;
+  user_id: string;
+  assigned: boolean;
+  created_at: string;
+  created_by: string;
 }
 export interface PriceSyncResponse {
   mode?: "delta";

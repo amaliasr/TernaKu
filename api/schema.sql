@@ -11,6 +11,7 @@ CREATE TABLE IF NOT EXISTS users (
  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
  is_superadmin TINYINT(1) NOT NULL DEFAULT 0,
  deleted_at DATETIME NULL,
+ can_check_stock TINYINT(1) NOT NULL DEFAULT 0,
  UNIQUE KEY users_username_unique (username)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 CREATE TABLE IF NOT EXISTS tokens (

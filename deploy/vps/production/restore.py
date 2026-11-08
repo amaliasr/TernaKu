@@ -22,7 +22,7 @@ TABLES = {
     "command_requests": ("user_id request_id fingerprint created_at", "user_id request_id"),
     "command_mutex": ("id version", "id"),
 }
-ACCOUNT_COLUMNS = ("username", "is_superadmin", "deleted_at")
+ACCOUNT_COLUMNS = ("username", "is_superadmin", "deleted_at", "can_check_stock")
 GENERATED_RECORD_COLUMNS = ("compact_data", "photo_version")
 
 

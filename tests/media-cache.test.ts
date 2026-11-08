@@ -26,6 +26,22 @@ test("only the most recently used photos remain in bounded memory", async () => 
   assert.deepEqual(fetches, ["one", "two", "three", "two"]);
 });
 
+test("large photo blobs obey the byte budget while displayed images remain usable", async () => {
+  const cache = new MediaCache(8, 10);
+  let fetches = 0;
+  const load = (id: string, text = "123456") => cache.load(reference(id), async () => { fetches++; return new Blob([text]); });
+  const visible = await load("one");
+  await load("two");
+  await load("two");
+  assert.equal(fetches, 2);
+  await load("one");
+  assert.equal(fetches, 3);
+  assert.equal(await visible.text(), "123456");
+  await load("large", "123456789012345");
+  await load("large", "123456789012345");
+  assert.equal(fetches, 5, "a single over-budget image is returned but never retained");
+});
+
 test("session reset discards completed and pending photos without poisoning the next account", async () => {
   const cache = new MediaCache();
   let resolve!: (blob: Blob) => void;
