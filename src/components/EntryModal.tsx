@@ -34,6 +34,7 @@ import Photo from "./PhotoUpload";
 import { SaleDetail } from "./RecordDialogs";
 import { normalizeUsername } from "@/lib/usernames";
 import UsernameInput, { optionalUsernameHint } from "./UsernameInput";
+import PasswordInput from "./PasswordInput";
 import {
   categoryLabel,
   dataFrom,
@@ -682,15 +683,18 @@ function UserForm({ onSave, busy, onClose }: FormProps) {
           label="Kata sandi"
           hint="Minimal 10 karakter. Sampaikan langsung kepada pemilik akun."
         >
-          <input
-            type="password"
+          <PasswordInput
+            label="Kata sandi"
             name="password"
             className="form-control"
             required
             minLength={10}
-            maxLength={128}
+            maxLength={72}
             autoComplete="new-password"
           />
+        </Field>
+        <Field className="col-12" label="Konfirmasi kata sandi">
+          <PasswordInput label="Konfirmasi kata sandi" name="password_confirmation" required minLength={10} maxLength={72} />
         </Field>
         <Field className="col-sm-6" label="Peran">
           <select name="role" className="form-select">

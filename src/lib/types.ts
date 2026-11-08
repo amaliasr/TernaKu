@@ -46,6 +46,8 @@ export interface User {
   username?: string;
   role: Role;
   active: boolean;
+  is_superadmin?: boolean;
+  deleted_at?: string | null;
   registration_status?: RegistrationStatus;
   target: number;
   avatar?: string;

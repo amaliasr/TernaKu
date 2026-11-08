@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import dynamic from "next/dynamic";
 import {
   ArrowDownToLine,
   ArrowLeft,
@@ -37,19 +38,23 @@ import {
 import { FarmProvider, useFarm } from "@/lib/store";
 import { activePrice, dateLabel, money } from "@/lib/domain";
 import { normalizeUsername } from "@/lib/usernames";
+import { accountRoleLabel } from "@/lib/account-policy";
 import UsernameInput, { optionalUsernameHint } from "./UsernameInput";
-import Dashboard from "./Dashboard";
-import Modules from "./Modules";
-import EntryModal from "./EntryModal";
-import Reports from "./Reports";
-import EmployeeWorkspace from "./EmployeeWorkspace";
 import ThemeToggle from "./ThemeToggle";
 import InstallApp from "./InstallApp";
 import PushNotifications from "./PushNotifications";
 import { NativePushProvider } from "./NativeNotifications";
-import ProfileSettings from "./ProfileSettings";
 import Avatar from "./Avatar";
 import { useBackLayer, usePageNavigation } from "@/lib/navigation";
+
+const loadingView = () => <p role="status" className="p-3 text-muted">Memuat halaman…</p>;
+const loadingDialog = () => <div className="modal-backdrop-custom"><div className="modal-dialog-custom"><p role="status" className="p-4 mb-0"><LoaderCircle size={18} className="spin me-2" />Membuka formulir…</p></div></div>;
+const Dashboard = dynamic(() => import("./Dashboard"), { loading: loadingView });
+const Modules = dynamic(() => import("./Modules"), { loading: loadingView });
+const EntryModal = dynamic(() => import("./EntryModal"), { loading: loadingDialog });
+const Reports = dynamic(() => import("./Reports"), { loading: loadingView });
+const EmployeeWorkspace = dynamic(() => import("./EmployeeWorkspace"), { loading: loadingView });
+const ProfileSettings = dynamic(() => import("./ProfileSettings"), { loading: loadingDialog });
 
 const navigation = [
   {
@@ -798,7 +803,7 @@ function Workspace() {
           </span>
           <div>
             <strong>Peternakan TernaKu</strong>
-            <small>Ruang kerja {isAdmin ? "admin" : "karyawan"}</small>
+            <small>Ruang kerja {accountRoleLabel(user).toLowerCase()}</small>
           </div>
           <ChevronDown size={14} />
         </div>
@@ -842,7 +847,7 @@ function Workspace() {
             <Avatar user={user} />
             <span>
               <strong>{user.name}</strong>
-              <small>{isAdmin ? "Administrator" : "Karyawan"}</small>
+              <small>{accountRoleLabel(user)}</small>
             </span>
             <Settings2 size={17} />
           </button>

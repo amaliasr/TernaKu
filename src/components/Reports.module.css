@@ -1,0 +1,29 @@
+.presets {
+  flex-basis: 100%;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.presets button {
+  min-height: 44px;
+  height: auto !important;
+  padding: 10px 16px;
+  font-size: calc(12px * var(--font-scale, 1));
+}
+
+.filters > button {
+  min-height: 44px;
+  height: auto;
+}
+
+.periodNote {
+  flex-basis: 100%;
+  margin: 0;
+  color: var(--muted, #64745d);
+  font-size: calc(12px * var(--font-scale, 1));
+}
+
+@media (max-width: 576px) {
+  .presets button { flex: 1 0 auto; }
+}

@@ -3,6 +3,7 @@
 if(PHP_SAPI!=='cli') exit;
 require dirname(__DIR__).'/scripts/env.php';
 require dirname(__DIR__).'/application/libraries/UsernameService.php';
+require dirname(__DIR__).'/application/libraries/AccountPolicyService.php';
 $dbName=getenv('DB_NAME') ?: '';
 if(getenv('ALLOW_TEST_RESET')!=='1' || !preg_match('/^[a-zA-Z0-9_]+_test$/D',$dbName)) { fwrite(STDERR,"Use dedicated DB_NAME ending _test and ALLOW_TEST_RESET=1. Never run against production.\n"); exit(1); }
 $base=getenv('TEST_API_URL') ?: 'http://127.0.0.1:8081';
@@ -63,6 +64,9 @@ function registrationWorkers(array $jobs): array {
 try {
     $setupKey=getenv('SETUP_TOKEN') ?: ''; if(strlen($setupKey)<32) throw new RuntimeException('Set a test-only SETUP_TOKEN (32+ characters) for both this test and the test API server.');
     resetTestDatabase();
+    $db->exec('ALTER TABLE users DROP COLUMN is_superadmin, DROP COLUMN deleted_at');
+    AccountPolicyService::migrate($db); AccountPolicyService::migrate($db);
+    check((int)$db->query("SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='users' AND COLUMN_NAME IN ('is_superadmin','deleted_at')")->fetchColumn()===2,'account policy upgrade is additive and idempotent on the legacy schema');
     $db->exec('ALTER TABLE users DROP INDEX users_username_unique, DROP COLUMN username');
     $legacyHash=password_hash('LegacyPassword42',PASSWORD_DEFAULT);
     $insert=$db->prepare("INSERT INTO users(id,name,email,password_hash,role) VALUES(?,?,?,?,'employee')");
@@ -167,6 +171,8 @@ try {
     $expiry=$db->prepare('UPDATE tokens SET created_at=DATE_SUB(NOW(),INTERVAL ? DAY),expires_at=DATE_ADD(NOW(),INTERVAL 1 HOUR) WHERE token_hash=?');
     $expiry->execute([20,$expiryHash]); req('/bootstrap',[],$expiryToken,'GET');
     $expiryHours=$db->prepare('SELECT TIMESTAMPDIFF(HOUR,NOW(),expires_at) FROM tokens WHERE token_hash=?'); $expiryHours->execute([$expiryHash]); check((int)$expiryHours->fetchColumn()>=719,'authenticated activity extends the idle window to thirty days');
+    $expiresAt=$db->prepare('SELECT expires_at FROM tokens WHERE token_hash=?'); $expiresAt->execute([$expiryHash]); $firstExpiry=$expiresAt->fetchColumn();
+    req('/sync/prices?since=0',[],$expiryToken,'GET'); $expiresAt->execute([$expiryHash]); check($firstExpiry===$expiresAt->fetchColumn(),'five-second price polling does not repeatedly rewrite a recently renewed session');
     $expiry->execute([89,$expiryHash]); req('/bootstrap',[],$expiryToken,'GET'); $expiryHours->execute([$expiryHash]); $hours=(int)$expiryHours->fetchColumn(); check($hours>=23 && $hours<=24,'sliding expiry never exceeds ninety days from login');
     $expiry->execute([91,$expiryHash]); req('/bootstrap',[],$expiryToken,'GET',401); check(true,'absolute session cap rejects even a future expires_at');
     $db->prepare('UPDATE tokens SET created_at=NOW(),expires_at=DATE_SUB(NOW(),INTERVAL 1 SECOND) WHERE token_hash=?')->execute([$expiryHash]); req('/bootstrap',[],$expiryToken,'GET',401); check(true,'expired idle session cannot be renewed');
@@ -188,7 +194,9 @@ try {
     check(req('/bootstrap',[],$e,'GET')['users'][0]['name']==='Sari','invalid or duplicate usernames roll back profile changes and preserve the session');
     $s=cmd('user.update',['id'=>$sari['id'],'username'=>'pegawai.sari'],$a);
     check(first($s,'users',fn($u)=>$u['id']===$sari['id'])['username']==='pegawai.sari' && req('/auth/login',['identifier'=>'pegawai.sari','password'=>'PasswordSari42'])['user']['id']===$sari['id'],'admin can edit employee username without changing the password');
-    cmd('user.update',['id'=>$sari['id'],'username'=>'budi'],$a,422); cmd('user.update',['id'=>'admin_test','username'=>'other.admin'],$a,422);
+    cmd('user.update',['id'=>$sari['id'],'username'=>'budi'],$a,422);
+    cmd('user.update',['id'=>'admin_test','username'=>'other.admin'],$a);
+    cmd('user.update',['id'=>'admin_test','username'=>'admin'],$a);
     cmd('user.update',['id'=>$sari['id'],'username'=>'not.allowed'],$other,403);
     cmd('user.update',['id'=>$sari['id'],'username'=>'sari'],$a);
     $s=cmd('profile.update',['name'=>'Admin Test','username'=>'admin.master'],$a);
@@ -242,13 +250,12 @@ try {
     check($loginEdited['user']['id']===$sari['id'] && $db->query('SELECT password_hash FROM users WHERE id='.$db->quote($sari['id']))->fetchColumn()===$passwordBefore,'changed email becomes login identity while original password remains unchanged');
     $snapshot=businessSnapshot();
     foreach([' BUDI@TEST.LOCAL ',' ADMIN@TEST.LOCAL ','','  ','invalid-address',str_repeat('a',191).'@test.local',null] as $email) cmd('user.update',['id'=>$sari['id'],'name'=>'Must not persist','email'=>$email,'photo'=>''],$a,422);
-    foreach(['role','password','registration_status','unexpected'] as $field) cmd('user.update',['id'=>$sari['id'],$field=>'admin'],$a,422);
+    foreach(['password','registration_status','unexpected'] as $field) cmd('user.update',['id'=>$sari['id'],$field=>'admin'],$a,422);
+    cmd('user.update',['id'=>$sari['id'],'role'=>'superadmin'],$a,422);
     foreach(['name','target','active','photo'] as $field) cmd('user.update',['id'=>$sari['id'],$field=>null],$a,422);
     foreach(['data:image/png;base64,aGVsbG8=',str_replace('image/png','image/jpeg',$profilePhoto),'https://example.com/photo.png',$legacyPhoto] as $photo) cmd('user.update',['id'=>$sari['id'],'name'=>'Must not persist','photo'=>$photo],$a,422);
     cmd('user.update',['id'=>'missing_employee','email'=>'absent@test.local'],$a,404);
     cmd('user.update',['id'=>$sari['id'],'email'=>'forbidden@test.local'],$e,403);
-    cmd('user.update',['id'=>'admin_test','email'=>'changed@test.local'],$a,422);
-    cmd('user.update',['id'=>'admin_test','photo'=>$profilePhoto],$a,422);
     check(businessSnapshot()===$snapshot,'invalid employee edits, duplicate emails, missing accounts, privilege injection and wrong actors leave all business data unchanged');
     $s=cmd('user.update',['id'=>$sari['id'],'email'=>'SARI.EDITED@TEST.LOCAL','target'=>6100000],$a);
     check(first($s,'users',fn($u)=>$u['id']===$sari['id'])['photo']===$profilePhoto,'same normalized email is accepted and omitted employee photo is retained');
@@ -709,5 +716,6 @@ try {
     req('/auth/login',['identifier'=>'sari','password'=>'PasswordSari42'],'','POST',401); check(true,'inactive employee cannot log in with username');
     req('/auth/logout',[],$other); req('/bootstrap',[],$other,'GET',401); check(true,'logout invalidates token');
     req('/application/config/config.php',[],'','GET',404); check(true,'internal files not exposed by dev router');
+    require __DIR__.'/account-policy-checks.php';
     echo "\n$checks integration checks passed.\n";
 } catch(Throwable $e) { fwrite(STDERR,$e->getMessage()."\n"); exit(1); }

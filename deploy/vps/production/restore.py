@@ -22,6 +22,8 @@ TABLES = {
     "command_requests": ("user_id request_id fingerprint created_at", "user_id request_id"),
     "command_mutex": ("id version", "id"),
 }
+ACCOUNT_COLUMNS = ("username", "is_superadmin", "deleted_at")
+GENERATED_RECORD_COLUMNS = ("compact_data", "photo_version")
 
 
 def require(condition, message):
@@ -74,23 +76,38 @@ def counts(cid, db):
 
 
 def schema(cid, db):
-    rows = root_sql(cid, "SELECT table_name,column_name FROM information_schema.columns WHERE table_schema='" +
+    rows = root_sql(cid, "SELECT table_name,column_name,COALESCE(NULLIF(extra,''),'-') FROM information_schema.columns WHERE table_schema='" +
                     db + "' ORDER BY table_name,ordinal_position;").splitlines()
     actual = {}
+    features = set()
     for row in rows:
-        table, col = row.split("\t")
+        table, col, extra = row.split("\t")
+        if table == "records" and col in GENERATED_RECORD_COLUMNS:
+            require(extra == "STORED GENERATED", "Expected stored generated records." + col + " in " + db)
+            require(col not in features, "Duplicate generated column in " + db)
+            features.add(col)
+            continue
+        require("STORED GENERATED" not in extra and "VIRTUAL GENERATED" not in extra,
+                "Unexpected generated column in " + db)
+        if table == "users" and col in ACCOUNT_COLUMNS:
+            require(col not in features, "Duplicate account column in " + db)
+            features.add(col)
+            continue
         actual.setdefault(table, []).append(col)
     expected = {t: cols.split() for t, (cols, _) in TABLES.items()}
-    legacy = {t: [c for c in cols if c != "username"] for t, cols in actual.items()}
-    require(legacy == expected and actual.get("users", []).count("username") <= 1,
-            "Unexpected table or column layout in " + db)
-    require(all("username" not in cols for t, cols in actual.items() if t != "users"),
-            "Unexpected username column outside users in " + db)
+    require(actual == expected, "Unexpected table or column layout in " + db)
     require(root_sql(cid, "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='" + db +
                      "' AND engine='InnoDB';") == "7", "All seven tables must be InnoDB.")
     require(root_sql(cid, "SELECT COUNT(*) FROM information_schema.triggers WHERE trigger_schema='" + db + "';") == "0",
             "Unexpected database triggers.")
-    return "username" in actual["users"]
+    return frozenset(features)
+
+
+def compatible_account_columns(source_features, target_features):
+    columns = tuple(col for col in ACCOUNT_COLUMNS if col in source_features)
+    require(set(columns).issubset(target_features),
+            "Source contains account columns missing from the target. Upgrade the empty target schema before restoring.")
+    return columns
 
 
 FRESH = """(SELECT COUNT(*) FROM users)=0 AND (SELECT COUNT(*) FROM records)=0
@@ -130,9 +147,10 @@ def next_sequence_query(db):
     return "SELECT AUTO_INCREMENT FROM information_schema.tables WHERE table_schema='" + db + "' AND table_name='records'"
 
 
-def transfer(cid, scratch, next_sequence, include_username=False):
+def transfer(cid, scratch, next_sequence, account_columns=()):
     # An assertion failure terminates the batch before COMMIT. Closing the
     # connection rolls back the entire data transfer, including the two seed rows.
+    require(set(account_columns).issubset(ACCOUNT_COLUMNS), "Unexpected account columns in restore transfer.")
     statements = ["SET NAMES utf8mb4; SET time_zone='+00:00';",
                   "CREATE TEMPORARY TABLE restore_check (ok TINYINT NOT NULL CHECK(ok=1));",
                   "SET TRANSACTION ISOLATION LEVEL SERIALIZABLE; START TRANSACTION;",
@@ -146,8 +164,10 @@ def transfer(cid, scratch, next_sequence, include_username=False):
     for name, (columns, pk) in TABLES.items():
         src, dst = scratch + "." + name, "ternaku." + name
         columns = columns.split()
-        if name == "users" and include_username:
-            columns.append("username")
+        if name == "users":
+            columns.extend(col for col in ACCOUNT_COLUMNS if col in account_columns)
+        # Derived records fields are deliberately excluded. The target computes
+        # them from the original data, which is copied and compared byte-for-byte.
         names = ",".join("`" + c + "`" for c in columns)
         statements.append(f"INSERT INTO {dst} ({names}) SELECT {names} FROM {src};")
         check(f"(SELECT COUNT(*) FROM {src})=(SELECT COUNT(*) FROM {dst})")
@@ -186,7 +206,7 @@ def main():
         require(set(expected) == set(TABLES), "The counts must include all seven tables.")
     cid = offline_db()
     require(root_sql(cid, "SELECT VERSION() LIKE '8.4.%';") == "1", "Expected MySQL 8.4.")
-    target_username = schema(cid, "ternaku")
+    target_features = schema(cid, "ternaku")
     require(root_sql(cid, "SELECT " + FRESH + ";") == "1", "Production contains existing data. Refusing to overwrite.")
     suffix = secrets.token_hex(8)
     scratch, account, password = "ternaku_restore_" + suffix, "tmp_" + suffix, secrets.token_hex(28)
@@ -198,12 +218,12 @@ def main():
             import_scratch(cid, args.dump, args.sha256.lower(), scratch, account, password)
         finally:
             root_sql(cid, f"DROP USER '{account}'@'localhost';")
-        source_username = schema(cid, scratch)
-        require(not source_username or target_username,
-                "Source contains usernames. Upgrade the empty target schema before restoring.")
+        source_features = schema(cid, scratch)
+        account_columns = compatible_account_columns(source_features, target_features)
         source = counts(cid, scratch)
         require(expected is None or source == expected, "Independent source counts do not match this dump.")
-        require(root_sql(cid, "SELECT COUNT(*) FROM " + scratch + ".users WHERE active=1 AND role='admin';") != "0", "No active admin in source.")
+        not_deleted = " AND deleted_at IS NULL" if "deleted_at" in source_features else ""
+        require(root_sql(cid, "SELECT COUNT(*) FROM " + scratch + ".users WHERE active=1 AND role='admin'" + not_deleted + ";") != "0", "No active admin in source.")
         require(source["command_mutex"] == 1 and root_sql(cid, "SELECT id FROM " + scratch + ".command_mutex;") == "1", "Source mutex is missing.")
         require(root_sql(cid, "SELECT COUNT(*) FROM " + scratch + ".stock WHERE stock_key IN ('egg:good','egg:cracked');") == "2", "Missing egg stock rows.")
         next_sequence = int(root_sql(cid, next_sequence_query(scratch) + ";"))
@@ -211,9 +231,9 @@ def main():
         print("Verified dump counts", source, flush=True)
         if args.apply:
             require(offline_db() == cid, "Database container changed before restore.")
-            transfer(cid, scratch, next_sequence, source_username)
+            transfer(cid, scratch, next_sequence, account_columns)
             require(counts(cid, "ternaku") == source, "Post-commit counts differ. Keep production offline.")
-            print("Committed and verified every column in every row, including photo payloads, sessions, push subscriptions and pending jobs.")
+            print("Committed and verified all source data, account protection, photo payloads, sessions, push subscriptions and pending jobs. Derived record fields are recomputed by the target.")
     finally:
         root_sql(cid, "DROP DATABASE " + scratch + ";")
 

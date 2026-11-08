@@ -13,6 +13,8 @@ import {
   Warehouse,
 } from "lucide-react";
 import { useFarm } from "@/lib/store";
+import { accountRoleLabel, validateNewPassword } from "@/lib/account-policy";
+import PasswordInput from "./PasswordInput";
 import { normalizeUsername } from "@/lib/usernames";
 import UsernameInput, { optionalUsernameHint, usernameHint } from "./UsernameInput";
 import { Dialog, Field, errorMessage } from "./ModuleUI";
@@ -30,13 +32,14 @@ export default function ProfileSettings({ onClose }: { onClose: () => void }) {
   const [photoChanged, setPhotoChanged] = useState(false);
   const [busy, setBusy] = useState(false);
   const [settingsBusy, setSettingsBusy] = useState(false);
+  const [passwordBusy, setPasswordBusy] = useState(false);
   const [photoBusy, setPhotoBusy] = useState(false);
   const [error, setError] = useState("");
   const [saved, setSaved] = useState(false);
   if (!user) return null;
   const usernameChanged = normalizeUsername(username) !== (user.username || "");
   const changed = name.trim() !== user.name || usernameChanged || photoChanged;
-  const saving = busy || settingsBusy;
+  const saving = busy || settingsBusy || passwordBusy;
   async function save(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (saving || photoBusy) return;
@@ -93,7 +96,7 @@ export default function ProfileSettings({ onClose }: { onClose: () => void }) {
             <strong>{user.name}</strong>
             <span>{user.email}</span>
             <small>
-              {user.role === "admin" ? "Atasan / admin" : "Karyawan"}
+              {accountRoleLabel(user)}
             </small>
           </div>
         </div>
@@ -164,7 +167,8 @@ export default function ProfileSettings({ onClose }: { onClose: () => void }) {
             </button>
           </fieldset>
         </form>
-        {user.role === "admin" && <HarvestSettings disabled={busy} onBusyChange={setSettingsBusy} />}
+        {user.is_superadmin ? <div className="alert alert-info mb-0">Kata sandi superadmin dilindungi dan tidak dapat diganti melalui aplikasi.</div> : <PasswordSettings disabled={busy || settingsBusy} onBusyChange={setPasswordBusy} />}
+        {user.role === "admin" && <HarvestSettings disabled={busy || passwordBusy} onBusyChange={setSettingsBusy} />}
         <section
           className={styles.preferences}
           aria-label="Pengaturan tampilan"
@@ -245,6 +249,40 @@ export default function ProfileSettings({ onClose }: { onClose: () => void }) {
       </div>
     </Dialog>
   );
+}
+
+function PasswordSettings({ disabled, onBusyChange }: { disabled: boolean; onBusyChange: (busy: boolean) => void }) {
+  const { command } = useFarm();
+  const [open, setOpen] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const [saved, setSaved] = useState(false);
+  return <section className={styles.preferences} aria-label="Keamanan akun">
+    <h3>Kata sandi</h3>
+    <p>Ganti kata sandi akun Anda. Kata sandi yang sudah tersimpan tidak bisa dilihat.</p>
+    {saved && <div className={styles.success} role="status"><CheckCircle2 size={20} /> Kata sandi berhasil diganti. Perangkat lain perlu masuk kembali.</div>}
+    {!open ? <button className="btn btn-outline-primary" type="button" disabled={disabled} onClick={() => { setOpen(true); setSaved(false); }}>Ganti kata sandi saya</button> : <form onSubmit={async event => {
+      event.preventDefault(); if (busy || disabled) return;
+      const form = event.currentTarget;
+      const data = new FormData(form);
+      setError(""); setSaved(false); setBusy(true); onBusyChange(true);
+      try {
+        validateNewPassword(data.get("new_password"),data.get("password_confirmation"));
+        await command("profile.password", { current_password: data.get("current_password"), new_password: data.get("new_password"), password_confirmation: data.get("password_confirmation") });
+        form.reset(); setOpen(false); setSaved(true);
+      } catch (cause) { setError(errorMessage(cause)); }
+      finally { setBusy(false); onBusyChange(false); }
+    }}>
+      <fieldset disabled={busy || disabled} className={styles.profileFields}>
+        {error && <div className="alert alert-danger mb-0" role="alert">{error}</div>}
+        <Field label="Kata sandi saat ini"><PasswordInput label="Kata sandi saat ini" name="current_password" autoComplete="current-password" required maxLength={200} /></Field>
+        <Field label="Kata sandi baru" hint="Gunakan minimal 12 karakter."><PasswordInput label="Kata sandi baru" name="new_password" required minLength={12} maxLength={72} /></Field>
+        <Field label="Konfirmasi kata sandi baru"><PasswordInput label="Konfirmasi kata sandi baru" name="password_confirmation" required minLength={12} maxLength={72} /></Field>
+        <button type="submit" className="btn btn-primary">{busy ? "Menyimpan…" : "Simpan kata sandi baru"}</button>
+        <button type="button" className="btn btn-light" onClick={() => { setOpen(false); setError(""); }}>Batal</button>
+      </fieldset>
+    </form>}
+  </section>;
 }
 
 function HarvestSettings({ disabled, onBusyChange }: { disabled: boolean; onBusyChange: (busy: boolean) => void }) {

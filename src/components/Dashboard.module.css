@@ -1,0 +1,10 @@
+.priceActions {
+  padding: 4px 20px 16px;
+}
+
+.priceActions button {
+  width: 100%;
+  min-height: 44px;
+  white-space: normal;
+  justify-content: center;
+}

@@ -2,12 +2,15 @@
 if (PHP_SAPI !== 'cli') { http_response_code(404); exit; }
 require __DIR__.'/env.php';
 require dirname(__DIR__).'/application/libraries/FarmService.php';
+require dirname(__DIR__).'/application/libraries/PerformanceSchema.php';
 try {
     if (PHP_VERSION_ID < 80100) throw new RuntimeException('PHP 8.1+ diperlukan; gunakan PHP 8.2 untuk versi yang telah diuji.');
     $farm=new FarmService(); $db=$farm->database();
     $sql=preg_replace('/^--.*$/m','',file_get_contents(dirname(__DIR__).'/schema.sql'));
     foreach(explode(';',$sql) as $statement) if(trim($statement)!=='') $db->exec($statement);
     UsernameService::migrate($db);
+    PerformanceSchema::migrate($db);
+    AccountPolicyService::migrate($db);
     if((int)$db->query('SELECT COUNT(*) FROM users')->fetchColumn()>0) { echo "Schema siap. Akun yang sudah ada tidak diubah.\n"; exit(0); }
     $email=getenv('ADMIN_EMAIL') ?: ''; $password=getenv('ADMIN_PASSWORD') ?: ''; $name=getenv('ADMIN_NAME') ?: 'Admin TernaKu';
     if(!filter_var($email,FILTER_VALIDATE_EMAIL) || strlen($password)<12) throw new RuntimeException('Set ADMIN_EMAIL dan ADMIN_PASSWORD (minimal 12 karakter) di environment shell, lalu jalankan ulang. Tidak ada password bawaan.');

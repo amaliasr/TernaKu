@@ -106,9 +106,11 @@ Nama kolom dan struktur respons mengikuti `../src/lib/types.ts` dan `../CONTRACT
 | `sale.payment` | id, amount, expected_paid?, method? | Pemilik/admin |
 | `sale.due` | id, due_date | Pemilik/admin |
 | `price.create` | good_price, cracked_price, effective_at | Admin |
-| `user.create` | name, email, username?, password, role, target | Admin |
-| `user.update` | id, name?, email?, username?, photo?, active?, target? | Admin; perubahan email/username/foto hanya untuk akun karyawan |
+| `user.create` | name, email, username?, password, password_confirmation?, role, target | Admin |
+| `user.update` | id, name?, email?, username?, photo?, active?, target?, role?, password?, password_confirmation? | Admin; akun admin dan karyawan |
+| `user.delete` | id, reason | Admin; hapus akun karyawan dengan riwayat tetap tersimpan |
 | `profile.update` | name, username?, photo? | Akun sendiri, admin maupun karyawan |
+| `profile.password` | current_password, new_password, password_confirmation | Akun sendiri, kecuali superadmin yang dilindungi |
 | `user.approve` | id | Admin, menyetujui pendaftaran karyawan |
 | `user.reject` | id | Admin, menolak pendaftaran yang menunggu |
 | `barn.create` | name, type:`ayam`, capacity, notes | Admin |
@@ -147,7 +149,13 @@ Admin menerima semua transaksi dan audit; karyawan hanya menerima produksi, pick
 
 `profile.update` menerima nama 1–120 karakter, username opsional, dan foto opsional. Foto yang tidak dikirim dipertahankan; `photo: ""` menghapusnya. Untuk perubahan nama saja, jangan mengirim ulang foto lama agar batas unggahan baru tidak diterapkan pada foto tersebut. Identitas pengguna selalu berasal dari token; kolom lain seperti `id`, `role`, `active`, `email`, dan `password` ditolak. Username disimpan di `users` setelah migrasi username; foto memakai record privat `user_profile`.
 
-Admin dapat mengedit nama, email login, username, target, dan foto karyawan melalui `user.update`. Email dan username dinormalisasi dan masing-masing harus unik. Foto yang tidak dikirim tetap dipertahankan; `photo: ""` menghapus foto. Perubahan ini tidak mengubah kata sandi, peran, maupun status persetujuan pendaftaran. Akun yang masih menunggu persetujuan tetap harus disetujui melalui `user.approve`. Log perubahan menyimpan metadata tanpa isi gambar.
+Admin dapat mengedit nama, email login, username, target, foto, dan peran (`admin`/`employee`) pada akun admin maupun karyawan melalui `user.update`. Untuk mengganti kata sandi, kirim `password` dan `password_confirmation` yang identik; kata sandi baru minimal 12 karakter dan maksimal 72 byte. Kata sandi lama tidak pernah dikirim kembali. Email dan username dinormalisasi dan masing-masing harus unik. Foto yang tidak dikirim tetap dipertahankan; `photo: ""` menghapus foto. Akun yang masih menunggu persetujuan harus disetujui melalui `user.approve` sebelum diaktifkan atau dinaikkan perannya. Minimal satu admin harus tetap aktif. Log hanya menyimpan penanda perubahan kata sandi, tanpa kata sandi atau hash-nya.
+
+`profile.password` memerlukan kata sandi saat ini dan konfirmasi kata sandi baru. Perubahan kata sandi atau peran mencabut seluruh sesi akun tujuan; bila yang diubah adalah akun sendiri, hanya sesi yang sedang digunakan dipertahankan. Penurunan peran sendiri langsung menghasilkan respons yang dibatasi sebagai karyawan. Permintaan yang sudah terautentikasi tetap memeriksa sesi sekali lagi sebelum menulis, sehingga pencabutan sesi tidak dapat dilewati oleh permintaan yang menunggu.
+
+`user.delete` menggunakan penghapusan lunak: akun menjadi nonaktif dengan `deleted_at`, token dicabut, tetapi identitas, transaksi, dan log alasan tetap tersimpan. Akun yang masih membawa telur harus menyelesaikan penjualan atau mengembalikannya dahulu. Akun admin, superadmin, dan akun yang sudah dihapus tidak dapat dihapus lewat tindakan ini. Akun terhapus tidak dapat diaktifkan ulang lewat edit akun atau persetujuan.
+
+Sebelum mengaktifkan API baru pada database lama, cadangkan database lalu jalankan `php scripts/migrate-account-policy.php`. Migrasi menambahkan kolom `is_superadmin` dan `deleted_at` tanpa mengganti data yang ada, dan aman dijalankan ulang. Untuk melindungi akun pemilik yang telah diverifikasi, jalankan skrip yang sama dengan `--user-id=ID_AKUN --expected-email=EMAIL_AKUN`. Kedua nilai harus cocok dengan akun aktif yang sudah disetujui. Perlindungan mempertahankan sesi bila pemilik sudah admin; kenaikan dari karyawan mencabut sesi lama. Penetapan tersebut tercatat di log. `is_superadmin` hanya dapat ditetapkan lewat CLI; akun itu tetap memakai role `admin` agar klien lama kompatibel, namun tidak dapat diganti kata sandinya, dihapus, dinonaktifkan, atau diturunkan perannya, termasuk oleh pemiliknya sendiri.
 
 Berat terjual wajib diisi. Jika butir dikosongkan, API memperkirakan jumlah bulat dari sisa berat dan butir pada sumber yang dipilih. Baris ini ditandai dengan `eggs_estimated: true` pada nota.
 

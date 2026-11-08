@@ -126,6 +126,9 @@ html[data-theme="dark"] {
   --bs-heading-color: #e5eddf;
   --bs-link-color: #a4dcb3;
   --bs-link-hover-color: #c1ebcb;
+  --bs-success-rgb: 154, 213, 169;
+  --bs-danger-rgb: 243, 186, 177;
+  --bs-warning-rgb: 240, 211, 153;
 }
 html[data-theme="dark"] body {
   background: var(--cream);
@@ -145,6 +148,7 @@ html[data-theme="dark"]
     .price-panel,
     .modal-dialog-custom,
     .login-layout,
+    .login-form-wrap,
     .search-results,
     .quick-menu,
     .notification-panel,
@@ -171,6 +175,7 @@ html[data-theme="dark"]
     .correction-changes,
     .invoice-summary,
     .form-summary,
+    .price-footer,
     .sale-line,
     .modal-footer,
     .modal-footer-custom
@@ -250,8 +255,10 @@ html[data-theme="dark"]
     .empty-state p,
     .form-field small,
     .metric-card p,
+    .metric-card > span,
     .metric-card small,
     .report-caption,
+    .report-filters label,
     .module-stat > div > span,
     .module-stat small,
     .table-end,
@@ -336,6 +343,7 @@ html[data-theme="dark"]
     .green,
     .workspace-avatar,
     .avatar,
+    .avatar-sm,
     .mini-avatar,
     .activity-dot,
     .status-pill.success,
@@ -344,6 +352,8 @@ html[data-theme="dark"]
     .auth-notice,
     .registration-review-notice,
     .info-note,
+    .notice-box,
+    .donut-leaf,
     .help-step > span
   ) {
   background: #284331;
@@ -426,6 +436,18 @@ html[data-theme="dark"] .btn-primary {
   --bs-btn-hover-border-color: #5da577;
   --bs-btn-active-bg: #3a8a5a;
   color: #ffffff;
+}
+html[data-theme="dark"] .btn-outline-danger {
+  --bs-btn-color: #f3bab1;
+  --bs-btn-border-color: #a36d65;
+  --bs-btn-hover-color: #fff3ef;
+  --bs-btn-hover-bg: #743f38;
+  --bs-btn-hover-border-color: #c08b81;
+  --bs-btn-active-color: #fff3ef;
+  --bs-btn-active-bg: #743f38;
+  --bs-btn-active-border-color: #c08b81;
+  --bs-btn-disabled-color: #b99189;
+  --bs-btn-disabled-border-color: #78504a;
 }
 html[data-theme="dark"]
   :is(

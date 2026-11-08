@@ -36,16 +36,20 @@ import {
   type ReportTable,
 } from "@/lib/export";
 import { adjustmentMethodLabel, categoryLabel, methodLabel } from "./ModuleUI";
+import { inReportRange, reportRange, reportRangeError, type ReportPreset } from "@/lib/report-range";
+import styles from "./Reports.module.css";
 
 export default function Reports() {
   const { state, user } = useFarm();
-  const [from, setFrom] = useState(today().slice(0, 7) + "-01");
-  const [to, setTo] = useState(today());
+  const [preset, setPreset] = useState<ReportPreset>("today");
+  const [custom, setCustom] = useState(() => reportRange("today"));
+  const range = preset === "custom" ? custom : reportRange(preset);
+  const { from, to } = range;
+  const rangeError = reportRangeError(range);
   const [tab, setTab] = useState(0);
   const [busy, setBusy] = useState("");
   const [error, setError] = useState("");
-  const inRange = (date: string) =>
-    businessDate(date) >= from && businessDate(date) <= to;
+  const inRange = (date: string) => !rangeError && inReportRange(date, range);
   const sales = state.sales.filter((s) => inRange(s.date));
   const production = state.productions.filter((p) => inRange(p.date));
   const purchases = state.feed_purchases.filter((p) => inRange(p.date));
@@ -255,7 +259,7 @@ export default function Reports() {
   const chart = useMemo(() => {
     const grouped = new Map<string, number>();
     state.sales
-      .filter((s) => businessDate(s.date) >= from && businessDate(s.date) <= to)
+      .filter((s) => !rangeError && inReportRange(s.date, { from, to }))
       .forEach((s) =>
         grouped.set(
           businessDate(s.date),
@@ -265,15 +269,15 @@ export default function Reports() {
     return [...grouped]
       .sort(([a], [b]) => a.localeCompare(b))
       .map(([date, omzet]) => ({ date: dateLabel(date), omzet }));
-  }, [state.sales, from, to]);
+  }, [state.sales, from, to, rangeError]);
   const total = sales.reduce((a, s) => a + s.total, 0),
     balance = sales.reduce((a, s) => a + s.balance, 0);
-  const invalid = from > to || !from || !to || to > today();
+  const invalid = !!rangeError;
   async function download(format: string) {
     setBusy(format);
     setError("");
     try {
-      if (invalid) throw new Error("Pilih rentang tanggal yang benar.");
+      if (rangeError) throw new Error(rangeError);
       const file = `TernaKu-laporan-${from}-${to}`;
       if (format === "excel") await exportExcel(tables, file);
       else
@@ -296,13 +300,34 @@ export default function Reports() {
           <h1>
             Laporan usaha<span className="heading-dot">.</span>
           </h1>
-          <p>Kenali perkembangan peternakan melalui angka yang berarti.</p>
+          <p>Pilih periode untuk melihat penjualan, panen, dan biaya peternakan.</p>
         </div>
         <span className="icon-box green">
           <BarChart3 size={23} />
         </span>
       </div>
-      <section className="panel report-filters">
+      <section className={`panel report-filters ${styles.filters}`}>
+        <div className={styles.presets} role="group" aria-label="Periode laporan">
+          {([
+            ["today", "Hari ini"], ["yesterday", "Kemarin"], ["7days", "7 hari"],
+            ["30days", "30 hari"], ["custom", "Custom"],
+          ] as const).map(([value, label]) => (
+            <button
+              key={value}
+              type="button"
+              className={`btn ${preset === value ? "btn-primary" : "btn-white"}`}
+              aria-pressed={preset === value}
+              onClick={() => {
+                if (value === "custom") setCustom({ from, to });
+                setPreset(value);
+                setError("");
+              }}
+            >{label}</button>
+          ))}
+        </div>
+        <p className={styles.periodNote}>
+          {preset === "custom" ? "Tentukan sendiri tanggal mulai dan akhir." : "Periode mengikuti tanggal WIB. Pilihan 7 dan 30 hari termasuk hari ini."}
+        </p>
         <div className="form-field">
           <label htmlFor="report-from">Tanggal mulai</label>
           <input
@@ -311,7 +336,7 @@ export default function Reports() {
             className="form-control"
             value={from}
             max={to || undefined}
-            onChange={(e) => setFrom(e.target.value)}
+            onChange={(e) => { setCustom({ from: e.target.value, to }); setPreset("custom"); setError(""); }}
           />
         </div>
         <div className="form-field">
@@ -323,7 +348,7 @@ export default function Reports() {
             value={to}
             min={from || undefined}
             max={today()}
-            onChange={(e) => setTo(e.target.value)}
+            onChange={(e) => { setCustom({ from, to: e.target.value }); setPreset("custom"); setError(""); }}
           />
         </div>
         <button
@@ -349,7 +374,7 @@ export default function Reports() {
       </section>
       {(error || invalid) && (
         <div role="alert" className="alert alert-danger">
-          {error || "Pilih rentang tanggal yang valid hingga hari ini."}
+          {error || rangeError}
         </div>
       )}
       <p className="report-caption">

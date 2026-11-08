@@ -21,6 +21,7 @@ import { dueDate, paymentEntry } from "./invoice-ledger";
 import { ApiError } from "./request-errors";
 import { resolveSaleEggs, saleEggCount } from "./sale-eggs";
 import { assignUsername, withUsernames } from "./usernames";
+import { validateAccountPassword, validateNewPassword } from "./account-policy";
 
 export const money = (value: number) =>
   new Intl.NumberFormat("id-ID", {
@@ -269,6 +270,7 @@ export function visibleState(state: State, user: User | null): State {
 
 /** Legacy/manual users without registration_status are already approved. */
 export function accountAccessError(user: User): string | null {
+  if (user.deleted_at) return "Akun ini sudah dihapus. Hubungi admin.";
   if (user.registration_status === "pending")
     return "Pendaftaran Anda menunggu persetujuan admin.";
   if (user.registration_status === "rejected")
@@ -1102,6 +1104,7 @@ export function executeCommand(
     }
     case "user.create": {
       admin(user);
+      assert(Object.keys(payload).every(key => ["name","email","username","password","password_confirmation","role","target"].includes(key)), "Kolom akun tidak didukung.");
       const email = requiredText(payload.email, "Email").toLowerCase();
       assert(
         /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email),
@@ -1111,10 +1114,7 @@ export function executeCommand(
         !state.users.some((u) => u.email.toLowerCase() === email),
         "Email sudah digunakan.",
       );
-      assert(
-        text(payload.password).length >= 10,
-        "Kata sandi minimal 10 karakter.",
-      );
+      validateAccountPassword(payload.password,payload.password_confirmation);
       const role = payload.role;
       assert(role === "admin" || role === "employee", "Peran tidak valid.");
       state.users.push({
@@ -1133,15 +1133,27 @@ export function executeCommand(
       admin(user);
       const u = find(state.users, payload.id, "Karyawan");
       assert(
-        Object.keys(payload).every((key) => ["id", "name", "email", "username", "photo", "target", "active"].includes(key)),
-        "Kolom akun tidak diizinkan. Peran, status pendaftaran, dan kata sandi tidak dapat diubah lewat pengaturan akun.",
+        Object.keys(payload).every((key) => ["id", "name", "email", "username", "photo", "target", "active", "role", "password", "password_confirmation"].includes(key)),
+        "Kolom ini tidak dapat diubah lewat pengaturan akun.",
       );
-      const safeIdentity = ({ id, name, email, username, role, active, target, registration_status }: User) => ({ id, name, email, username, role, active, target, registration_status });
+      assert(!u.deleted_at, "Akun ini sudah dihapus dan tidak dapat diubah.");
+      const safeIdentity = ({ id, name, email, username, role, active, target, registration_status, is_superadmin, deleted_at }: User) => ({ id, name, email, username, role, active, target, registration_status, is_superadmin, deleted_at });
       detail.before = safeIdentity(u);
-      if (Object.hasOwn(payload, "email") || Object.hasOwn(payload, "photo"))
-        assert(u.role === "employee", "Email dan foto melalui menu ini hanya dapat diubah untuk karyawan.");
+      const passwordChanged = Object.hasOwn(payload, "password") || Object.hasOwn(payload, "password_confirmation");
+      if (passwordChanged) {
+        assert(!u.is_superadmin, "Kata sandi superadmin dilindungi dan tidak dapat diganti.");
+        validateNewPassword(payload.password, payload.password_confirmation);
+      }
+      if (Object.hasOwn(payload, "role")) {
+        assert(payload.role === "admin" || payload.role === "employee", "Peran tidak valid.");
+        assert(!u.is_superadmin || payload.role === "admin", "Peran superadmin tidak dapat diubah.");
+        assert(u.registration_status !== "pending" && u.registration_status !== "rejected", "Setujui pendaftaran sebelum mengubah peran.");
+        assert(payload.role !== "employee" || u.role !== "admin" || state.users.some(a => a.id !== u.id && a.role === "admin" && !accountAccessError(a)), "Minimal satu atasan harus aktif.");
+        u.role = payload.role;
+      }
       if (Object.hasOwn(payload, "active")) {
         assert(typeof payload.active === "boolean", "Status akun tidak valid.");
+        assert(!u.is_superadmin || payload.active, "Superadmin tidak dapat dinonaktifkan.");
         assert(
           !payload.active ||
             (u.registration_status !== "pending" &&
@@ -1155,7 +1167,7 @@ export function executeCommand(
         assert(
           payload.active ||
             u.role !== "admin" ||
-            state.users.filter((a) => a.role === "admin" && a.active).length >
+            state.users.filter((a) => a.role === "admin" && !accountAccessError(a)).length >
               1,
           "Admin terakhir tidak dapat dinonaktifkan.",
         );
@@ -1170,7 +1182,6 @@ export function executeCommand(
         u.email = email;
       }
       if (Object.hasOwn(payload, "username")) {
-        assert(u.role === "employee", "Username melalui menu ini hanya dapat diubah untuk karyawan.");
         u.username = assignUsername(state.users, u.email, payload.username, u.id);
       }
       if (Object.hasOwn(payload, "photo")) {
@@ -1180,13 +1191,39 @@ export function executeCommand(
       }
       if (Object.hasOwn(payload, "target"))
         u.target = numeric(payload.target, "Target penjualan");
-      detail.after = { ...safeIdentity(u), photo_changed: Object.hasOwn(payload, "photo") };
+      detail.after = { ...safeIdentity(u), photo_changed: Object.hasOwn(payload, "photo"), password_changed: passwordChanged };
+      break;
+    }
+    case "profile.password": {
+      assert(Object.keys(payload).every(key => ["current_password", "new_password", "password_confirmation"].includes(key)), "Kolom kata sandi tidak didukung.");
+      assert(!user.is_superadmin, "Kata sandi superadmin dilindungi dan tidak dapat diganti.");
+      assert(typeof payload.current_password === "string" && payload.current_password.length > 0, "Masukkan kata sandi saat ini.");
+      validateNewPassword(payload.new_password, payload.password_confirmation);
+      // The store verifies the current password hash before this synchronous write.
+      detail.after = { id: user.id, password_changed: true };
+      break;
+    }
+    case "user.delete": {
+      admin(user);
+      assert(Object.keys(payload).every(key => ["id", "reason"].includes(key)), "Kolom penghapusan akun tidak didukung.");
+      const u = find(state.users, payload.id, "Karyawan");
+      assert(!u.is_superadmin && u.role === "employee", "Hanya akun karyawan yang dapat dihapus.");
+      assert(u.id !== user.id, "Akun sendiri tidak dapat dihapus melalui menu ini.");
+      assert(!u.deleted_at, "Akun ini sudah dihapus.");
+      const reason = requiredText(payload.reason, "Alasan penghapusan");
+      assert(Array.from(reason).length <= 500, "Alasan penghapusan maksimal 500 karakter.");
+      assert(!state.pickups.some(p => p.user_id === u.id && (pickupBalance(state,p).kg > 0 || pickupBalance(state,p).eggs > 0)), "Kembalikan atau selesaikan telur yang masih dibawa sebelum menghapus akun.");
+      detail.before = { id: u.id, name: u.name, role: u.role, active: u.active };
+      u.active = false;
+      u.deleted_at = stamp;
+      detail.after = { id: u.id, name: u.name, active: false, deleted_at: stamp, reason };
       break;
     }
     case "user.approve":
     case "user.reject": {
       admin(user);
       const u = find(state.users, payload.id, "Karyawan");
+      assert(!u.deleted_at, "Akun ini sudah dihapus dan tidak dapat disetujui kembali.");
       assert(
         Object.keys(payload).every((key) => key === "id"),
         "Persetujuan hanya menerima ID akun.",

@@ -11,6 +11,7 @@ import {
   Egg,
   Leaf,
   MoreHorizontal,
+  Pencil,
   Package,
   Plus,
   ShoppingBag,
@@ -42,6 +43,7 @@ import {
 import { useFarm } from "@/lib/store";
 import { FarmArt } from "./App";
 import { printReceipt } from "@/lib/export";
+import styles from "./Dashboard.module.css";
 
 export default function Dashboard({
   go,
@@ -234,6 +236,13 @@ export default function Dashboard({
               </strong>
             </div>
           </div>
+          {user.role === "admin" && (
+            <div className={styles.priceActions}>
+              <button type="button" className="btn btn-primary" onClick={() => open("price")}>
+                <Pencil size={17} /> {price ? "Perbarui harga telur" : "Tetapkan harga telur"}
+              </button>
+            </div>
+          )}
           <button className="price-footer" onClick={() => go("prices")}>
             <span>
               <HistoryIcon />

@@ -25,10 +25,10 @@ import { requestTimeout } from "./request-timeout";
 import { isPriceSyncResponse, mergePriceSync, refreshKind, validPriceCursor } from "./price-sync";
 import { isReceiptDelta, mergeReceiptDelta } from "./receipt-delta";
 import { MediaCache, mediaPath } from "./media-cache";
-import { readPendingRequestIds } from "./request-retries";
+import { readPendingRequestIds, rememberCommandRequest } from "./request-retries";
 import { detachBrowserPush } from "./push-client";
 import { deviceRequest, nativePlatform, type PushRoute } from "./native-push";
-import { demoLoginUser, parseDemoCredentials, persistDemoData, renameDemoCredential, type DemoCredentials } from "./demo-credentials";
+import { demoLoginUser, demoPasswordMatches, parseDemoCredentials, persistDemoData, renameDemoCredential, type DemoCredentials } from "./demo-credentials";
 import { withUsernames } from "./usernames";
 import { applyDemoWrite, withDemoWriteLock } from "./demo-writes";
 import {
@@ -220,6 +220,8 @@ export function FarmProvider({ children }: { children: ReactNode }) {
   // Preserve command order within one browser session: a slower full response
   // must never replace a newly merged invoice or its confirmed carried balance.
   const liveCommandTail = useRef(Promise.resolve());
+  // Password-derived retry keys must never be persisted as a guessing oracle.
+  const sensitiveCommandRetries = useRef(new Map<string, string>());
   const lastFullRefresh = useRef(0);
   const mediaCache = useRef(new MediaCache());
   const commit = useCallback((next: State, checkedPrices = true) => {
@@ -235,6 +237,7 @@ export function FarmProvider({ children }: { children: ReactNode }) {
         (u) => u.id === userRef.current?.id && !accountAccessError(u),
       );
       if (updated) {
+        if (userRef.current.role !== updated.role) sensitiveCommandRetries.current.clear();
         userRef.current = updated;
         setUser(updated);
       } else {
@@ -245,6 +248,7 @@ export function FarmProvider({ children }: { children: ReactNode }) {
   }, []);
   const setSessionUser = useCallback((next: User | null) => {
     if (userRef.current?.id !== next?.id || userRef.current?.role !== next?.role) {
+      sensitiveCommandRetries.current.clear();
       sync.current.invalidate();
       liveCommandTail.current = Promise.resolve();
       mediaCache.current.clear();
@@ -256,6 +260,7 @@ export function FarmProvider({ children }: { children: ReactNode }) {
   const invalidateSession = useCallback(() => {
     const previousToken = tokenRef.current;
     ++authEpoch.current;
+    sensitiveCommandRetries.current.clear();
     sync.current.invalidate();
     mediaCache.current.clear();
     lastFullRefresh.current = 0;
@@ -537,6 +542,7 @@ export function FarmProvider({ children }: { children: ReactNode }) {
 
   const login = useCallback(
     async (identifier: string, password: string) => {
+      sensitiveCommandRetries.current.clear();
       const loginEpoch = ++authEpoch.current;
       sync.current.invalidate();
       setError(null);
@@ -672,6 +678,7 @@ export function FarmProvider({ children }: { children: ReactNode }) {
       if (requestId !== undefined && !/^[A-Za-z0-9_-]{8,80}$/.test(requestId))
         throw new ApiError("ID percobaan penyimpanan tidak valid.", 400);
       const sessionToken = tokenRef.current;
+      const sensitiveCommand = action === "user.create" || action === "profile.password" || (action === "user.update" && (Object.hasOwn(payload,"password") || Object.hasOwn(payload,"password_confirmation")));
       const commandEpoch = authEpoch.current;
       const sessionUnchanged = () => tokenRef.current === sessionToken && userRef.current?.id === currentUser.id && userRef.current?.role === currentUser.role && authEpoch.current === commandEpoch;
       let release: (() => void) | undefined;
@@ -689,6 +696,15 @@ export function FarmProvider({ children }: { children: ReactNode }) {
         if (mode === "demo") {
           // Hash before taking the cross-tab lock to keep other saves responsive.
           const createdPassword = action === "user.create" ? await passwordHash(String(payload.email).trim().toLowerCase(), String(payload.password)) : undefined;
+          const changingPassword = action === "profile.password" || (action === "user.update" && (Object.hasOwn(payload,"password") || Object.hasOwn(payload,"password_confirmation")));
+          const authBefore = changingPassword ? localStorage.getItem(DEMO_AUTH_KEY) : null;
+          const passwordSourceRaw = changingPassword ? localStorage.getItem(STORAGE_KEY) : null;
+          const passwordSource = passwordSourceRaw ? JSON.parse(passwordSourceRaw) as State : stateRef.current;
+          const passwordTarget = changingPassword ? passwordSource.users.find(member => member.id === (action === "profile.password" ? currentUser.id : payload.id)) : undefined;
+          if (action === "profile.password" && passwordTarget && !await demoPasswordMatches(parseDemoCredentials(authBefore),passwordTarget.email,String(payload.current_password),["admin","emp-1","emp-2","emp-3"].includes(passwordTarget.id) ? DEMO_PASSWORD : null,passwordHash))
+            throw new ApiError("Kata sandi saat ini tidak sesuai.",422);
+          const passwordEmail = passwordTarget ? String(action === "user.update" && Object.hasOwn(payload,"email") ? payload.email : passwordTarget.email).trim().toLowerCase() : "";
+          const changedHash = changingPassword && passwordTarget ? await passwordHash(passwordEmail, String(action === "profile.password" ? payload.new_password : payload.password)) : undefined;
           const attempt = requestId && (action === "sale.create" || action === "production.create" || action === "stock.reconcile")
             ? { request_id: requestId, fingerprint: await digest(JSON.stringify({ action, payload })) } : undefined;
           const saved = await withDemoWriteLock(() => {
@@ -696,6 +712,8 @@ export function FarmProvider({ children }: { children: ReactNode }) {
               throw new ApiError("Sesi berubah. Silakan masuk kembali.", 403);
             const stored = localStorage.getItem(STORAGE_KEY);
             const source = stored ? JSON.parse(stored) as State : stateRef.current;
+            if (changingPassword && (stored !== passwordSourceRaw || localStorage.getItem(DEMO_AUTH_KEY) !== authBefore))
+              throw new ApiError("Data akun berubah. Silakan coba kembali.",409);
             const applied = applyDemoWrite(source, currentUser.id, action, payload, attempt);
             if (applied.state === source) return applied;
             let credentials: DemoCredentials | undefined;
@@ -707,6 +725,10 @@ export function FarmProvider({ children }: { children: ReactNode }) {
               const previous = source.users.find((member) => member.id === payload.id)!;
               const updated = applied.state.users.find((member) => member.id === previous.id)!;
               credentials = renameDemoCredential(parseDemoCredentials(localStorage.getItem(DEMO_AUTH_KEY)), previous.email, updated.email);
+            }
+            if (changedHash !== undefined) {
+              credentials ??= parseDemoCredentials(localStorage.getItem(DEMO_AUTH_KEY));
+              credentials[passwordEmail] = changedHash;
             }
             persistDemoData(localStorage, STORAGE_KEY, applied.state, DEMO_AUTH_KEY, credentials);
             return applied;
@@ -722,14 +744,7 @@ export function FarmProvider({ children }: { children: ReactNode }) {
               ? `${currentUser.id}:${await digest(JSON.stringify({ action, payload }))}`
               : null;
           let request_id = requestId;
-          if (fingerprint) {
-            const retries = readPendingRequestIds(
-              sessionStorage.getItem(RETRY_KEY),
-            );
-            request_id = retries[fingerprint] || crypto.randomUUID();
-            retries[fingerprint] = request_id;
-            sessionStorage.setItem(RETRY_KEY, JSON.stringify(retries));
-          }
+          if (fingerprint) request_id = rememberCommandRequest(fingerprint,sensitiveCommand,sensitiveCommandRetries.current,sessionStorage,RETRY_KEY,() => crypto.randomUUID());
           if (!sessionUnchanged())
             throw new Error("Sesi berubah. Silakan masuk kembali.");
           const wireCommand = {
@@ -746,7 +761,8 @@ export function FarmProvider({ children }: { children: ReactNode }) {
             receiptOnly = true;
           } else if (isState(response)) next = response; // Compatible with servers before receipt deltas.
           else throw new Error("Struktur data API tidak sesuai.");
-          if (fingerprint) {
+          if (fingerprint && sensitiveCommand) sensitiveCommandRetries.current.delete(fingerprint);
+          else if (fingerprint) {
             try {
               const remaining = readPendingRequestIds(
                 sessionStorage.getItem(RETRY_KEY),
@@ -769,7 +785,7 @@ export function FarmProvider({ children }: { children: ReactNode }) {
         commit(state, !receiptOnly);
         if (!receiptOnly) lastFullRefresh.current = Date.now();
         setError(null);
-        const confirmed = mode === "demo" ? visibleState(state, currentUser) : state;
+        const confirmed = mode === "demo" ? visibleState(state, state.users.find(member => member.id === currentUser.id) || null) : state;
         return commandResult ? { ...confirmed, command_result: commandResult } : confirmed;
       } catch (cause) {
         if (sessionUnchanged()) {
