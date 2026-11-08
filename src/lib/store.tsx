@@ -28,7 +28,8 @@ import { MediaCache, mediaPath } from "./media-cache";
 import { readPendingRequestIds } from "./request-retries";
 import { detachBrowserPush } from "./push-client";
 import { deviceRequest, nativePlatform, type PushRoute } from "./native-push";
-import { demoPasswordMatches, parseDemoCredentials, persistDemoData, renameDemoCredential, type DemoCredentials } from "./demo-credentials";
+import { demoLoginUser, parseDemoCredentials, persistDemoData, renameDemoCredential, type DemoCredentials } from "./demo-credentials";
+import { withUsernames } from "./usernames";
 import { applyDemoWrite, withDemoWriteLock } from "./demo-writes";
 import {
   AUTH_SESSION_KEY,
@@ -72,7 +73,7 @@ interface FarmContextValue {
   sessionRecovery: boolean;
   error: string | null;
   priceSync: PriceSync;
-  login: (email: string, password: string) => Promise<void>;
+  login: (identifier: string, password: string) => Promise<void>;
   registrationStatus: () => Promise<RegistrationAvailability>;
   register: (input: RegistrationInput) => Promise<RegistrationResult>;
   logout: () => Promise<void>;
@@ -288,7 +289,7 @@ export function FarmProvider({ children }: { children: ReactNode }) {
               ? JSON.parse(stored)
               : stateRef.current;
             if (!isState(parsed)) throw new Error("Data demo tidak valid.");
-            next = parsed;
+            next = { ...parsed, users: withUsernames(parsed.users) };
           } else if (kind === "prices") {
             next = stateRef.current;
             for (let page=0; ; page++) {
@@ -372,7 +373,13 @@ export function FarmProvider({ children }: { children: ReactNode }) {
             if (stored) {
               try {
                 const parsed: unknown = JSON.parse(stored);
-                if (isState(parsed)) return parsed;
+                if (isState(parsed)) {
+                  const users = withUsernames(parsed.users);
+                  if (users === parsed.users) return parsed;
+                  const upgraded = { ...parsed, users };
+                  localStorage.setItem(STORAGE_KEY, JSON.stringify(upgraded));
+                  return upgraded;
+                }
               } catch {
                 /* Rebuild damaged demo data only; real data never falls back. */
               }
@@ -529,7 +536,7 @@ export function FarmProvider({ children }: { children: ReactNode }) {
   );
 
   const login = useCallback(
-    async (email: string, password: string) => {
+    async (identifier: string, password: string) => {
       const loginEpoch = ++authEpoch.current;
       sync.current.invalidate();
       setError(null);
@@ -540,33 +547,28 @@ export function FarmProvider({ children }: { children: ReactNode }) {
           const source = stored
             ? (JSON.parse(stored) as State)
             : stateRef.current;
-          const normalizedEmail = email.trim().toLowerCase();
-          const found = source.users.find(
-            (u) => u.email.toLowerCase() === normalizedEmail,
-          );
           const credentialJson = localStorage.getItem(DEMO_AUTH_KEY);
-          const validPassword = await demoPasswordMatches(
-            parseDemoCredentials(credentialJson), normalizedEmail, password,
-            ["admin", "emp-1", "emp-2", "emp-3"].includes(found?.id || "") ? DEMO_PASSWORD : null,
-            passwordHash,
-          );
+          const found = await demoLoginUser({
+            users: source.users,
+            credentials: parseDemoCredentials(credentialJson),
+            identifier, password,
+            seedPassword: DEMO_PASSWORD,
+            seedUserIds: ["admin", "emp-1", "emp-2", "emp-3"],
+            hashPassword: passwordHash,
+          });
           if (authEpoch.current !== loginEpoch) return;
           if (localStorage.getItem(STORAGE_KEY) !== stored || localStorage.getItem(DEMO_AUTH_KEY) !== credentialJson || (!stored && stateRef.current !== source))
             throw new Error("Data akun berubah. Silakan masuk kembali.");
-          if (!found || !validPassword)
-            throw new Error("Email atau kata sandi tidak sesuai.");
-          const accessError = accountAccessError(found);
-          if (accessError) throw new Error(accessError);
           if (authEpoch.current !== loginEpoch) return;
           localStorage.setItem(DEMO_USER_KEY, found.id);
           sessionStorage.removeItem(DEMO_USER_KEY);
-          commit(source);
+          commit({ ...source, users: withUsernames(source.users) });
           setSessionUser(found);
         } else {
           const result = await request<{ token: string; user: User }>(
             "/auth/login",
             null,
-            { email: email.trim(), password, response_mode: "compact" },
+            { identifier: identifier.trim(), password, response_mode: "compact" },
           );
           if (authEpoch.current !== loginEpoch) {
             void request("/auth/logout", result.token, {}).catch(() => {});

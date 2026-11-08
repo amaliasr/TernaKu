@@ -34,6 +34,18 @@ Untuk langkah pemasangan melalui File Manager hosting seperti RumahFlow, baca **
 4. Untuk lokal, jalankan dari folder `api/`: `php -S 127.0.0.1:8081 router.php`. Atur `APP_URL=http://127.0.0.1:8081` dan `ALLOWED_ORIGINS=http://localhost:3000,http://127.0.0.1:3000` di `.env`. Gunakan origin frontend yang tepat, termasuk port.
 5. `GET /health` harus memberikan `{"data":{"status":"ok",...}}`. Login menggunakan admin pertama, lalu buat harga aktif dan jenis pakan melalui aplikasi sebelum bertransaksi.
 
+## Pembaruan login username
+
+Sebelum mengaktifkan versi API ini pada database lama, cadangkan database dan jalankan dari folder `api/`:
+
+```bash
+php scripts/migrate-usernames.php
+```
+
+Perintah ini menambahkan kolom `users.username` yang unik tanpa menghapus tabel, akun, kata sandi, atau sesi. Akun lama mendapat username dari bagian email sebelum `@`; benturan memakai akhiran `.2`, `.3`, dan seterusnya. Perintah aman dijalankan ulang. Jika API lama masih melayani pendaftaran saat pembaruan, jalankan sekali lagi sesudah API baru aktif. Installer juga menjalankan pembaruan ini. API tidak mengubah struktur database pada permintaan login biasa.
+
+Login dapat memakai username atau email dengan kata sandi yang sama. Username memakai 3–32 karakter: huruf, angka, titik, garis bawah, atau minus; karakter pertama harus huruf atau angka. Spasi di awal/akhir diabaikan dan huruf dinormalisasi menjadi kecil. Pengguna dapat mengubah username sendiri di Profil; admin dapat mengubah username karyawan. Perubahan email tidak mengubah username. Akun nonaktif atau belum disetujui tetap tidak dapat masuk. Percobaan login lewat username dan email berbagi batas percobaan akun yang sama untuk setiap IP.
+
 ## Deployment di api.buildmanagement.id/ternaku
 
 Upload isi `api/` ke folder publik `/ternaku` pada domain API, termasuk `.htaccess` dan `system/`. Jangan upload `.test-db/`, `upstream/`, ZIP unduhan, atau log tes. Buat `.env` di server:
@@ -59,8 +71,8 @@ Frontend production memakai `NEXT_PUBLIC_API_URL=https://api.buildmanagement.id/
 | --- | --- | --- |
 | GET | `/health` | Pemeriksaan runtime dan koneksi database |
 | GET | `/auth/registration-status` | `{first_admin_required,setup_enabled}` tanpa autentikasi |
-| POST | `/auth/register` | `{name,email,password,password_confirmation,setup_token?}` → `{status,message}` |
-| POST | `/auth/login` | `{email,password}` → `{token,user}` |
+| POST | `/auth/register` | `{name,email,username?,password,password_confirmation,setup_token?}` → `{status,message,username}` |
+| POST | `/auth/login` | `{identifier,password}` → `{token,user}`; `identifier` dapat berupa username/email, field lama `email` tetap didukung |
 | POST | `/auth/logout` | Mencabut bearer token |
 | GET | `/bootstrap` | State sesuai hak pengguna |
 | GET | `/bootstrap?compact=1` | State yang sama dengan referensi foto, tanpa base64 dalam riwayat/audit |
@@ -94,9 +106,9 @@ Nama kolom dan struktur respons mengikuti `../src/lib/types.ts` dan `../CONTRACT
 | `sale.payment` | id, amount, expected_paid?, method? | Pemilik/admin |
 | `sale.due` | id, due_date | Pemilik/admin |
 | `price.create` | good_price, cracked_price, effective_at | Admin |
-| `user.create` | name, email, password, role, target | Admin |
-| `user.update` | id, name?, email?, photo?, active?, target? | Admin; perubahan email/foto hanya untuk akun karyawan |
-| `profile.update` | name, photo? | Akun sendiri, admin maupun karyawan |
+| `user.create` | name, email, username?, password, role, target | Admin |
+| `user.update` | id, name?, email?, username?, photo?, active?, target? | Admin; perubahan email/username/foto hanya untuk akun karyawan |
+| `profile.update` | name, username?, photo? | Akun sendiri, admin maupun karyawan |
 | `user.approve` | id | Admin, menyetujui pendaftaran karyawan |
 | `user.reject` | id | Admin, menolak pendaftaran yang menunggu |
 | `barn.create` | name, type:`ayam`, capacity, notes | Admin |
@@ -133,9 +145,9 @@ Setiap command menggunakan transaksi dan kunci baris. Kunci command global yang 
 
 Admin menerima semua transaksi dan audit; karyawan hanya menerima produksi, pickup, penjualan, koreksi, pemakaian pakan, dan notifikasinya sendiri. `stock_movements` mencatat produksi, pengambilan, setiap pengembalian, dan delta koreksi dengan tanggal, referensi, serta jumlah bertanda positif/negatif; karyawan hanya menerima ledger miliknya. Saldo stok telur/pakan tetap berasal dari agregat seluruh peternakan, bukan data karyawan yang disaring. Karyawan tidak menerima hash password, token pengguna lain, audit admin, biaya pembelian pakan, atau email karyawan lain. Laporan, grafik, PDF/Excel, dan nota dirender frontend dari state ini.
 
-`profile.update` menerima nama 1–120 karakter dan foto opsional. Foto yang tidak dikirim dipertahankan; `photo: ""` menghapusnya. Untuk perubahan nama saja, jangan mengirim ulang foto lama agar batas unggahan baru tidak diterapkan pada foto tersebut. Identitas pengguna selalu berasal dari token; kolom lain seperti `id`, `role`, `active`, `email`, dan `password` ditolak. Profil disimpan memakai `users` dan record privat `user_profile`, tanpa migrasi skema.
+`profile.update` menerima nama 1–120 karakter, username opsional, dan foto opsional. Foto yang tidak dikirim dipertahankan; `photo: ""` menghapusnya. Untuk perubahan nama saja, jangan mengirim ulang foto lama agar batas unggahan baru tidak diterapkan pada foto tersebut. Identitas pengguna selalu berasal dari token; kolom lain seperti `id`, `role`, `active`, `email`, dan `password` ditolak. Username disimpan di `users` setelah migrasi username; foto memakai record privat `user_profile`.
 
-Admin dapat mengedit nama, email login, target, dan foto karyawan melalui `user.update`. Email dinormalisasi dan harus unik. Foto yang tidak dikirim tetap dipertahankan; `photo: ""` menghapus foto. Perubahan ini tidak mengubah kata sandi, peran, maupun status persetujuan pendaftaran. Akun yang masih menunggu persetujuan tetap harus disetujui melalui `user.approve`. Log perubahan menyimpan metadata tanpa isi gambar.
+Admin dapat mengedit nama, email login, username, target, dan foto karyawan melalui `user.update`. Email dan username dinormalisasi dan masing-masing harus unik. Foto yang tidak dikirim tetap dipertahankan; `photo: ""` menghapus foto. Perubahan ini tidak mengubah kata sandi, peran, maupun status persetujuan pendaftaran. Akun yang masih menunggu persetujuan tetap harus disetujui melalui `user.approve`. Log perubahan menyimpan metadata tanpa isi gambar.
 
 Berat terjual wajib diisi. Jika butir dikosongkan, API memperkirakan jumlah bulat dari sisa berat dan butir pada sumber yang dipilih. Baris ini ditandai dengan `eggs_estimated: true` pada nota.
 

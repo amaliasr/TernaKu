@@ -20,6 +20,7 @@ import type {
 import { dueDate, paymentEntry } from "./invoice-ledger";
 import { ApiError } from "./request-errors";
 import { resolveSaleEggs, saleEggCount } from "./sale-eggs";
+import { assignUsername, withUsernames } from "./usernames";
 
 export const money = (value: number) =>
   new Intl.NumberFormat("id-ID", {
@@ -287,6 +288,7 @@ export function registerDemoEmployee(
       [
         "name",
         "email",
+        "username",
         "password",
         "password_confirmation",
         "setup_token",
@@ -323,11 +325,13 @@ export function registerDemoEmployee(
   );
 
   const state = structuredClone(input);
+  state.users = withUsernames(state.users);
   const stamp = now.toISOString();
   const newUser: User = {
     id: `signup-${now.getTime()}-${state.users.length + 1}`,
     name,
     email,
+    username: assignUsername(state.users, email, Object.hasOwn(payload, "username") ? payload.username : undefined),
     role: "employee",
     active: false,
     registration_status: "pending",
@@ -359,6 +363,7 @@ export function registerDemoEmployee(
     user: newUser,
     result: {
       status: "pending",
+      username: newUser.username,
       message:
         "Pendaftaran berhasil. Akun Anda menunggu persetujuan admin sebelum dapat masuk.",
     },
@@ -724,6 +729,7 @@ export function executeCommand(
   now = new Date(),
 ): State {
   const state: State = structuredClone(input);
+  state.users = withUsernames(state.users);
   delete state.command_result;
   delete state.inventory;
   delete state.feed_inventory;
@@ -1070,8 +1076,8 @@ export function executeCommand(
     }
     case "profile.update": {
       assert(
-        Object.keys(payload).every((key) => key === "name" || key === "photo"),
-        "Profil hanya dapat mengubah nama dan foto.",
+        Object.keys(payload).every((key) => key === "name" || key === "photo" || key === "username"),
+        "Profil hanya dapat mengubah nama, username, dan foto.",
       );
       assert(
         typeof payload.name === "string" &&
@@ -1080,13 +1086,15 @@ export function executeCommand(
         "Nama wajib diisi dan maksimal 120 karakter.",
       );
       const profile = state.users.find((u) => u.id === user.id)!;
-      const before = profile.name;
+      const before = { name: profile.name, username: profile.username };
       profile.name = payload.name.trim();
+      if (Object.hasOwn(payload, "username")) profile.username = assignUsername(state.users, profile.email, payload.username, profile.id);
       if (Object.hasOwn(payload, "photo")) profile.photo = photo(payload.photo);
       detail = {
-        before: { name: before },
+        before,
         after: {
           name: profile.name,
+          username: profile.username,
           photo_changed: Object.hasOwn(payload, "photo"),
         },
       };
@@ -1113,6 +1121,7 @@ export function executeCommand(
         id: id("user"),
         name: requiredText(payload.name, "Nama"),
         email,
+        username: assignUsername(state.users, email, Object.hasOwn(payload, "username") ? payload.username : undefined),
         role,
         active: true,
         registration_status: "approved",
@@ -1124,10 +1133,10 @@ export function executeCommand(
       admin(user);
       const u = find(state.users, payload.id, "Karyawan");
       assert(
-        Object.keys(payload).every((key) => ["id", "name", "email", "photo", "target", "active"].includes(key)),
+        Object.keys(payload).every((key) => ["id", "name", "email", "username", "photo", "target", "active"].includes(key)),
         "Kolom akun tidak diizinkan. Peran, status pendaftaran, dan kata sandi tidak dapat diubah lewat pengaturan akun.",
       );
-      const safeIdentity = ({ id, name, email, role, active, target, registration_status }: User) => ({ id, name, email, role, active, target, registration_status });
+      const safeIdentity = ({ id, name, email, username, role, active, target, registration_status }: User) => ({ id, name, email, username, role, active, target, registration_status });
       detail.before = safeIdentity(u);
       if (Object.hasOwn(payload, "email") || Object.hasOwn(payload, "photo"))
         assert(u.role === "employee", "Email dan foto melalui menu ini hanya dapat diubah untuk karyawan.");
@@ -1159,6 +1168,10 @@ export function executeCommand(
         assert(email.length <= 190 && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email), "Format email tidak valid.");
         assert(!state.users.some((member) => member.id !== u.id && member.email.toLowerCase() === email), "Email sudah digunakan.");
         u.email = email;
+      }
+      if (Object.hasOwn(payload, "username")) {
+        assert(u.role === "employee", "Username melalui menu ini hanya dapat diubah untuk karyawan.");
+        u.username = assignUsername(state.users, u.email, payload.username, u.id);
       }
       if (Object.hasOwn(payload, "photo")) {
         assert(typeof payload.photo === "string", "Foto harus berupa gambar JPEG, PNG, atau WebP.");

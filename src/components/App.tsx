@@ -36,6 +36,8 @@ import {
 } from "lucide-react";
 import { FarmProvider, useFarm } from "@/lib/store";
 import { activePrice, dateLabel, money } from "@/lib/domain";
+import { normalizeUsername } from "@/lib/usernames";
+import UsernameInput, { optionalUsernameHint } from "./UsernameInput";
 import Dashboard from "./Dashboard";
 import Modules from "./Modules";
 import EntryModal from "./EntryModal";
@@ -106,6 +108,7 @@ function Login() {
   const [registration, setRegistration] = useState({
     name: "",
     email: "",
+    username: "",
     password: "",
     password_confirmation: "",
     setup_token: "",
@@ -120,6 +123,7 @@ function Login() {
   const [result, setResult] = useState<{
     status: "active" | "pending";
     message: string;
+    username?: string;
   } | null>(null);
   async function loadRegistrationStatus() {
     setStatusBusy(true);
@@ -143,7 +147,7 @@ function Login() {
     void loadRegistrationStatus();
   }
   function backToLogin() {
-    if (result) setEmail(registration.email.trim());
+    if (result) setEmail(result.username || normalizeUsername(registration.username) || registration.email.trim());
     setPassword("");
     setScreen("login");
     setError("");
@@ -182,6 +186,9 @@ function Login() {
       const response = await register({
         name: registration.name.trim(),
         email: registration.email.trim(),
+        ...(registration.username.trim()
+          ? { username: normalizeUsername(registration.username) }
+          : {}),
         password: registration.password,
         password_confirmation: registration.password_confirmation,
         ...(status.first_admin_required
@@ -261,6 +268,7 @@ function Login() {
                     : "Pendaftaran diterima"}
                 </h2>
                 <p>{result.message}</p>
+                {result.username && <p>Username Anda: <strong>{result.username}</strong></p>}
                 {result.status === "pending" && (
                   <div className="auth-notice">
                     <ShieldCheck size={20} />
@@ -357,7 +365,9 @@ function Login() {
                   type="email"
                   className="form-control"
                   placeholder="nama@peternakan.id"
-                  autoComplete="username"
+                  autoComplete="email"
+                  autoCapitalize="none"
+                  spellCheck={false}
                   value={registration.email}
                   onChange={(e) =>
                     setRegistration({ ...registration, email: e.target.value })
@@ -366,6 +376,19 @@ function Login() {
                   disabled={busy}
                   required
                 />
+                <label className="form-label mt-3" htmlFor="register-username">
+                  Username <span className="text-muted">(opsional)</span>
+                </label>
+                <UsernameInput
+                  id="register-username"
+                  value={registration.username}
+                  onChange={(event) => setRegistration({ ...registration, username: event.target.value.toLowerCase() })}
+                  aria-describedby="register-username-hint"
+                  disabled={busy}
+                />
+                <small className="auth-hint" id="register-username-hint">
+                  {optionalUsernameHint}
+                </small>
                 <label className="form-label mt-3" htmlFor="register-password">
                   Kata sandi
                 </label>
@@ -500,14 +523,18 @@ function Login() {
               Masuk untuk mulai mengelola peternakan Anda.
             </p>
             <label className="form-label mt-4" htmlFor="email">
-              Alamat email
+              Username atau email
             </label>
             <input
               id="email"
-              type="email"
+              type="text"
               className="form-control"
-              placeholder="nama@peternakan.id"
+              placeholder="Username atau alamat email Anda"
               autoComplete="username"
+              autoCapitalize="none"
+              autoCorrect="off"
+              spellCheck={false}
+              maxLength={190}
               value={email}
               onChange={(e) => setEmail(e.target.value)}
               required

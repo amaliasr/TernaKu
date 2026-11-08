@@ -2,6 +2,7 @@
 /** HTTP + concurrent DB integration tests. Dedicated database only, explicitly opt in. */
 if(PHP_SAPI!=='cli') exit;
 require dirname(__DIR__).'/scripts/env.php';
+require dirname(__DIR__).'/application/libraries/UsernameService.php';
 $dbName=getenv('DB_NAME') ?: '';
 if(getenv('ALLOW_TEST_RESET')!=='1' || !preg_match('/^[a-zA-Z0-9_]+_test$/D',$dbName)) { fwrite(STDERR,"Use dedicated DB_NAME ending _test and ALLOW_TEST_RESET=1. Never run against production.\n"); exit(1); }
 $base=getenv('TEST_API_URL') ?: 'http://127.0.0.1:8081';
@@ -61,6 +62,23 @@ function registrationWorkers(array $jobs): array {
 }
 try {
     $setupKey=getenv('SETUP_TOKEN') ?: ''; if(strlen($setupKey)<32) throw new RuntimeException('Set a test-only SETUP_TOKEN (32+ characters) for both this test and the test API server.');
+    resetTestDatabase();
+    $db->exec('ALTER TABLE users DROP INDEX users_username_unique, DROP COLUMN username');
+    $legacyHash=password_hash('LegacyPassword42',PASSWORD_DEFAULT);
+    $insert=$db->prepare("INSERT INTO users(id,name,email,password_hash,role) VALUES(?,?,?,?,'employee')");
+    foreach(['legacy_1'=>'same@one.example','legacy_2'=>'same@two.example','legacy_3'=>'a@three.example','legacy_4'=>str_repeat('z',60).'@four.example'] as $id=>$email) $insert->execute([$id,'Legacy account',$email,$legacyHash]);
+    $legacyToken=bin2hex(random_bytes(32));
+    $db->prepare('INSERT INTO tokens(token_hash,user_id,expires_at) VALUES(?,?,DATE_ADD(NOW(),INTERVAL 30 DAY))')->execute([hash('sha256',$legacyToken),'legacy_1']);
+    check(UsernameService::migrate($db)===4,'username upgrade backfills an old users table without recreating it');
+    $legacyUsers=$db->query('SELECT * FROM users ORDER BY id')->fetchAll(PDO::FETCH_ASSOC);
+    check(array_column($legacyUsers,'username')===['same','same.2','user.a',str_repeat('z',32)],'legacy usernames handle duplicate prefixes, short names and maximum length deterministically');
+    check(count(array_filter($legacyUsers,fn($u)=>$u['password_hash']===$legacyHash))===4 && (int)$db->query('SELECT COUNT(*) FROM tokens')->fetchColumn()===1,'username migration preserves password hashes and active sessions');
+    check(UsernameService::migrate($db)===0 && $legacyUsers===$db->query('SELECT * FROM users ORDER BY id')->fetchAll(PDO::FETCH_ASSOC),'username migration can run repeatedly without changing assigned names');
+    $legacyLogin=req('/auth/login',['identifier'=>' SAME ','password'=>'LegacyPassword42']);
+    check($legacyLogin['user']['id']==='legacy_1' && $legacyLogin['user']['username']==='same','migrated username authenticates case-insensitively with existing password');
+    check(req('/bootstrap',[],$legacyToken,'GET')['users'][0]['username']==='same','existing session remains usable after username migration');
+    $insert->execute(['legacy_late','Late legacy signup','same@late.example',$legacyHash]);
+    check(UsernameService::migrate($db)===1 && $db->query("SELECT username FROM users WHERE id='legacy_late'")->fetchColumn()==='same.3','second migration pass backfills accounts created by an old API during release');
     resetTestDatabase(false);
     $status=req('/auth/registration-status',[],'','GET'); check($status===['first_admin_required'=>true,'setup_enabled'=>true],'empty installation reports owner-key setup availability');
     check(count($db->query('SHOW TABLES')->fetchAll())===0,'public registration status never initializes schema');
@@ -70,6 +88,7 @@ try {
     req('/auth/register',array_replace($owner,['setup_token'=>'wrong-key']),'','POST',403); check(count($db->query('SHOW TABLES')->fetchAll())===0,'invalid owner key cannot create tables or first admin');
     $result=req('/auth/register',$owner); check($result['status']==='active' && !isset($result['token']) && (int)$db->query("SELECT COUNT(*) FROM users WHERE role='admin' AND active=1")->fetchColumn()===1,'owner key initializes schema and exactly one active admin without automatic login');
     $ownerLogin=req('/auth/login',['email'=>$owner['email'],'password'=>$owner['password']]); $ownerToken=$ownerLogin['token']; check($ownerLogin['user']['registration_status']==='approved','registration and login preserve leading and trailing password spaces');
+    check($ownerLogin['user']['username']==='owner' && req('/auth/login',['identifier'=>' OWNER ','password'=>$owner['password']])['user']['id']===$ownerLogin['user']['id'],'first admin without an explicit username gets a usable generated username');
     $status=req('/auth/registration-status',[],'','GET'); check($status===['first_admin_required'=>false,'setup_enabled'=>false],'first admin setup permanently closes once a user exists');
     req('/auth/register',array_replace($owner,['email'=>'second-owner@test.local']),'','POST',409); check((int)$db->query("SELECT COUNT(*) FROM users WHERE role='admin'")->fetchColumn()===1,'stale setup request cannot create a second admin');
     $applicant=['name'=>'Calon Karyawan','email'=>'applicant@test.local','password'=>'KataSandiPanjang42','password_confirmation'=>'KataSandiPanjang42'];
@@ -77,8 +96,10 @@ try {
     req('/auth/register',array_replace($applicant,['password_confirmation'=>'different']),'','POST',422); check(true,'registration requires matching password confirmation');
     req('/auth/register',array_replace($applicant,['password'=>str_repeat('x',73),'password_confirmation'=>str_repeat('x',73)]),'','POST',422); check(true,'registration rejects bcrypt-truncated passwords');
     req('/auth/register',array_replace($applicant,['password'=>'短い文字列六個','password_confirmation'=>'短い文字列六個']),'','POST',422); check(true,'password minimum counts Unicode characters, not bytes');
-    $pending=req('/auth/register',$applicant); $state=req('/bootstrap',[],$ownerToken,'GET'); $pendingUser=first($state,'users',fn($u)=>$u['email']===$applicant['email']);
+    $pending=req('/auth/register',$applicant+['username'=>' Calon.Satu ']); $state=req('/bootstrap',[],$ownerToken,'GET'); $pendingUser=first($state,'users',fn($u)=>$u['email']===$applicant['email']);
     check($pending['status']==='pending' && !$pendingUser['active'] && $pendingUser['role']==='employee' && $pendingUser['registration_status']==='pending','all subsequent signups become inactive employees awaiting approval');
+    check($pendingUser['username']==='calon.satu','public registration normalizes a requested username');
+    req('/auth/login',['identifier'=>'calon.satu','password'=>$applicant['password']],'','POST',403); check(true,'username login cannot bypass pending approval');
     check(count(array_filter($state['notifications'],fn($n)=>$n['title']==='Pendaftaran karyawan baru'))===1,'active admin receives registration notification');
     req('/auth/register',array_replace($applicant,['email'=>'APPLICANT@test.local']),'','POST',409); check(true,'normalized duplicate email cannot overwrite a pending account');
     $wrong=req('/auth/login',['email'=>$applicant['email'],'password'=>'wrong'],'','POST',401); check(!str_contains($wrong['error'],'menunggu'),'wrong password does not disclose pending registration status');
@@ -127,7 +148,7 @@ try {
     for($i=0;$i<11;$i++) $jobs[]=['action'=>'login','payload'=>['email'=>'missing@test.local','password'=>'WrongPassword42'],'ip'=>'mixed-login'];
     $results=registrationWorkers($jobs); $registrationCodes=array_column(array_slice($results,0,6),'code'); sort($registrationCodes); $loginCodes=array_column(array_slice($results,6),'code'); sort($loginCodes);
     check($registrationCodes===[409,409,409,409,409,429] && count(array_filter($loginCodes,fn($c)=>$c===401))===10 && count(array_filter($loginCodes,fn($c)=>$c===429))===1,'simultaneous login and signup enforce independent limits without shared-table deadlocks');
-    $db->prepare('UPDATE login_attempts SET started_at=DATE_SUB(NOW(),INTERVAL 16 MINUTE) WHERE attempt_key=?')->execute([hash('sha256','mixed-login|missing@test.local')]);
+    $db->prepare('UPDATE login_attempts SET started_at=DATE_SUB(NOW(),INTERVAL 16 MINUTE) WHERE attempt_key=?')->execute([hash('sha256','mixed-login|identifier:missing@test.local')]);
     $jobs=[]; for($i=0;$i<11;$i++) $jobs[]=['action'=>'login','payload'=>['email'=>'missing@test.local','password'=>'WrongPassword42'],'ip'=>'mixed-login'];
     $codes=array_column(registrationWorkers($jobs),'code'); check(count(array_filter($codes,fn($c)=>$c===401))===10 && count(array_filter($codes,fn($c)=>$c===429))===1,'expired login counter resets once atomically under concurrency');
     $db->prepare('UPDATE login_attempts SET started_at=DATE_SUB(NOW(),INTERVAL 16 MINUTE) WHERE attempt_key=?')->execute([hash('sha256','registration-email|'.$applicant['email'])]);
@@ -135,6 +156,7 @@ try {
     $codes=array_column(registrationWorkers($jobs),'code'); sort($codes); check($codes===[409,409,409,409,409,429],'expired signup counter resets once atomically under concurrency');
     resetTestDatabase();
     $stmt=$db->prepare("INSERT INTO users(id,name,email,password_hash,role) VALUES('admin_test','Admin Test','admin@test.local',?,'admin')"); $stmt->execute([password_hash('SecureTestPassword42',PASSWORD_DEFAULT)]);
+    UsernameService::migrate($db);
     req('/bootstrap',[],'','GET',401); check(true,'unauthenticated access rejected');
     req('/health',[],'','GET',403,'https://untrusted.example'); check(true,'CORS rejects unapproved origins');
     req('/auth/login',['email'=>'admin@test.local','password'=>'wrong'], '', 'POST',401);
@@ -153,6 +175,25 @@ try {
     $sari=first($s,'users',fn($u)=>$u['email']==='sari@test.local');
     cmd('user.create',['name'=>'Budi','email'=>'budi@test.local','password'=>'PasswordBudi42','role'=>'employee','target'=>1000000],$a);
     $e=req('/auth/login',['email'=>'sari@test.local','password'=>'PasswordSari42'])['token']; $other=req('/auth/login',['email'=>'budi@test.local','password'=>'PasswordBudi42'])['token'];
+    check(req('/auth/login',['identifier'=>' SARI ','password'=>'PasswordSari42','response_mode'=>'compact'])['user']['id']===$sari['id'],'username login works with compact responses and old email login remains supported');
+    foreach(['éclair','用户','👩','not valid','_sari'] as $invalid) req('/auth/login',['identifier'=>$invalid,'password'=>'PasswordSari42'],'','POST',401);
+    check(true,'malformed or Unicode username logins fail generically without SQL collation errors');
+    $jobs=[]; for($i=0;$i<11;$i++) $jobs[]=['action'=>'login','payload'=>['identifier'=>$i%2?'SARI':'sari@test.local','password'=>'WrongPassword42'],'ip'=>'alias-throttle'];
+    $codes=array_column(registrationWorkers($jobs),'code'); sort($codes);
+    check(count(array_filter($codes,fn($c)=>$c===401))===10 && count(array_filter($codes,fn($c)=>$c===429))===1,'switching username and email cannot bypass the shared account login limit');
+    $s=cmd('profile.update',['name'=>'Sari','username'=>' Sari.Baru '],$e);
+    check($s['users'][0]['username']==='sari.baru' && req('/auth/login',['identifier'=>'sari.baru','password'=>'PasswordSari42'])['user']['id']===$sari['id'],'employee can change own username and immediately log in with it');
+    req('/auth/login',['identifier'=>'sari','password'=>'PasswordSari42'],'','POST',401);
+    foreach(['',null,'ab','@sari','nama karyawan','éclair',str_repeat('x',33),' BUDI '] as $invalid) cmd('profile.update',['name'=>'Must not persist','username'=>$invalid],$e,422);
+    check(req('/bootstrap',[],$e,'GET')['users'][0]['name']==='Sari','invalid or duplicate usernames roll back profile changes and preserve the session');
+    $s=cmd('user.update',['id'=>$sari['id'],'username'=>'pegawai.sari'],$a);
+    check(first($s,'users',fn($u)=>$u['id']===$sari['id'])['username']==='pegawai.sari' && req('/auth/login',['identifier'=>'pegawai.sari','password'=>'PasswordSari42'])['user']['id']===$sari['id'],'admin can edit employee username without changing the password');
+    cmd('user.update',['id'=>$sari['id'],'username'=>'budi'],$a,422); cmd('user.update',['id'=>'admin_test','username'=>'other.admin'],$a,422);
+    cmd('user.update',['id'=>$sari['id'],'username'=>'not.allowed'],$other,403);
+    cmd('user.update',['id'=>$sari['id'],'username'=>'sari'],$a);
+    $s=cmd('profile.update',['name'=>'Admin Test','username'=>'admin.master'],$a);
+    check(first($s,'users',fn($u)=>$u['id']==='admin_test')['username']==='admin.master','admin can set own username through the profile');
+    cmd('profile.update',['name'=>'Admin Test','username'=>'admin'],$a);
     $s=cmd('profile.update',['name'=>'Sari Profil','photo'=>$profilePhoto],$e); $profile=first($s,'users',fn($u)=>$u['id']===$sari['id']);
     check($profile['name']==='Sari Profil' && $profile['photo']===$profilePhoto && $profile['role']==='employee','employee can update own name and photo without changing role');
     $s=cmd('profile.update',['name'=>'Sari'],$e); check($s['users'][0]['photo']===$profilePhoto,'name-only profile update retains photo');
@@ -665,6 +706,7 @@ try {
     $lastEgg=first($s,'sales',fn($sale)=>$sale['customer']===$cashSale['customer']);
     check($lastEgg['items'][0]['eggs']===1 && $lastEgg['items'][0]['eggs_estimated']===true,'selling the last gram of a pickup consumes its last egg');
     cmd('user.update',['id'=>$sari['id'],'active'=>false],$a); req('/bootstrap',[],$e,'GET',401); req('/sync/prices',[],$e,'GET',401); mediaReq('/media/production/'.$pendingHarvest['id'],$e,401); check(true,'deactivation immediately revokes bootstrap, five-second sync, and media access');
+    req('/auth/login',['identifier'=>'sari','password'=>'PasswordSari42'],'','POST',401); check(true,'inactive employee cannot log in with username');
     req('/auth/logout',[],$other); req('/bootstrap',[],$other,'GET',401); check(true,'logout invalidates token');
     req('/application/config/config.php',[],'','GET',404); check(true,'internal files not exposed by dev router');
     echo "\n$checks integration checks passed.\n";

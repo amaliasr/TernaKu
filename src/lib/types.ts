@@ -16,6 +16,7 @@ export interface RegistrationAvailability {
 export interface RegistrationInput {
   name: string;
   email: string;
+  username?: string;
   password: string;
   password_confirmation: string;
   setup_token?: string;
@@ -23,6 +24,7 @@ export interface RegistrationInput {
 export interface RegistrationResult {
   status: "active" | "pending";
   message: string;
+  username?: string;
 }
 export type PaymentMethod = "cash" | "transfer" | "qris" | "credit";
 export interface InvoicePayment {
@@ -41,6 +43,7 @@ export interface User {
   id: string;
   name: string;
   email: string;
+  username?: string;
   role: Role;
   active: boolean;
   registration_status?: RegistrationStatus;
