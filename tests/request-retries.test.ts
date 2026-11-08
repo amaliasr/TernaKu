@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { readPendingRequestIds } from "../src/lib/request-retries";
+import { readPendingRequestIds, rememberCommandRequest } from "../src/lib/request-retries";
 
 test("retry IDs survive parsing and serialization unchanged", () => {
   const fingerprint = `user-1:${"a".repeat(64)}`;
@@ -26,4 +26,24 @@ test("invalid stored IDs cannot be replaced silently before retrying a write", (
       /Hubungi admin/,
     );
   }
+});
+
+test("password retries reuse one ID in memory without reading or writing persistent storage", () => {
+  const memory=new Map<string,string>();
+  const storage={getItem:()=>{throw new Error("Persistent reads forbidden");},setItem:()=>{throw new Error("Persistent writes forbidden");}};
+  let sequence=0;const createId=()=>`request-${++sequence}`;
+  const first=rememberCommandRequest("secret-derived-digest",true,memory,storage,"broken-retries",createId);
+  assert.equal(rememberCommandRequest("secret-derived-digest",true,memory,storage,"broken-retries",createId),first);
+  assert.equal(sequence,1);
+  memory.clear();
+  assert.notEqual(rememberCommandRequest("secret-derived-digest",true,memory,storage,"broken-retries",createId),first);
+});
+
+test("ordinary writes retain durable retry IDs and still fail closed on damaged storage", () => {
+  let raw:string|null=null;
+  const storage={getItem:()=>raw,setItem:(_key:string,value:string)=>{raw=value;}};
+  const first=rememberCommandRequest("stock-change",false,new Map(),storage,"retry-map",()=>"request-ordinary-1");
+  assert.equal(rememberCommandRequest("stock-change",false,new Map(),storage,"retry-map",()=>"request-unused-2"),first);
+  raw="invalid-json";
+  assert.throws(()=>rememberCommandRequest("stock-change",false,new Map(),storage,"retry-map",()=>"request-unused-3"),/Hubungi admin/);
 });

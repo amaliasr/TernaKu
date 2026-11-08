@@ -61,7 +61,7 @@ class PushService {
     }
     private function requireEnabled(): void { if(!self::validConfig($this->config)) throw new ApiProblem('Notifikasi HP belum diaktifkan oleh pengelola hosting.',503); }
     private function active(string $userId): bool {
-        $active=$this->query('SELECT active FROM users WHERE id=?',[$userId])->fetchColumn();
+        $active=$this->query('SELECT active FROM users WHERE id=? AND deleted_at IS NULL',[$userId])->fetchColumn();
         $registration=$this->query("SELECT data FROM records WHERE kind='registration' AND user_id=? LIMIT 1",[$userId])->fetchColumn();
         return (bool)$active && (!$registration || (json_decode($registration,true)['status']??'pending')==='approved');
     }
@@ -150,7 +150,7 @@ class PushService {
         $this->broadcast($payload,$this->activeRecipients());
     }
     public function activeRecipients(): array {
-        return $this->query("SELECT u.id FROM users u WHERE u.active=1 AND NOT EXISTS (
+        return $this->query("SELECT u.id FROM users u WHERE u.active=1 AND u.deleted_at IS NULL AND NOT EXISTS (
             SELECT 1 FROM records r WHERE r.user_id=u.id AND r.kind='registration'
             AND COALESCE(JSON_UNQUOTE(JSON_EXTRACT(r.data,'$.status')),'pending')<>'approved'
         )")->fetchAll(PDO::FETCH_COLUMN);

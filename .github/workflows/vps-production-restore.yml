@@ -24,7 +24,7 @@ jobs:
       - uses: actions/checkout@v7
         with:
           persist-credentials: false
-      - name: Check legacy and username schema compatibility
+      - name: Check legacy, account protection and generated column compatibility
         run: python3 deploy/vps/production/test_restore.py
       - name: Start an isolated empty MySQL 8.4 target
         run: |
@@ -38,7 +38,9 @@ jobs:
           dump="$RUNNER_TEMP/synthetic.sql"
           sed -e '/^INSERT IGNORE INTO /d' -e 's/DEFAULT CHARSET=utf8mb4;/DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_uca1400_ai_ci;/' api/schema.sql > "$dump"
           cat >> "$dump" <<'SQL'
-          INSERT INTO users(id,name,email,username,password_hash,role) VALUES ('demo','Test','test@example.invalid','test.username','fake','admin');
+          INSERT INTO users(id,name,email,username,password_hash,role,active,is_superadmin,deleted_at) VALUES
+          ('demo','Test','test@example.invalid','test.username','fake','admin',1,1,NULL),
+          ('former','Former employee','former@example.invalid','former.username','fake','employee',0,0,'2026-11-01 15:23:45');
           INSERT INTO tokens(token_hash,user_id,expires_at) VALUES (REPEAT('a',64),'demo','2030-01-01');
           INSERT INTO command_requests(user_id,request_id,fingerprint) VALUES ('demo','once',REPEAT('f',64));
           INSERT INTO command_mutex VALUES (1,7);
@@ -46,28 +48,51 @@ jobs:
           INSERT INTO login_attempts VALUES (REPEAT('b',64),1,'2026-01-01');
           INSERT INTO records(id,sequence,kind,user_id,occurred_at,data) VALUES
           ('one',2,'push_subscription','demo','2026-01-01','{"fixture":true}'),
-          ('two',7,'sale','demo','2026-01-01','{"customer":"Pélanggan","photo":"data:image/png;base64,aGVsbG8="}'),
+          ('two',7,'sale','former','2026-01-01','{"customer":"Pélanggan","photo":"data:image/png;base64,aGVsbG8="}'),
           ('three',14,'push_job','demo','2099-01-01','{"fixture":true}');
           ALTER TABLE records AUTO_INCREMENT=48;
           SQL
           sha=$(sha256sum "$dump" | cut -d' ' -f1)
           runner=(python3 deploy/vps/production/restore.py "$dump" --sha256 "$sha")
-          valid=users=1,records=3,login_attempts=1,stock=2,command_mutex=1,command_requests=1,tokens=1
+          valid=users=2,records=3,login_attempts=1,stock=2,command_mutex=1,command_requests=1,tokens=1
+          # Import a pre-upgrade schema as well; the new target can supply defaults.
+          legacy="$RUNNER_TEMP/legacy.sql"
+          cp "$dump" "$legacy"
+          cat >> "$legacy" <<'SQL'
+          ALTER TABLE users DROP INDEX users_username_unique, DROP COLUMN username, DROP COLUMN is_superadmin, DROP COLUMN deleted_at;
+          ALTER TABLE records DROP COLUMN compact_data, DROP COLUMN photo_version;
+          SQL
+          legacy_sha=$(sha256sum "$legacy" | cut -d' ' -f1)
+          python3 deploy/vps/production/restore.py "$legacy" --sha256 "$legacy_sha" --check --counts "$valid"
           if "${runner[@]}" --apply --counts "${valid/records=3/records=2}"; then exit 1; fi
           "${runner[@]}" --check --counts "$valid"
           "${runner[@]}" --apply --counts "$valid"
           if "${runner[@]}" --apply --counts "$valid"; then exit 1; fi
           docker compose exec -T db sh -ec '
             export MYSQL_PWD="$MYSQL_PASSWORD"
-            exec mysql -N -s -u "$MYSQL_USER" "$MYSQL_DATABASE" -e "
+            exec mysql --default-character-set=utf8mb4 -N -s -u "$MYSQL_USER" "$MYSQL_DATABASE" -e "
               SET SESSION information_schema_stats_expiry=0;
               SELECT AUTO_INCREMENT FROM information_schema.tables WHERE table_schema=DATABASE() AND table_name=\"records\";
             "
           ' | grep -x 48
           docker compose exec -T db sh -ec '
             export MYSQL_PWD="$MYSQL_PASSWORD"
-            exec mysql -N -s -u "$MYSQL_USER" "$MYSQL_DATABASE" -e "SELECT username FROM users WHERE id=\"demo\";"
+            exec mysql --default-character-set=utf8mb4 -N -s -u "$MYSQL_USER" "$MYSQL_DATABASE" -e "SELECT username FROM users WHERE id=\"demo\";"
           ' | grep -Fx 'test.username'
+          docker compose exec -T db sh -ec '
+            export MYSQL_PWD="$MYSQL_PASSWORD"
+            exec mysql --default-character-set=utf8mb4 -N -s -u "$MYSQL_USER" "$MYSQL_DATABASE" -e "
+              SELECT \"protected_admin\",is_superadmin=1 AND deleted_at IS NULL FROM users WHERE id=\"demo\";
+              SELECT \"deleted_account\",is_superadmin=0 AND active=0 AND deleted_at=\"2026-11-01 15:23:45\" FROM users WHERE id=\"former\";
+              SELECT \"historical_owner\",user_id=\"former\" FROM records WHERE id=\"two\";
+              SELECT \"compact_photo_removed\",JSON_CONTAINS_PATH(compact_data,\"one\",\"\$.photo\")=0 FROM records WHERE id=\"two\";
+              SELECT \"utf8_customer\",JSON_UNQUOTE(JSON_EXTRACT(compact_data,\"\$.customer\"))=\"Pélanggan\" FROM records WHERE id=\"two\";
+              SELECT \"photo_version\",photo_version=SHA2(JSON_UNQUOTE(JSON_EXTRACT(data,\"\$.photo\")),256) FROM records WHERE id=\"two\";
+            "
+          ' > "$RUNNER_TEMP/account-restore-checks"
+          # Only synthetic check names and boolean results enter CI logs.
+          cat "$RUNNER_TEMP/account-restore-checks"
+          test "$(cat "$RUNNER_TEMP/account-restore-checks")" = "$(printf 'protected_admin\t1\ndeleted_account\t1\nhistorical_owner\t1\ncompact_photo_removed\t1\nutf8_customer\t1\nphoto_version\t1')"
       - name: Verify production service readiness with disposable notification keys
         run: |
           umask 077

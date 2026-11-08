@@ -43,7 +43,7 @@ test("admin employee identity edits normalize unique emails, retain omitted phot
   assert.equal(source.users[1].email, "sari@example.test");
 });
 
-test("employee edits reject duplicate/invalid data atomically and cannot change privileges or an admin email/photo", () => {
+test("account edits reject invalid data atomically while admin can update all account identities", () => {
   const state = fixture();
   const original = structuredClone(state);
   for (const email of ["ADMIN@example.test", " Baru@Example.Test ", "bad", "a@@example.test", "a b@example.test", "x".repeat(191) + "@example.test", "", null, 123])
@@ -52,10 +52,9 @@ test("employee edits reject duplicate/invalid data atomically and cannot change 
     assert.throws(() => cmd(state, "admin", "user.update", { id: "employee", [field]: null }));
   for (const photo of ["https://example.test/a.png", "data:image/png;base64,aGVsbG8=", largePhoto])
     assert.throws(() => cmd(state, "admin", "user.update", { id: "employee", email: "unsaved@example.test", photo }), /Foto|foto/);
-  for (const field of ["role", "registration_status", "password"])
+  for (const field of ["registration_status", "is_superadmin", "deleted_at"])
     assert.throws(() => cmd(state, "admin", "user.update", { id: "employee", [field]: "admin" }), /tidak dapat diubah/);
-  for (const payload of [{ email: "new@example.test" }, { photo: PHOTO }])
-    assert.throws(() => cmd(state, "admin", "user.update", { id: "admin", ...payload }), /hanya.*karyawan/);
+  assert.equal(cmd(state, "admin", "user.update", { id: "admin", email: "new@example.test", photo: PHOTO }).users[0].email,"new@example.test");
   assert.throws(() => cmd(state, "employee", "user.update", { id: "employee", name: "New" }), /hanya untuk admin/);
   assert.deepEqual(state, original);
   const same = cmd(state, "admin", "user.update", { id: "employee", email: "SARI@example.test" });

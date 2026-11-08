@@ -11,6 +11,8 @@ Aplikasi ini membuka situs produksi `https://ternaku.rstudiohub.com` dan menyedi
 
 ## Pembaruan
 
+Ikon launcher memakai huruf kecil **t** berwarna hijau muda (`#B9F28C`) di atas hijau tua (`#183E30`). Bentuknya berada di `res/drawable/ic_launcher_foreground.xml`, dengan ukuran 18 × 30 pada kanvas adaptive 108 × 108 agar ada ruang kosong yang cukup. Ikon PNG biasa dan bulat pada lima density menggunakan proporsi visual yang sama. Perubahan ikon memerlukan pembaruan APK bertanda tangan; pembaruan web saja tidak mengubah ikon launcher.
+
 Perubahan halaman web tersedia dari situs yang sama. Untuk perubahan native, naikkan `versionCode` dan `versionName` di `app/build.gradle`. Terbitkan APK bertanda tangan di `/mobile/TernaKu.apk`, lalu perbarui `/mobile/android-release.json` di domain produksi dengan `{"versionCode":2,"versionName":"1.1.0"}` sesuai versi nyata. Saat aplikasi dibuka kembali, versi native diperiksa paling sering sekali setiap enam jam. Pengguna dapat menunda pembaruan. Pemasangan dari Play Store diarahkan ke Play Store.
 
 ## Memeriksa notifikasi

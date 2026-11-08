@@ -84,6 +84,8 @@ jobs:
         run: php api/tests/integration.php
       - name: Test push notifications and delivery recovery
         run: php api/tests/push.php
+      - name: Test compact record projections and upgrades
+        run: php api/tests/performance.php
       - name: Build production frontend
         run: npm run build
       - name: Package API with an explicit deployment allowlist
@@ -95,7 +97,7 @@ jobs:
           cp -R api/application/config api/application/controllers api/application/libraries "$RUNNER_TEMP/ternaku-deploy/api/application/"
           if [ -d api/application/views ]; then cp -R api/application/views "$RUNNER_TEMP/ternaku-deploy/api/application/views"; fi
           mkdir -p "$RUNNER_TEMP/ternaku-deploy/api/scripts"
-          cp api/scripts/env.php api/scripts/install.php api/scripts/migrate-usernames.php api/scripts/push-keys.php api/scripts/push-worker.php "$RUNNER_TEMP/ternaku-deploy/api/scripts/"
+          cp api/scripts/env.php api/scripts/install.php api/scripts/migrate-usernames.php api/scripts/migrate-account-policy.php api/scripts/migrate-performance.php api/scripts/push-keys.php api/scripts/push-worker.php "$RUNNER_TEMP/ternaku-deploy/api/scripts/"
           touch "$RUNNER_TEMP/ternaku-deploy/api/application/logs/.gitkeep"
           tar -czf "$RUNNER_TEMP/ternaku-api.tar.gz" -C "$RUNNER_TEMP/ternaku-deploy/api" .
           if tar -tzf "$RUNNER_TEMP/ternaku-api.tar.gz" | grep -E '(^|/)(\.env$|setup-token\.php$|push-keys\.php$|\.test-|tests/|upstream/|\.runtime/)|\.zip$|\.log$' | grep -v '^\./scripts/push-keys.php$'; then

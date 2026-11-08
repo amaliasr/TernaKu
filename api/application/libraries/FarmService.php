@@ -1,6 +1,7 @@
 <?php
 require_once __DIR__.'/PushService.php';
 require_once __DIR__.'/UsernameService.php';
+require_once __DIR__.'/AccountPolicyService.php';
 /** TernaKu transactional domain service; used by CI3 and the CLI installer. */
 class ApiProblem extends RuntimeException {
     public int $status;
@@ -9,6 +10,7 @@ class ApiProblem extends RuntimeException {
 class FarmService {
     private PDO $db;
     private array $actor = [];
+    private string $authTokenHash = '';
     private ?array $commandResult = null;
     private const COLLECTIONS = ['barn'=>'barns','production'=>'productions','pickup'=>'pickups','sale'=>'sales','price'=>'prices','feed'=>'feeds','feed_purchase'=>'feed_purchases','feed_usage'=>'feed_usages','notification'=>'notifications','activity'=>'activity','correction'=>'corrections','stock_movement'=>'stock_movements'];
     public function __construct(?PDO $db = null) {
@@ -25,10 +27,10 @@ class FarmService {
         return $data?json_decode($data,true,512,JSON_THROW_ON_ERROR):null;
     }
     private function publicUser(array $u,bool $includePhoto = true,bool $compact = false): array {
-        $user=['id'=>$u['id'],'name'=>$u['name'],'email'=>$u['email'],'username'=>$u['username']??null,'role'=>$u['role'],'active'=>(bool)$u['active'],'target'=>(float)$u['target'],'registration_status'=>$this->registrationRecord($u['id'])['status']??'approved'];
+        $user=['id'=>$u['id'],'name'=>$u['name'],'email'=>$u['email'],'username'=>$u['username']??null,'role'=>$u['role'],'active'=>(bool)$u['active'],'is_superadmin'=>(bool)($u['is_superadmin']??false),'deleted_at'=>$u['deleted_at']??null,'target'=>(float)$u['target'],'registration_status'=>$this->registrationRecord($u['id'])['status']??'approved'];
         if(!$includePhoto) return $user;
         if($compact) {
-            $version=$this->query("SELECT SHA2(NULLIF(JSON_UNQUOTE(JSON_EXTRACT(data,'$.photo')),''),256) FROM records WHERE kind='user_profile' AND user_id=? LIMIT 1",[$u['id']])->fetchColumn();
+            $version=$this->query("SELECT photo_version FROM records WHERE kind='user_profile' AND user_id=? LIMIT 1",[$u['id']])->fetchColumn();
             $user['photo']=''; if($version) $user['photo_ref']=['kind'=>'profile','id'=>$u['id'],'version'=>$version]; return $user;
         }
         $profile=$this->query("SELECT data FROM records WHERE kind='user_profile' AND user_id=? LIMIT 1",[$u['id']])->fetchColumn();
@@ -98,14 +100,9 @@ class FarmService {
         return json_decode($r,true,512,JSON_THROW_ON_ERROR);
     }
     private function records(string $kind,?string $owner = null,bool $withoutPhotos = false,bool $mediaReferences = false,?string $onlyId = null): array {
-        $projection='data';
-        if($withoutPhotos) {
-            // MariaDB may return SQL NULL for a missing nested path. Only remove paths
-            // that exist, preserving every JSON document on both supported databases.
-            foreach(['$.photo','$.before.photo','$.after.photo'] as $path) $projection="IF(JSON_CONTAINS_PATH(data,'one','$path'),JSON_REMOVE($projection,'$path'),$projection)";
-        }
+        $projection=$withoutPhotos?'compact_data':'data';
         $withMedia=$mediaReferences && in_array($kind,['production','sale'],true);
-        if($withMedia) $projection.=", SHA2(NULLIF(JSON_UNQUOTE(JSON_EXTRACT(data,'$.photo')),''),256) AS photo_version";
+        if($withMedia) $projection.=', photo_version';
         $values=[$kind]; if($owner!==null) $values[]=$owner; if($onlyId!==null) $values[]=$onlyId;
         $rows=$this->query('SELECT '.$projection.' FROM records WHERE kind=?'.($owner!==null?' AND user_id=?':'').($onlyId!==null?' AND id=?':'').' ORDER BY occurred_at DESC,sequence DESC',$values)->fetchAll(PDO::FETCH_NUM);
         return array_map(function($row) use($kind,$withMedia): array {
@@ -116,12 +113,12 @@ class FarmService {
     }
     private function publicUsers(bool $admin,bool $compact): array {
         $owner=$admin?null:$this->actor['id']; $params=$owner===null?[]:[$owner];
-        $users=$this->query('SELECT id,name,email,username,role,active,target FROM users'.($owner===null?'':' WHERE id=?').' ORDER BY name',$params)->fetchAll(PDO::FETCH_ASSOC);
+        $users=$this->query('SELECT id,name,email,username,role,active,is_superadmin,deleted_at,target FROM users'.($owner===null?'':' WHERE id=?').' ORDER BY name',$params)->fetchAll(PDO::FETCH_ASSOC);
         $registrations=[]; foreach($this->records('registration',$owner) as $r) $registrations[$r['user_id']]=$r['status'];
-        $projection=$compact?"SHA2(NULLIF(JSON_UNQUOTE(JSON_EXTRACT(data,'$.photo')),''),256)":"JSON_UNQUOTE(JSON_EXTRACT(data,'$.photo'))";
+        $projection=$compact?'photo_version':"JSON_UNQUOTE(JSON_EXTRACT(data,'$.photo'))";
         $profiles=$this->query("SELECT user_id,$projection FROM records WHERE kind='user_profile'".($owner===null?'':' AND user_id=?'),$params)->fetchAll(PDO::FETCH_KEY_PAIR);
         return array_map(function($u) use($registrations,$profiles,$compact): array {
-            $user=['id'=>$u['id'],'name'=>$u['name'],'email'=>$u['email'],'username'=>$u['username']??null,'role'=>$u['role'],'active'=>(bool)$u['active'],'target'=>(float)$u['target'],'registration_status'=>$registrations[$u['id']]??'approved','photo'=>$compact?'':($profiles[$u['id']]??'')];
+            $user=['id'=>$u['id'],'name'=>$u['name'],'email'=>$u['email'],'username'=>$u['username']??null,'role'=>$u['role'],'active'=>(bool)$u['active'],'is_superadmin'=>(bool)($u['is_superadmin']??false),'deleted_at'=>$u['deleted_at']??null,'target'=>(float)$u['target'],'registration_status'=>$registrations[$u['id']]??'approved','photo'=>$compact?'':($profiles[$u['id']]??'')];
             if($compact && !empty($profiles[$u['id']])) $user['photo_ref']=['kind'=>'profile','id'=>$u['id'],'version'=>$profiles[$u['id']]];
             return $user;
         },$users);
@@ -174,10 +171,11 @@ class FarmService {
     public function authenticate(string $token): array {
         if (!preg_match('/^[a-f0-9]{64}$/D',$token)) throw new ApiProblem('Silakan masuk terlebih dahulu.',401);
         $hash=hash('sha256',$token);
-        $u=$this->query('SELECT u.* FROM users u JOIN tokens t ON t.user_id=u.id WHERE t.token_hash=? AND t.expires_at>NOW() AND t.created_at>DATE_SUB(NOW(),INTERVAL 90 DAY) AND u.active=1',[$hash])->fetch(PDO::FETCH_ASSOC);
+        $u=$this->query('SELECT u.*,t.expires_at<LEAST(DATE_ADD(NOW(),INTERVAL 29 DAY),DATE_ADD(t.created_at,INTERVAL 90 DAY)) AS refresh_session FROM users u JOIN tokens t ON t.user_id=u.id WHERE t.token_hash=? AND t.expires_at>NOW() AND t.created_at>DATE_SUB(NOW(),INTERVAL 90 DAY) AND u.active=1 AND u.deleted_at IS NULL',[$hash])->fetch(PDO::FETCH_ASSOC);
         if (!$u || ($this->registrationRecord($u['id'])['status']??'approved')!=='approved') throw new ApiProblem('Sesi berakhir atau akun belum disetujui/nonaktif. Silakan masuk kembali.',401);
-        // Activity renews the idle window, but never beyond 90 days from login.
-        $this->query('UPDATE tokens SET expires_at=LEAST(DATE_ADD(NOW(),INTERVAL 30 DAY),DATE_ADD(created_at,INTERVAL 90 DAY)) WHERE token_hash=? AND expires_at>NOW() AND created_at>DATE_SUB(NOW(),INTERVAL 90 DAY)',[$hash]);
+        // Renew at most once daily, not on every five-second price poll.
+        if($u['refresh_session']) $this->query('UPDATE tokens SET expires_at=LEAST(DATE_ADD(NOW(),INTERVAL 30 DAY),DATE_ADD(created_at,INTERVAL 90 DAY)) WHERE token_hash=? AND expires_at>NOW() AND created_at>DATE_SUB(NOW(),INTERVAL 90 DAY) AND expires_at<LEAST(DATE_ADD(NOW(),INTERVAL 29 DAY),DATE_ADD(created_at,INTERVAL 90 DAY))',[$hash]);
+        $this->authTokenHash=$hash;
         return $this->actor=$this->publicUser($u,false);
     }
     private function setupToken(): string {
@@ -294,7 +292,7 @@ class FarmService {
             $valid=password_verify($password,$u['password_hash'] ?? '$2y$10$92IXUNpkjO0rOQ5byMi.Ye4oKoEa3Ro9llC/.og/at2uheWG/igi.');
             if (!$u || !$valid) { $this->db->commit(); throw new ApiProblem('Username/email atau kata sandi salah, atau akun tidak aktif.',401); }
             $registration=$this->registrationRecord($u['id']);
-            if (!$u['active'] || ($registration['status']??'approved')!=='approved') {
+            if (!$u['active'] || $u['deleted_at']!==null || ($registration['status']??'approved')!=='approved') {
                 $this->db->commit();
                 if(($registration['status']??'')==='pending') throw new ApiProblem('Akun Anda masih menunggu persetujuan admin.',403);
                 if(($registration['status']??'')==='rejected') throw new ApiProblem('Pendaftaran belum disetujui. Hubungi admin peternakan.',403);
@@ -636,19 +634,24 @@ class FarmService {
         if($requestId !== '' && !preg_match('/^[A-Za-z0-9_-]{8,80}$/D',$requestId)) throw new ApiProblem('ID permintaan tidak valid.');
         $this->commandResult=null;
         $resultId='cmd_'.substr(hash('sha256',$this->actor['id'].'|'.$requestId),0,36);
-        $fingerprint=hash('sha256',$this->json([$action,$p]));
+        $digest=hash('sha256',$this->json([$action,$p]));
+        $sensitive=in_array($action,['user.create','profile.password'],true) || ($action==='user.update' && array_key_exists('password',$p));
+        // Salt sensitive request fingerprints too: a stored retry key must not become
+        // a cheap password-guessing oracle. Bcrypt's 60 bytes fit the existing column.
+        $fingerprint=$sensitive?password_hash($digest,PASSWORD_BCRYPT):$digest;
         $this->db->beginTransaction();
         try {
             // A short command mutex keeps cross-document invariants deterministic; stock/pickups
             // are additionally row-locked. Suitable for this farm-scale workload.
             $this->query('SELECT version FROM command_mutex WHERE id=1 FOR UPDATE')->fetchColumn();
-            $active=$this->query('SELECT active,role FROM users WHERE id=?',[$this->actor['id']])->fetch(PDO::FETCH_ASSOC);
-            if(!$active || !$active['active'] || ($this->registrationRecord($this->actor['id'])['status']??'approved')!=='approved') throw new ApiProblem('Akun belum disetujui atau tidak aktif.',401);
-            $this->actor['role']=$active['role'];
+            $active=$this->query('SELECT * FROM users WHERE id=?',[$this->actor['id']])->fetch(PDO::FETCH_ASSOC);
+            $session=$this->query('SELECT user_id FROM tokens WHERE token_hash=? AND user_id=? AND expires_at>NOW() AND created_at>DATE_SUB(NOW(),INTERVAL 90 DAY)',[$this->authTokenHash,$this->actor['id']])->fetchColumn();
+            if(!$session || !$active || !$active['active'] || $active['deleted_at']!==null || ($this->registrationRecord($this->actor['id'])['status']??'approved')!=='approved') throw new ApiProblem('Sesi berakhir atau akun tidak aktif. Silakan masuk kembali.',401);
+            $this->actor=$this->publicUser($active,false);
             if($requestId!=='') {
                 $old=$this->query('SELECT fingerprint FROM command_requests WHERE user_id=? AND request_id=?',[$this->actor['id'],$requestId])->fetchColumn();
                 if($old) {
-                    if(!hash_equals($old,$fingerprint)) throw new ApiProblem('ID permintaan sudah digunakan untuk perubahan berbeda.',409);
+                    if(!hash_equals($old,$digest) && !($sensitive && password_verify($digest,$old))) throw new ApiProblem('ID permintaan sudah digunakan untuk perubahan berbeda.',409);
                     $saved=$this->query("SELECT data FROM records WHERE kind='command_result' AND id=? AND user_id=?",[$resultId,$this->actor['id']])->fetchColumn();
                     $result=$saved?json_decode($saved,true,512,JSON_THROW_ON_ERROR):null;
                     $this->db->commit(); return $this->commandState($compact,$result,$receiptRole);
@@ -761,7 +764,9 @@ class FarmService {
                 $this->audit($action,'Menetapkan harga telur',null,$r); break;
             case 'user.create': $this->createUser($p); break;
             case 'profile.update': $this->updateProfile($p); break;
+            case 'profile.password': $this->changeOwnPassword($p); break;
             case 'user.update': $this->updateUser($p); break;
+            case 'user.delete': $this->deleteUser($p); break;
             case 'user.approve': $this->reviewRegistration($p,true); break;
             case 'user.reject': $this->reviewRegistration($p,false); break;
             case 'barn.create':
@@ -880,8 +885,9 @@ class FarmService {
         $this->notifyFarmActivity('sale.create',array_sum(array_column($out,'kg')));
     }
     private function createUser(array $p): void {
+        if(array_diff(array_keys($p),['name','email','username','password','password_confirmation','role','target'])) throw new ApiProblem('Kolom akun tidak didukung.');
         $this->admin(); $email=strtolower($this->text($p,'email',190,true)); if(!filter_var($email,FILTER_VALIDATE_EMAIL)) throw new ApiProblem('Format email tidak valid.');
-        $password=$this->text($p,'password',200,true); if(mb_strlen($password)<10) throw new ApiProblem('Kata sandi minimal 10 karakter.');
+        $password=$this->accountPassword($p,'password',10,false);
         if($this->query('SELECT id FROM users WHERE email=?',[$email])->fetchColumn()) throw new ApiProblem('Email sudah digunakan.');
         $id=$this->id('user'); $name=$this->text($p,'name',120,true); $role=$this->enum($p,'role',['admin','employee']); $target=$this->number($p+['target'=>0],'target',0,true);
         $username=$this->username($p,$email);
@@ -903,10 +909,14 @@ class FarmService {
         $this->audit('profile.update','Memperbarui profil sendiri',['name'=>$before['name'],'username'=>$before['username']],['name'=>$name,'username'=>$username,'photo_changed'=>array_key_exists('photo',$p)]);
     }
     private function updateUser(array $p): void {
-        if(array_diff(array_keys($p),['id','name','email','username','photo','target','active'])) throw new ApiProblem('Kolom perubahan akun tidak didukung.');
+        if(array_diff(array_keys($p),['id','name','email','username','photo','target','active','role','password','password_confirmation'])) throw new ApiProblem('Kolom perubahan akun tidak didukung.');
         $this->admin(); $id=$this->text($p,'id',40,true); $u=$this->query('SELECT * FROM users WHERE id=? FOR UPDATE',[$id])->fetch(PDO::FETCH_ASSOC); if(!$u) throw new ApiProblem('Pengguna tidak ditemukan.',404);
-        if($u['role']!=='employee' && (array_key_exists('email',$p) || array_key_exists('username',$p) || array_key_exists('photo',$p))) throw new ApiProblem('Email, username, dan foto pada menu karyawan hanya dapat mengubah akun karyawan.');
+        if($u['deleted_at']!==null) throw new ApiProblem('Akun ini sudah dihapus. Riwayatnya tetap tersimpan.');
         $before=$this->publicUser($u,false); $name=array_key_exists('name',$p)?$this->text($p,'name',120,true):$u['name']; $target=array_key_exists('target',$p)?$this->number($p,'target',0,true):(float)$u['target']; $active=array_key_exists('active',$p)?$p['active']:(bool)$u['active'];
+        $role=array_key_exists('role',$p)?$this->enum($p,'role',['admin','employee']):$u['role'];
+        $passwordChanged=array_key_exists('password',$p) || array_key_exists('password_confirmation',$p);
+        if($u['is_superadmin'] && ($passwordChanged || !$active || $role!=='admin')) throw new ApiProblem('Superadmin dilindungi. Kata sandi, peran, dan status aktifnya tidak dapat diubah.');
+        $passwordHash=$passwordChanged?password_hash($this->accountPassword($p,'password',12),PASSWORD_DEFAULT):$u['password_hash'];
         $email=$u['email'];
         $username=array_key_exists('username',$p)?$this->username($p,$email,$id):$u['username'];
         if(array_key_exists('email',$p)) {
@@ -918,23 +928,69 @@ class FarmService {
         if($photoChanged && !is_string($p['photo'])) throw new ApiProblem('Kolom photo harus berupa teks.');
         $photo=$photoChanged?$this->photo($p):null;
         if(!is_bool($active)) throw new ApiProblem('Status aktif tidak valid.');
-        if($active && in_array($before['registration_status'],['pending','rejected'],true)) throw new ApiProblem('Pendaftaran harus disetujui melalui tindakan Setujui pendaftaran.');
+        if(($active || $role==='admin') && in_array($before['registration_status'],['pending','rejected'],true)) throw new ApiProblem('Pendaftaran harus disetujui melalui tindakan Setujui pendaftaran.');
         if(!$active && $id===$this->actor['id']) throw new ApiProblem('Anda tidak dapat menonaktifkan akun sendiri.');
-        if(!$active && $u['role']==='admin' && (int)$this->query("SELECT COUNT(*) FROM users WHERE role='admin' AND active=1")->fetchColumn()<=1) throw new ApiProblem('Minimal satu admin harus aktif.');
-        try { $this->query('UPDATE users SET name=?,email=?,username=?,target=?,active=? WHERE id=?',[$name,$email,$username,$target,(int)$active,$id]); }
+        if((!$active || $role!=='admin') && $u['role']==='admin' && $u['active'] && (int)$this->query("SELECT COUNT(*) FROM users WHERE role='admin' AND active=1 AND deleted_at IS NULL")->fetchColumn()<=1) throw new ApiProblem('Minimal satu admin harus aktif.');
+        try { $this->query('UPDATE users SET name=?,email=?,username=?,target=?,active=?,role=?,password_hash=? WHERE id=?',[$name,$email,$username,$target,(int)$active,$role,$passwordHash,$id]); }
         catch(PDOException $e) { if(($e->errorInfo[1]??null)===1062) throw new ApiProblem('Email atau username sudah digunakan.'); throw $e; }
         if($photoChanged) {
             $profileId='profile_'.substr(hash('sha256',$id),0,32);
             $this->query("INSERT INTO records(id,kind,user_id,occurred_at,data) VALUES(?,'user_profile',?,NOW(),?) ON DUPLICATE KEY UPDATE data=VALUES(data)",[$profileId,$id,$this->json(['photo'=>$photo])]);
         }
-        if(!$active) $this->query('DELETE FROM tokens WHERE user_id=?',[$id]);
-        $this->audit('user.update','Memperbarui akun karyawan',$before,array_replace($before,['name'=>$name,'email'=>$email,'username'=>$username,'target'=>$target,'active'=>$active,'photo_changed'=>$photoChanged]));
+        if(!$active || $passwordChanged || $role!==$u['role']) $this->revokeAccountSessions($id,$id===$this->actor['id'] && $active);
+        $this->audit('user.update','Memperbarui akun pengguna',$before,array_replace($before,['name'=>$name,'email'=>$email,'username'=>$username,'target'=>$target,'active'=>$active,'role'=>$role,'password_changed'=>$passwordChanged,'photo_changed'=>$photoChanged]));
+        if($id===$this->actor['id']) $this->actor=$this->publicUser(array_replace($u,['name'=>$name,'email'=>$email,'username'=>$username,'target'=>$target,'active'=>$active,'role'=>$role]),false);
+    }
+    private function accountPassword(array $p,string $field,int $minimum=12,bool $requireConfirmation=true): string {
+        $password=$p[$field]??null;
+        if(!is_string($password) || mb_strlen($password)<$minimum || strlen($password)>72 || str_contains($password,"\0")) throw new ApiProblem("Kata sandi minimal $minimum karakter dan maksimal 72 byte, tanpa karakter null.");
+        if(($requireConfirmation || array_key_exists('password_confirmation',$p)) && (!is_string($p['password_confirmation']??null) || !hash_equals($password,$p['password_confirmation']))) throw new ApiProblem('Konfirmasi kata sandi tidak sama.');
+        return $password;
+    }
+    private function revokeAccountSessions(string $id,bool $keepCurrent=false): void {
+        $this->query('DELETE FROM tokens WHERE user_id=?'.($keepCurrent?' AND token_hash<>?':''),$keepCurrent?[$id,$this->authTokenHash]:[$id]);
+    }
+    private function changeOwnPassword(array $p): void {
+        if(array_diff(array_keys($p),['current_password','new_password','password_confirmation'])) throw new ApiProblem('Kolom perubahan kata sandi tidak didukung.');
+        $id=$this->actor['id'];
+        $u=$this->query('SELECT * FROM users WHERE id=? FOR UPDATE',[$id])->fetch(PDO::FETCH_ASSOC);
+        if($u['is_superadmin']) throw new ApiProblem('Kata sandi superadmin dilindungi dan tidak dapat diubah.');
+        $attemptKey=hash('sha256','password-change|'.$id);
+        if($this->lockedAttempts($attemptKey)>=10) { $this->db->commit(); throw new ApiProblem('Terlalu banyak percobaan kata sandi. Coba kembali dalam 15 menit.',429); }
+        $current=$p['current_password']??null;
+        if(!is_string($current) || strlen($current)>200 || !password_verify($current,$u['password_hash'])) {
+            $this->query('UPDATE login_attempts SET attempts=attempts+1 WHERE attempt_key=?',[$attemptKey]);
+            $this->db->commit();
+            throw new ApiProblem('Kata sandi saat ini tidak sesuai.');
+        }
+        $password=$this->accountPassword($p,'new_password');
+        $this->query('UPDATE users SET password_hash=? WHERE id=?',[password_hash($password,PASSWORD_DEFAULT),$id]);
+        $this->query('DELETE FROM login_attempts WHERE attempt_key=?',[$attemptKey]);
+        $this->revokeAccountSessions($id,true);
+        $this->audit('profile.password','Mengganti kata sandi sendiri',null,['id'=>$id,'password_changed'=>true]);
+    }
+    private function deleteUser(array $p): void {
+        $this->admin();
+        if(array_diff(array_keys($p),['id','reason'])) throw new ApiProblem('Kolom penghapusan akun tidak didukung.');
+        $id=$this->text($p,'id',40,true); $reason=$this->text($p,'reason',500,true);
+        $u=$this->query('SELECT * FROM users WHERE id=? FOR UPDATE',[$id])->fetch(PDO::FETCH_ASSOC);
+        if(!$u) throw new ApiProblem('Pengguna tidak ditemukan.',404);
+        if($u['is_superadmin']) throw new ApiProblem('Superadmin dilindungi dan tidak dapat dihapus.');
+        if($u['role']!=='employee' || $id===$this->actor['id']) throw new ApiProblem('Hanya akun karyawan yang dapat dihapus melalui menu ini.');
+        if($u['deleted_at']!==null) throw new ApiProblem('Akun ini sudah dihapus.');
+        $pickups=[]; foreach($this->records('pickup',$id,true) as $pickup) $pickups[$pickup['id']]=$pickup;
+        foreach($this->carriedQuantities($pickups) as $balance) if($balance['eggs']>0 || $balance['kg']>0) throw new ApiProblem('Karyawan masih membawa telur. Selesaikan penjualan atau kembalikan telur ke gudang sebelum menghapus akun.');
+        $before=$this->publicUser($u,false); $deletedAt=date('Y-m-d H:i:s');
+        $this->query('UPDATE users SET active=0,deleted_at=? WHERE id=?',[$deletedAt,$id]);
+        $this->revokeAccountSessions($id);
+        $this->audit('user.delete','Menghapus akun karyawan: '.$reason,$before,array_replace($before,['active'=>false,'deleted_at'=>$deletedAt,'reason'=>$reason]));
     }
     private function reviewRegistration(array $p,bool $approved): void {
         if(array_diff(array_keys($p),['id'])) throw new ApiProblem('Kolom persetujuan pendaftaran tidak didukung.');
         $this->admin(); $id=$this->text($p,'id',40,true);
         $u=$this->query('SELECT * FROM users WHERE id=? FOR UPDATE',[$id])->fetch(PDO::FETCH_ASSOC);
         if(!$u) throw new ApiProblem('Pengguna tidak ditemukan.',404);
+        if($u['deleted_at']!==null) throw new ApiProblem('Akun ini sudah dihapus.');
         $r=$this->registrationRecord($id);
         if($u['role']!=='employee' || !$r || !in_array($r['status'],$approved?['pending','rejected']:['pending'],true)) throw new ApiProblem('Pendaftaran ini sudah diproses atau tidak dapat ditinjau.',409);
         $before=$this->publicUser($u,false); $r['status']=$approved?'approved':'rejected'; $r['reviewed_at']=$this->now(); $r['reviewed_by']=$this->actor['id'];

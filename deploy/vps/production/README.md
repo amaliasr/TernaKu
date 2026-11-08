@@ -4,9 +4,15 @@ Domain `ternaku.rstudiohub.com` sudah beralih dari hosting bersama ke project Do
 
 ## Merilis versi berikutnya
 
+Rilis pengelolaan akun dan optimasi foto menambahkan kolom akun `is_superadmin`/`deleted_at` serta kolom generated `records.compact_data`/`photo_version`. Sebelum pergantian API, buat snapshot SQL privat, lalu jalankan `php scripts/migrate-account-policy.php` dan `php scripts/migrate-performance.php` menggunakan image API baru pada jaringan database yang sama. Data ringkas dihitung ketika catatan berubah; pembacaan dashboard tidak perlu memproses foto berulang. Foto asli tidak dihapus. Kedua migrasi aman diulang dan kolom tambahan tetap dipertahankan saat rollback aplikasi.
+
+Sesudah API baru aktif, lindungi akun pemilik dengan `php scripts/migrate-account-policy.php --user-id=ID_TERVERIFIKASI --expected-email=EMAIL_TERVERIFIKASI`. Cocokkan ID dan email dari database sebelum menjalankan perintah. Proteksi tidak dapat ditetapkan atau dicabut melalui formulir aplikasi. Akun admin yang sudah aktif mempertahankan sesinya saat ditandai sebagai superadmin.
+
+Produksi memakai `PUSH_INLINE_DELIVERY=false` dengan worker permanen yang memeriksa antrean setiap 5 detik. Penyimpanan harga menyelesaikan transaksi beserta antrean notifikasi terlebih dahulu, lalu segera membalas; pengiriman ke perangkat dijalankan worker. Jangan menonaktifkan pengiriman inline pada hosting yang belum memiliki worker aktif.
+
 Pembaruan login dengan username memerlukan migrasi satu kali. Cadangkan database lengkap ke direktori privat, lalu jalankan `php scripts/migrate-usernames.php` melalui container API versi baru dengan environment dan jaringan database produksi **sebelum** mengaktifkan API baru. Skrip menambahkan kolom username unik dan mengisi akun lama tanpa mengganti email, kata sandi, atau sesi. Skrip aman dijalankan ulang; jalankan kembali sesudah pergantian API untuk mengisi akun yang mungkin baru dibuat oleh versi lama selama proses rilis. Jangan menghapus kolom username saat mengembalikan versi aplikasi sebelumnya.
 
-Pemulihan dump mendukung skema lama maupun skema dengan username. Username yang sudah ada ikut diverifikasi saat pemulihan. Setelah memulihkan dump lama, jalankan migrasi username sebelum membuka akses aplikasi.
+Pemulihan dump mendukung skema lama maupun skema terbaru. Username, proteksi superadmin, dan status penghapusan yang sudah ada ikut diverifikasi; kolom generated dihitung ulang dari `records.data`. Setelah memulihkan dump lama, jalankan migrasi username, kebijakan akun, dan data ringkas sebelum membuka akses aplikasi. Proteksi pemilik pada dump lama harus ditetapkan kembali menggunakan ID/email yang sudah diverifikasi.
 
 Push ke GitHub memulai pemeriksaan kode. Untuk mengganti versi yang dilayani karyawan, pilih SHA commit yang lulus CI lalu jalankan build dan pembaruan Compose di VPS dengan file Compose produksi dan environment privat yang terpasang. Jika memakai build dari Git, arahkan `PROD_BUILD_CONTEXT` ke repo dan SHA yang dipilih. Gunakan tag image baru per rilis. Pertahankan volume database, kunci push, dan kedua mount arsip aset saat membuat ulang container. Periksa status `web`, `api`, `db`, dan `worker`, lalu buka situs serta `/ternaku/health` melalui domain publik.
 

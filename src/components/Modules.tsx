@@ -27,6 +27,7 @@ import {
   CheckCircle2,
 } from "lucide-react";
 import { useFarm } from "@/lib/store";
+import { accountRoleLabel } from "@/lib/account-policy";
 import {
   activePrice,
   dateLabel,
@@ -1568,10 +1569,10 @@ function EmployeesPage({ open }: { open: OpenForm }) {
   const registrationState = (employee: User) =>
     employee.registration_status || "approved";
   const pendingCount = state.users.filter(
-    (u) => registrationState(u) === "pending",
+    (u) => !u.deleted_at && registrationState(u) === "pending",
   ).length;
   const accountStatus = (employee: User) =>
-    registrationState(employee) === "approved"
+    employee.deleted_at ? "deleted" : registrationState(employee) === "approved"
       ? employee.active
         ? "active"
         : "inactive"
@@ -1612,6 +1613,7 @@ function EmployeesPage({ open }: { open: OpenForm }) {
     .filter(
       (u) =>
         `${u.name} ${u.username || ""} ${u.email}`.toLowerCase().includes(search.toLowerCase()) &&
+        (!u.deleted_at || status === "deleted") &&
         (!status || accountStatus(u) === status),
     )
     .sort((a, b) => omzet(b.id) - omzet(a.id));
@@ -1668,7 +1670,7 @@ function EmployeesPage({ open }: { open: OpenForm }) {
           {
             label: "Anggota tim",
             value: String(
-              state.users.filter((u) => registrationState(u) === "approved")
+              state.users.filter((u) => !u.deleted_at && registrationState(u) === "approved")
                 .length,
             ),
             note: "Termasuk atasan dan karyawan",
@@ -1676,7 +1678,7 @@ function EmployeesPage({ open }: { open: OpenForm }) {
           },
           {
             label: "Akun aktif",
-            value: String(state.users.filter((u) => u.active).length),
+            value: String(state.users.filter((u) => u.active && !u.deleted_at).length),
             note: "Dapat masuk ke aplikasi",
             icon: <ShieldCheck size={22} />,
             tone: "blue",
@@ -1715,11 +1717,12 @@ function EmployeesPage({ open }: { open: OpenForm }) {
             value={status}
             onChange={(e) => setStatus(e.target.value)}
           >
-            <option value="">Semua status</option>
+            <option value="">Semua akun yang tersedia</option>
             <option value="active">Aktif</option>
             <option value="inactive">Nonaktif</option>
             <option value="pending">Menunggu persetujuan</option>
             <option value="rejected">Ditolak</option>
+            <option value="deleted">Sudah dihapus</option>
           </select>
         </div>
         {rows.length ? (
@@ -1754,7 +1757,7 @@ function EmployeesPage({ open }: { open: OpenForm }) {
                       </td>
                       <td>
                         <Pill tone={u.role === "admin" ? "blue" : "neutral"}>
-                          {u.role === "admin" ? "Atasan" : "Karyawan"}
+                          {accountRoleLabel(u)}
                         </Pill>
                       </td>
                       <td className="text-end fw-semibold">
@@ -1797,7 +1800,7 @@ function EmployeesPage({ open }: { open: OpenForm }) {
                                   : "neutral"
                           }
                         >
-                          {registrationState(u) === "pending"
+                          {u.deleted_at ? "Dihapus" : registrationState(u) === "pending"
                             ? "Menunggu persetujuan"
                             : registrationState(u) === "rejected"
                               ? "Ditolak"
@@ -1808,6 +1811,7 @@ function EmployeesPage({ open }: { open: OpenForm }) {
                       </td>
                       <td>
                         <div className="table-actions">
+                          {u.deleted_at ? <small className="text-muted">Dihapus {dateLabel(u.deleted_at, true)}. Riwayat tetap tersimpan.</small> : <>
                           <button
                             type="button"
                             className="btn btn-sm btn-outline-primary"
@@ -1846,9 +1850,9 @@ function EmployeesPage({ open }: { open: OpenForm }) {
                             <>
                               <button
                                 className="btn btn-sm btn-light"
-                                disabled={action.busy || u.id === user.id}
+                                disabled={action.busy || u.id === user.id || u.is_superadmin}
                                 title={
-                                  u.id === user.id
+                                  u.is_superadmin ? "Superadmin tidak dapat dinonaktifkan" : u.id === user.id
                                     ? "Akun sendiri tidak dapat dinonaktifkan"
                                     : undefined
                                 }
@@ -1864,6 +1868,7 @@ function EmployeesPage({ open }: { open: OpenForm }) {
                               </button>
                             </>
                           )}
+                          </>}
                         </div>
                       </td>
                     </tr>
@@ -1883,6 +1888,7 @@ function EmployeesPage({ open }: { open: OpenForm }) {
           employee={edit}
           onClose={() => setEdit(null)}
           onSaved={(name) => setEditNotice(`Akun ${name} berhasil diperbarui.`)}
+          onDeleted={(name) => setEditNotice(`Akun ${name} dihapus. Riwayat transaksi dan log aktivitas tetap tersimpan.`)}
         />
       )}
       {decision && (
@@ -1952,6 +1958,8 @@ const actionLabels: Record<string, string> = {
   "price.create": "Harga diperbarui",
   "user.create": "Akun dibuat",
   "user.update": "Akun diperbarui",
+  "user.delete": "Akun karyawan dihapus",
+  "profile.password": "Kata sandi diganti",
   "profile.update": "Profil diperbarui",
   "user.register": "Akun didaftarkan",
   "user.approve": "Pendaftaran disetujui",

@@ -9,6 +9,8 @@ CREATE TABLE IF NOT EXISTS users (
  active TINYINT(1) NOT NULL DEFAULT 1,
  target DECIMAL(14,0) NOT NULL DEFAULT 0,
  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+ is_superadmin TINYINT(1) NOT NULL DEFAULT 0,
+ deleted_at DATETIME NULL,
  UNIQUE KEY users_username_unique (username)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 CREATE TABLE IF NOT EXISTS tokens (
@@ -32,6 +34,8 @@ CREATE TABLE IF NOT EXISTS records (
  user_id VARCHAR(40) NULL,
  occurred_at DATETIME NOT NULL,
  data LONGTEXT NOT NULL,
+ compact_data LONGTEXT GENERATED ALWAYS AS (IF(JSON_VALID(data),IF(JSON_CONTAINS_PATH(data,'one','$.after.photo'),JSON_REMOVE(IF(JSON_CONTAINS_PATH(data,'one','$.before.photo'),JSON_REMOVE(IF(JSON_CONTAINS_PATH(data,'one','$.photo'),JSON_REMOVE(data,'$.photo'),data),'$.before.photo'),IF(JSON_CONTAINS_PATH(data,'one','$.photo'),JSON_REMOVE(data,'$.photo'),data)),'$.after.photo'),IF(JSON_CONTAINS_PATH(data,'one','$.before.photo'),JSON_REMOVE(IF(JSON_CONTAINS_PATH(data,'one','$.photo'),JSON_REMOVE(data,'$.photo'),data),'$.before.photo'),IF(JSON_CONTAINS_PATH(data,'one','$.photo'),JSON_REMOVE(data,'$.photo'),data))),data)) STORED,
+ photo_version CHAR(64) GENERATED ALWAYS AS (IF(JSON_VALID(data),SHA2(NULLIF(JSON_UNQUOTE(JSON_EXTRACT(data,'$.photo')),''),256),NULL)) STORED,
  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
  INDEX(kind, occurred_at), INDEX(kind, user_id),
  FOREIGN KEY (user_id) REFERENCES users(id)

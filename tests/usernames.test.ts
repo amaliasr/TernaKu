@@ -77,7 +77,7 @@ test("explicit aliases are unique across pending and active accounts and invalid
     assert.throws(() => executeCommand(state, "admin", "user.update", { id: "sari", name: "Unsaved", username }), /Username/);
   }
   assert.throws(() => executeCommand(state, "sari", "user.update", { id: "pending", username: "changed" }), /admin/);
-  assert.throws(() => executeCommand(state, "admin", "user.update", { id: "admin", username: "changed" }), /karyawan/);
+  assert.equal(executeCommand(state, "admin", "user.update", { id: "admin", username: "changed" }).users[0].username, "changed");
   assert.deepEqual(state, original);
   assert.equal(executeCommand(state, "sari", "profile.update", { name: "Sari", username: "SARI" }).users[1].username, "sari");
 });

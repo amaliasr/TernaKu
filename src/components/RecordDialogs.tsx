@@ -11,6 +11,8 @@ import {
   number as formatNumber,
   pickupBalance,
 } from "@/lib/domain";
+import PasswordInput from "./PasswordInput";
+import { validateNewPassword } from "@/lib/account-policy";
 import { printReceipt } from "@/lib/export";
 import ImagePreview from "./ImagePreview";
 import PhotoUpload from "./PhotoUpload";
@@ -448,179 +450,101 @@ export function ReturnDialog({
 export function PaymentDialog({ sale, onClose }: {sale: Sale; onClose: () => void}) {
   return <InvoiceDialog invoice={sale} onClose={onClose} />;
 }
-export function EmployeeDialog({
-  employee,
-  onClose,
-  onSaved,
-}: {
-  employee: User;
-  onClose: () => void;
-  onSaved?: (name: string) => void;
+export function EmployeeDialog({ employee, onClose, onSaved, onDeleted }: {
+  employee: User; onClose: () => void; onSaved?: (name: string) => void; onDeleted?: (name: string) => void;
 }) {
-  const { command } = useFarm();
+  const { command, state, user } = useFarm();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [photo, setPhoto] = useState(employee.photo || "");
   const [photoChanged, setPhotoChanged] = useState(false);
   const [photoBusy, setPhotoBusy] = useState(false);
+  const [passwordEdit, setPasswordEdit] = useState(false);
+  const [deleting, setDeleting] = useState(false);
   const savingRef = useRef(false);
   const photoBusyRef = useRef(false);
-  const isEmployee = employee.role === "employee";
-  const close = () => {
-    if (savingRef.current || photoBusyRef.current) return false;
-    onClose();
-  };
-  return (
-    <Dialog
-      title={isEmployee ? "Edit akun karyawan" : "Edit nama dan target atasan"}
-      subtitle={employee.name}
-      onClose={close}
-    >
-      <form
-        onSubmit={async (e) => {
-          e.preventDefault();
-          if (savingRef.current || photoBusyRef.current) return;
-          const data = dataFrom(e.currentTarget);
-          savingRef.current = true;
-          setBusy(true);
-          setError("");
-          let savedName: string | null = null;
-          try {
-            const confirmed = await command("user.update", {
-              id: employee.id,
-              name: data.name,
-              target: Number(data.target || 0),
-              ...(isEmployee
-                ? {
-                    email: data.email,
-                    ...(normalizeUsername(String(data.username || "")) !== (employee.username || "")
-                      ? { username: normalizeUsername(String(data.username || "")) }
-                      : {}),
-                    ...(photoChanged ? { photo } : {}),
-                  }
-                : {}),
-            });
-            savedName =
-              confirmed.users.find((row) => row.id === employee.id)?.name ||
-              String(data.name).trim();
-          } catch (error) {
-            setError(errorMessage(error));
-          } finally {
-            savingRef.current = false;
-            setBusy(false);
-          }
-          if (savedName !== null) {
-            onSaved?.(savedName);
-            onClose();
-          }
-        }}
-      >
-        <div className="modal-body-custom">
-          {error && (
-            <div className="alert alert-danger" role="alert">
-              {error}
-            </div>
-          )}
-          {isEmployee && employee.registration_status === "pending" && (
-            <p className="text-muted">
-              Akun ini masih menunggu persetujuan. Setelah datanya benar,
-              setujui pendaftaran lewat daftar karyawan.
-            </p>
-          )}
-          {isEmployee && employee.registration_status === "rejected" && (
-            <p className="text-muted">
-              Pendaftaran akun ini pernah ditolak. Anda bisa memperbaiki
-              datanya, lalu memilih Setujui ulang di daftar karyawan.
-            </p>
-          )}
-          <fieldset disabled={busy}>
-            <Field className="d-block" label="Nama lengkap">
-              <input
-                className="form-control"
-                name="name"
-                defaultValue={employee.name}
-                autoComplete="off"
-                minLength={2}
-                maxLength={120}
-                required
-              />
-            </Field>
-            {isEmployee && (
-              <>
-                <Field
-                  className="d-block mt-3"
-                  label="Alamat email"
-                  hint="Karyawan dapat masuk memakai email ini atau username."
-                >
-                  <input
-                    className="form-control"
-                    name="email"
-                    type="email"
-                    defaultValue={employee.email}
-                    autoComplete="off"
-                    autoCapitalize="none"
-                    spellCheck={false}
-                    maxLength={190}
-                    required
-                  />
-                </Field>
-                <Field
-                  className="d-block mt-3"
-                  label="Username"
-                  hint={employee.username ? usernameHint : optionalUsernameHint}
-                >
-                  <UsernameInput
-                    name="username"
-                    defaultValue={employee.username || ""}
-                    autoComplete="off"
-                    required={Boolean(employee.username)}
-                  />
-                </Field>
-                <div className="mt-3">
-                  <PhotoUpload
-                    value={photo}
-                    photoRef={photoChanged ? undefined : employee.photo_ref}
-                    onChange={(value) => {
-                      setPhoto(value);
-                      setPhotoChanged(true);
-                    }}
-                    onBusyChange={(value) => {
-                      photoBusyRef.current = value;
-                      setPhotoBusy(value);
-                    }}
-                    label="Foto profil karyawan"
-                    purpose="profile"
-                    capture="user"
-                    disabled={busy}
-                  />
-                </div>
-              </>
-            )}
-            <Field
-              className="d-block mt-3"
-              label="Target omzet bulanan (Rp)"
-              hint="Boleh dikosongkan jika belum ada target."
-            >
-              <input
-                className="form-control"
-                name="target"
-                type="number"
-                min="0"
-                step="1"
-                defaultValue={employee.target}
-              />
-            </Field>
-          </fieldset>
-        </div>
-        <div className="modal-footer-custom">
-          <Cancel onClose={close} disabled={busy || photoBusy} />
-          <LoadingButton busy={busy} disabled={photoBusy}>
-            {photoBusy ? "Memproses foto…" : "Simpan perubahan"}
-          </LoadingButton>
-        </div>
-      </form>
-    </Dialog>
-  );
+  const protectedAccount = Boolean(employee.is_superadmin);
+  const reviewed = !employee.registration_status || employee.registration_status === "approved";
+  const carried = state.pickups.filter(p => p.user_id === employee.id).some(p => {
+    const remaining = pickupBalance(state,p); return remaining.kg > 0 || remaining.eggs > 0;
+  });
+  const canDelete = employee.role === "employee" && !protectedAccount && employee.id !== user?.id && !employee.deleted_at;
+  const close = () => { if (savingRef.current || photoBusyRef.current) return false; onClose(); };
+  return <Dialog title={deleting ? "Hapus akun karyawan?" : "Edit akun"} subtitle={employee.name} onClose={close}>
+    <form onSubmit={async event => {
+      event.preventDefault();
+      if (savingRef.current || photoBusyRef.current) return;
+      const data = dataFrom(event.currentTarget);
+      savingRef.current = true; setBusy(true); setError("");
+      try {
+        if (deleting) {
+          await command("user.delete", { id: employee.id, reason: data.reason });
+          onDeleted?.(employee.name); onClose();
+        } else {
+          if (passwordEdit) validateNewPassword(data.password,data.password_confirmation);
+          const confirmed = await command("user.update", {
+            id: employee.id, name: data.name, email: data.email, target: Number(data.target || 0),
+            ...(normalizeUsername(String(data.username || "")) !== (employee.username || "") ? { username: normalizeUsername(String(data.username || "")) } : {}),
+            ...(photoChanged ? { photo } : {}),
+            ...(!protectedAccount && reviewed && data.role !== employee.role ? { role: data.role } : {}),
+            ...(passwordEdit && !protectedAccount ? { password: data.password, password_confirmation: data.password_confirmation } : {}),
+          });
+          onSaved?.(confirmed.users.find(row => row.id === employee.id)?.name || String(data.name).trim()); onClose();
+        }
+      } catch (cause) { setError(errorMessage(cause)); }
+      finally { savingRef.current = false; setBusy(false); }
+    }}>
+      <div className="modal-body-custom">
+        {error && <div className="alert alert-danger" role="alert">{error}</div>}
+        {deleting ? <>
+          <p>Akun <strong>{employee.name}</strong> tidak akan bisa masuk lagi. Catatan panen, penjualan, dan log aktivitasnya tetap tersimpan.</p>
+          <Field className="d-block mt-3" label="Alasan penghapusan">
+            <textarea className="form-control" name="reason" rows={3} maxLength={500} required disabled={busy} placeholder="Contoh: sudah tidak bekerja di peternakan" />
+          </Field>
+        </> : <fieldset disabled={busy || Boolean(employee.deleted_at)}>
+          {protectedAccount && <div className="alert alert-info">Superadmin dilindungi. Kata sandi, peran, dan status aktifnya tidak dapat diubah; akun tidak dapat dihapus.</div>}
+          {!reviewed && <p className="text-muted">Akun ini belum disetujui. Perbaiki datanya lalu setujui pendaftaran sebelum memberikan akses atau mengubah peran.</p>}
+          <Field className="d-block" label="Nama lengkap">
+            <input className="form-control" name="name" defaultValue={employee.name} autoComplete="off" minLength={2} maxLength={120} required />
+          </Field>
+          <Field className="d-block mt-3" label="Alamat email" hint="Bisa digunakan untuk masuk, selain username.">
+            <input className="form-control" name="email" type="email" defaultValue={employee.email} autoComplete="off" autoCapitalize="none" spellCheck={false} maxLength={190} required />
+          </Field>
+          <Field className="d-block mt-3" label="Username" hint={employee.username ? usernameHint : optionalUsernameHint}>
+            <UsernameInput name="username" defaultValue={employee.username || ""} autoComplete="off" required={Boolean(employee.username)} />
+          </Field>
+          <Field className="d-block mt-3" label="Peran akun" hint={employee.id === user?.id ? "Jika menjadi karyawan, akses pengelolaan Anda akan langsung dibatasi." : "Atasan dapat mengelola harga, laporan, dan akun tim."}>
+            <select className="form-select" name="role" defaultValue={employee.role} disabled={protectedAccount || !reviewed}>
+              <option value="employee">Karyawan</option><option value="admin">{protectedAccount ? "Superadmin" : "Atasan"}</option>
+            </select>
+          </Field>
+          <div className="mt-3"><PhotoUpload value={photo} photoRef={photoChanged ? undefined : employee.photo_ref}
+            onChange={value => { setPhoto(value); setPhotoChanged(true); }}
+            onBusyChange={value => { photoBusyRef.current = value; setPhotoBusy(value); }}
+            label="Foto profil" purpose="profile" capture="user" disabled={busy} /></div>
+          <Field className="d-block mt-3" label="Target omzet bulanan (Rp)" hint="Boleh dikosongkan jika belum ada target.">
+            <input className="form-control" name="target" type="number" min="0" step="1" defaultValue={employee.target} />
+          </Field>
+          {!protectedAccount && <div className="mt-4 pt-3 border-top">
+            <label className="d-flex align-items-center gap-2"><input type="checkbox" className="form-check-input m-0" checked={passwordEdit} onChange={event => setPasswordEdit(event.target.checked)} /> Ganti kata sandi</label>
+            {passwordEdit && <div className="d-grid gap-3 mt-3">
+              <p className="small text-muted mb-0">Isi kata sandi baru minimal 12 karakter. Perangkat lain perlu masuk kembali setelah perubahan disimpan.</p>
+              <Field label="Kata sandi baru"><PasswordInput label="Kata sandi baru" name="password" required minLength={12} maxLength={72} /></Field>
+              <Field label="Konfirmasi kata sandi baru"><PasswordInput label="Konfirmasi kata sandi baru" name="password_confirmation" required minLength={12} maxLength={72} /></Field>
+            </div>}
+          </div>}
+          {canDelete && <div className="mt-4 pt-3 border-top">
+            <button className="btn btn-outline-danger" type="button" disabled={carried || busy || photoBusy} onClick={() => { setError(""); setDeleting(true); }}>Hapus akun karyawan</button>
+            <p className="small text-muted mt-2 mb-0">{carried ? "Selesaikan atau kembalikan telur yang masih dibawa sebelum menghapus akun." : "Riwayat transaksi dan log tetap tersimpan setelah akun dihapus."}</p>
+          </div>}
+        </fieldset>}
+      </div>
+      <div className="modal-footer-custom">
+        {deleting ? <button type="button" className="btn btn-light" disabled={busy} onClick={() => { setDeleting(false); setError(""); }}>Batal</button> : <Cancel onClose={close} disabled={busy || photoBusy} />}
+        <LoadingButton busy={busy} disabled={photoBusy}>{deleting ? "Ya, hapus akun" : photoBusy ? "Memproses foto…" : "Simpan perubahan"}</LoadingButton>
+      </div>
+    </form>
+  </Dialog>;
 }
 export function SaleDetail({
   sale,

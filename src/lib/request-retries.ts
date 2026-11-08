@@ -23,3 +23,17 @@ export function readPendingRequestIds(raw: string | null): Record<string, string
   }
   return value as Record<string, string>;
 }
+
+/** Sensitive command fingerprints are confined to the current authenticated page. */
+export function rememberCommandRequest(fingerprint: string, sensitive: boolean, memory: Map<string,string>, storage: Pick<Storage,"getItem"|"setItem">, key: string, createId: () => string): string {
+  if (sensitive) {
+    const id = memory.get(fingerprint) || createId();
+    memory.set(fingerprint,id);
+    return id;
+  }
+  const ids = readPendingRequestIds(storage.getItem(key));
+  const id = ids[fingerprint] || createId();
+  ids[fingerprint] = id;
+  storage.setItem(key,JSON.stringify(ids));
+  return id;
+}
