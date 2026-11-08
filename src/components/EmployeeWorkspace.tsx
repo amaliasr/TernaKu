@@ -858,7 +858,7 @@ export default function EmployeeWorkspace() {
           onClose={() => setReturnPickup(null)}
         />
       )}
-      {saleDetail && (
+      {saleDetail && (saleDetail.user_id === user.id || user.can_check_stock) && (
         <SaleDetail
           sale={
             state.sales.find((row) => row.id === saleDetail.id) || saleDetail
@@ -866,7 +866,7 @@ export default function EmployeeWorkspace() {
           onClose={() => setSaleDetail(null)}
         />
       )}
-      {productionDetail && <Dialog title="Rincian panen" onClose={() => setProductionDetail(null)}>
+      {productionDetail && (productionDetail.user_id === user.id || user.can_check_stock) && <Dialog title="Rincian panen" onClose={() => setProductionDetail(null)}>
         <div className="modal-body-custom">
           <ProductionCard row={state.productions.find(row => row.id === productionDetail.id) || productionDetail}
             barnName={state.barns.find(barn => barn.id === productionDetail.barn_id)?.name || "Kandang"}
