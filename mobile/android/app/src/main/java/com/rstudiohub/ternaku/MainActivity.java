@@ -25,6 +25,7 @@ public final class MainActivity extends Activity {
     private PushBridge push;
     private WebFiles files;
     private ReleaseCheck releases;
+    private ResourceCache resourceCache;
     private final BroadcastReceiver rotation = new BroadcastReceiver() {
         @Override public void onReceive(Context context, Intent event) {
             if (trusted(Uri.parse(String.valueOf(web.getUrl())))) {
@@ -54,6 +55,7 @@ public final class MainActivity extends Activity {
         web = new WebView(this);
         layout.addView(web);
         files = new WebFiles(this);
+        resourceCache = new ResourceCache(this, web, files::activeCameraFile);
         push = new PushBridge(this);
         releases = new ReleaseCheck(this);
         WebSettings settings = web.getSettings();
@@ -130,11 +132,21 @@ public final class MainActivity extends Activity {
     private void goBack() { if (web.canGoBack()) web.goBack(); else finish(); }
     @Override public void onBackPressed() { goBack(); }
     @Override public void onSaveInstanceState(Bundle saved) { super.onSaveInstanceState(saved); web.saveState(saved); }
-    @Override public void onResume() { super.onResume(); web.onResume(); releases.onResume(); }
+    @Override public void onResume() { super.onResume(); web.onResume(); releases.onResume(); resourceCache.onResume(); }
     @Override public void onPause() { web.onPause(); super.onPause(); }
+    @Override public void onTrimMemory(int level) {
+        super.onTrimMemory(level);
+        if (resourceCache != null && (level >= TRIM_MEMORY_BACKGROUND
+                || (level >= TRIM_MEMORY_RUNNING_LOW && level < TRIM_MEMORY_UI_HIDDEN)
+                || (level >= TRIM_MEMORY_UI_HIDDEN && getSystemService(android.app.ActivityManager.class).isLowRamDevice()))) {
+            resourceCache.trimMemory();
+        }
+    }
+    @Override public void onLowMemory() { super.onLowMemory(); if (resourceCache != null) resourceCache.trimMemory(); }
     @Override public void onDestroy() {
         unregisterReceiver(rotation);
         files.close();
+        resourceCache.close();
         layout.removeView(web);
         web.destroy();
         super.onDestroy();

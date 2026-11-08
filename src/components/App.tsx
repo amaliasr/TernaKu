@@ -716,6 +716,7 @@ function Workspace() {
   const [search, setSearch] = useState("");
   const [modal, setModal] = useState<string | null>(null);
   const [notifications, setNotifications] = useState(false);
+  const [readingAll, setReadingAll] = useState(false);
   const [noticeLimit, setNoticeLimit] = useState(8);
   const [help, setHelp] = useState(false);
   const [notice, setNotice] = useState("");
@@ -934,6 +935,15 @@ function Workspace() {
                       <X size={17} />
                     </button>
                   </div>
+                  <button type="button" disabled={readingAll || unread.length === 0}
+                    onClick={async () => {
+                      setReadingAll(true);
+                      try { await command("notification.read", { id: "all" }); }
+                      catch (cause) { setNotice(cause instanceof Error ? cause.message : "Notifikasi belum bisa ditandai. Coba lagi."); }
+                      finally { setReadingAll(false); }
+                    }}>
+                    {readingAll ? "Menandai notifikasi…" : "Tandai sudah dibaca semua"}
+                  </button>
                   {inbox.slice(0, noticeLimit)
                     .map((n) => (
                       <button

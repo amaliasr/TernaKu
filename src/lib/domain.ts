@@ -22,6 +22,7 @@ import { ApiError } from "./request-errors";
 import { resolveSaleEggs, saleEggCount } from "./sale-eggs";
 import { assignUsername, withUsernames } from "./usernames";
 import { validateAccountPassword, validateNewPassword } from "./account-policy";
+import { applyDemoStockCheck, demoStockCheckContext, recordStockAssignment } from "./stock-checks";
 
 export const money = (value: number) =>
   new Intl.NumberFormat("id-ID", {
@@ -235,21 +236,33 @@ export function emptyState(): State {
     activity: [],
     corrections: [],
     stock_movements: [],
+    stock_checks: [],
+    stock_check_assignments: [],
   };
 }
 export function visibleState(state: State, user: User | null): State {
   if (!user || accountAccessError(user)) return emptyState();
+  const checker = !!user.can_check_stock;
+  const day = today();
+  const since = new Date(`${day}T12:00:00Z`); since.setUTCDate(since.getUTCDate() - 29);
+  const cutoff = since.toISOString().slice(0, 10);
+  const canRead = (row: { user_id: string; date: string }) => row.user_id === user.id || (checker && businessDate(row.date) >= cutoff && businessDate(row.date) <= day);
+  const context = user.role === "admin" || checker ? demoStockCheckContext(state, day, { good: eggStock(state, "good"), cracked: eggStock(state, "cracked") }) : undefined;
   if (user.role === "admin")
     return {
       ...state,
+      stock_check_context: context,
       notifications: state.notifications.filter((n) => n.user_id === user.id),
     };
   return {
     ...state,
-    users: state.users.filter((u) => u.id === user.id),
-    productions: state.productions.filter((p) => p.user_id === user.id),
+    users: checker ? state.users.map(u => u.id === user.id ? u : { id: u.id, name: u.name, email: "", role: u.role, active: u.active, target: 0 }) : state.users.filter((u) => u.id === user.id),
+    productions: state.productions.filter(canRead),
     pickups: state.pickups.filter((p) => p.user_id === user.id),
-    sales: state.sales.filter((s) => s.user_id === user.id),
+    sales: state.sales.filter(canRead),
+    stock_check_context: context,
+    stock_checks: state.stock_checks?.filter(c => c.user_id === user.id),
+    stock_check_assignments: state.stock_check_assignments?.filter(a => a.user_id === user.id),
     notifications: state.notifications.filter((n) => n.user_id === user.id),
     corrections: state.corrections.filter((c) => c.user_id === user.id),
     stock_movements: state.stock_movements?.filter(
@@ -651,7 +664,7 @@ function correct(
           : key === "kg"
             ? "Berat aktual"
             : "Jumlah krat",
-        key !== "trays",
+        key !== "trays" && !(payload.entity === "production" && user.role === "admin"),
         key !== "kg",
       );
     else if (key === "items") {
@@ -711,6 +724,11 @@ function correct(
       checkPickup(state, pickup);
     }
   }
+  if (payload.entity === "production") {
+    const production = row as Production;
+    assert((production.eggs > 0 && production.kg > 0) || (user.role === "admin" && production.eggs === 0 && production.kg === 0 && production.trays === 0),
+      "Untuk membatalkan panen yang keliru, isi butir, berat, dan krat dengan 0.");
+  }
   checkStock(state);
   return {
     before,
@@ -735,6 +753,7 @@ export function executeCommand(
   delete state.command_result;
   delete state.inventory;
   delete state.feed_inventory;
+  delete state.stock_check_context;
   const user = find(state.users, userId, "Pengguna");
   const accessError = accountAccessError(user);
   assert(!accessError, accessError || "Akun tidak dapat digunakan.");
@@ -750,6 +769,11 @@ export function executeCommand(
   let detail: { before?: unknown; after?: unknown } = {};
   let farmEvent: { activity: FarmActivity; kg: number } | undefined;
   switch (action) {
+    case "stock_check.submit":
+    case "stock_check.review":
+      detail = applyDemoStockCheck(state, user, action, payload,
+        demoStockCheckContext(state, today(now), { good: eggStock(state, "good"), cracked: eggStock(state, "cracked") }), stamp, id);
+      break;
     case "production.create": {
       const entries = payload.items === undefined ? [payload] : list(payload.items);
       assert(entries.length <= 2, "Satu panen maksimal dua jenis telur.");
@@ -1133,11 +1157,11 @@ export function executeCommand(
       admin(user);
       const u = find(state.users, payload.id, "Karyawan");
       assert(
-        Object.keys(payload).every((key) => ["id", "name", "email", "username", "photo", "target", "active", "role", "password", "password_confirmation"].includes(key)),
+        Object.keys(payload).every((key) => ["id", "name", "email", "username", "photo", "target", "active", "role", "password", "password_confirmation", "can_check_stock"].includes(key)),
         "Kolom ini tidak dapat diubah lewat pengaturan akun.",
       );
       assert(!u.deleted_at, "Akun ini sudah dihapus dan tidak dapat diubah.");
-      const safeIdentity = ({ id, name, email, username, role, active, target, registration_status, is_superadmin, deleted_at }: User) => ({ id, name, email, username, role, active, target, registration_status, is_superadmin, deleted_at });
+      const safeIdentity = ({ id, name, email, username, role, active, target, registration_status, is_superadmin, deleted_at, can_check_stock }: User) => ({ id, name, email, username, role, active, target, registration_status, is_superadmin, deleted_at, can_check_stock });
       detail.before = safeIdentity(u);
       const passwordChanged = Object.hasOwn(payload, "password") || Object.hasOwn(payload, "password_confirmation");
       if (passwordChanged) {
@@ -1191,6 +1215,12 @@ export function executeCommand(
       }
       if (Object.hasOwn(payload, "target"))
         u.target = numeric(payload.target, "Target penjualan");
+      if (Object.hasOwn(payload, "can_check_stock")) {
+        assert(typeof payload.can_check_stock === "boolean", "Pilihan petugas pemeriksa tidak valid.");
+        assert(!payload.can_check_stock || (u.role === "employee" && !accountAccessError(u)), "Hanya karyawan aktif yang sudah disetujui dapat ditunjuk.");
+        recordStockAssignment(state, u, payload.can_check_stock, user, stamp, id);
+      }
+      if (u.role !== "employee" || accountAccessError(u)) recordStockAssignment(state, u, false, user, stamp, id);
       detail.after = { ...safeIdentity(u), photo_changed: Object.hasOwn(payload, "photo"), password_changed: passwordChanged };
       break;
     }
@@ -1216,6 +1246,7 @@ export function executeCommand(
       detail.before = { id: u.id, name: u.name, role: u.role, active: u.active };
       u.active = false;
       u.deleted_at = stamp;
+      recordStockAssignment(state, u, false, user, stamp, id);
       detail.after = { id: u.id, name: u.name, active: false, deleted_at: stamp, reason };
       break;
     }
@@ -1354,6 +1385,11 @@ export function executeCommand(
       const reason = requiredText(payload.reason, "Alasan koreksi");
       assert(reason.length >= 5, "Alasan koreksi minimal 5 karakter.");
       // Validate the requested change with the same rules, on an isolated copy, before queuing it.
+      if (user.role !== "admin" && payload.entity === "production" && payload.changes && typeof payload.changes === "object") {
+        const proposed = payload.changes as CommandPayload;
+        for (const key of ["eggs", "kg"] as const) if (Object.hasOwn(proposed, key))
+          numeric(proposed[key], key === "eggs" ? "Jumlah butir" : "Berat aktual", true, key === "eggs");
+      }
       correct(structuredClone(state), { ...user, role: "admin" }, payload, now);
       const correction: Correction = {
         id: id("correction"),
@@ -1489,6 +1525,7 @@ export function executeCommand(
       id: id("activity"),
       user_id: user.id,
       action,
+        actor_role: user.role,
       description: `${user.name}: ${action}${payload.reason ? ` — ${text(payload.reason)}` : ""}`,
       created_at: stamp,
       ...detail,

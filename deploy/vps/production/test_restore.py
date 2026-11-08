@@ -6,7 +6,7 @@ import restore
 
 
 class AccountRestoreTests(unittest.TestCase):
-    def layout(self, username=False, account_policy=False, compact=False):
+    def layout(self, username=False, account_policy=False, compact=False, stock_check=False):
         rows = [f"{table}\t{column}\t-" for table, (columns, _) in restore.TABLES.items()
                 for column in columns.split()]
         if username:
@@ -15,6 +15,8 @@ class AccountRestoreTests(unittest.TestCase):
             rows.extend(["users\tis_superadmin\t-", "users\tdeleted_at\t-"])
         if compact:
             rows.extend(["records\tcompact_data\tSTORED GENERATED", "records\tphoto_version\tSTORED GENERATED"])
+        if stock_check:
+            rows.append("users\tcan_check_stock\t-")
         return rows
 
     def check_layout(self, rows):
@@ -30,6 +32,11 @@ class AccountRestoreTests(unittest.TestCase):
     def test_full_schema(self):
         self.assertEqual(self.check_layout(self.layout(True, True, True)),
                          {"username", "is_superadmin", "deleted_at", "compact_data", "photo_version"})
+
+    def test_stock_checker_permission_is_an_optional_persisted_account_column(self):
+        self.assertIn("can_check_stock", self.check_layout(self.layout(True, True, True, True)))
+        with self.assertRaises(RuntimeError):
+            self.check_layout(self.layout() + ["records\tcan_check_stock\t-"])
 
     def test_datetime_defaults_can_be_generated_without_being_derived_columns(self):
         rows = [r.replace("created_at\t-", "created_at\tDEFAULT_GENERATED") for r in self.layout()]
@@ -74,7 +81,7 @@ class AccountRestoreTests(unittest.TestCase):
         self.assertNotIn("`username`", sql.call_args_list[0].args[1])
 
     def test_transfer_preserves_all_account_columns_and_recomputes_generated_fields(self):
-        features = {"username", "is_superadmin", "deleted_at", "compact_data", "photo_version"}
+        features = set(restore.ACCOUNT_COLUMNS) | set(restore.GENERATED_RECORD_COLUMNS)
         columns = restore.compatible_account_columns(features, features)
         with patch.object(restore, "root_sql", side_effect=["", "", "48"]) as sql:
             restore.transfer("disposable", "fixture", 48, columns)

@@ -717,5 +717,6 @@ try {
     req('/auth/logout',[],$other); req('/bootstrap',[],$other,'GET',401); check(true,'logout invalidates token');
     req('/application/config/config.php',[],'','GET',404); check(true,'internal files not exposed by dev router');
     require __DIR__.'/account-policy-checks.php';
+    require __DIR__.'/stock-check-checks.php';
     echo "\n$checks integration checks passed.\n";
 } catch(Throwable $e) { fwrite(STDERR,$e->getMessage()."\n"); exit(1); }

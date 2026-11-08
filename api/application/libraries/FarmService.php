@@ -2,17 +2,20 @@
 require_once __DIR__.'/PushService.php';
 require_once __DIR__.'/UsernameService.php';
 require_once __DIR__.'/AccountPolicyService.php';
+require_once __DIR__.'/StockCheckSchema.php';
+require_once __DIR__.'/StockCheckWorkflow.php';
 /** TernaKu transactional domain service; used by CI3 and the CLI installer. */
 class ApiProblem extends RuntimeException {
     public int $status;
     public function __construct(string $message, int $status = 422) { parent::__construct($message); $this->status = $status; }
 }
 class FarmService {
+    use StockCheckWorkflow;
     private PDO $db;
     private array $actor = [];
     private string $authTokenHash = '';
     private ?array $commandResult = null;
-    private const COLLECTIONS = ['barn'=>'barns','production'=>'productions','pickup'=>'pickups','sale'=>'sales','price'=>'prices','feed'=>'feeds','feed_purchase'=>'feed_purchases','feed_usage'=>'feed_usages','notification'=>'notifications','activity'=>'activity','correction'=>'corrections','stock_movement'=>'stock_movements'];
+    private const COLLECTIONS = ['barn'=>'barns','production'=>'productions','pickup'=>'pickups','sale'=>'sales','price'=>'prices','feed'=>'feeds','feed_purchase'=>'feed_purchases','feed_usage'=>'feed_usages','notification'=>'notifications','activity'=>'activity','correction'=>'corrections','stock_movement'=>'stock_movements','stock_check'=>'stock_checks','stock_check_assignment'=>'stock_check_assignments'];
     public function __construct(?PDO $db = null) {
         $this->db = $db ?: new PDO('mysql:host='.(getenv('DB_HOST') ?: '127.0.0.1').';port='.(getenv('DB_PORT') ?: '3306').';dbname='.(getenv('DB_NAME') ?: 'ternaku').';charset=utf8mb4', getenv('DB_USER') ?: 'ternaku', getenv('DB_PASSWORD') ?: '', [PDO::ATTR_ERRMODE=>PDO::ERRMODE_EXCEPTION, PDO::ATTR_EMULATE_PREPARES=>false]);
         $this->db->exec("SET time_zone = '+07:00'");
@@ -27,7 +30,7 @@ class FarmService {
         return $data?json_decode($data,true,512,JSON_THROW_ON_ERROR):null;
     }
     private function publicUser(array $u,bool $includePhoto = true,bool $compact = false): array {
-        $user=['id'=>$u['id'],'name'=>$u['name'],'email'=>$u['email'],'username'=>$u['username']??null,'role'=>$u['role'],'active'=>(bool)$u['active'],'is_superadmin'=>(bool)($u['is_superadmin']??false),'deleted_at'=>$u['deleted_at']??null,'target'=>(float)$u['target'],'registration_status'=>$this->registrationRecord($u['id'])['status']??'approved'];
+        $user=['id'=>$u['id'],'name'=>$u['name'],'email'=>$u['email'],'username'=>$u['username']??null,'role'=>$u['role'],'active'=>(bool)$u['active'],'is_superadmin'=>(bool)($u['is_superadmin']??false),'deleted_at'=>$u['deleted_at']??null,'can_check_stock'=>(bool)($u['can_check_stock']??false),'target'=>(float)$u['target'],'registration_status'=>$this->registrationRecord($u['id'])['status']??'approved'];
         if(!$includePhoto) return $user;
         if($compact) {
             $version=$this->query("SELECT photo_version FROM records WHERE kind='user_profile' AND user_id=? LIMIT 1",[$u['id']])->fetchColumn();
@@ -99,12 +102,13 @@ class FarmService {
         if (!$r) throw new ApiProblem('Data tidak ditemukan.',404);
         return json_decode($r,true,512,JSON_THROW_ON_ERROR);
     }
-    private function records(string $kind,?string $owner = null,bool $withoutPhotos = false,bool $mediaReferences = false,?string $onlyId = null): array {
+    private function records(string $kind,?string $owner = null,bool $withoutPhotos = false,bool $mediaReferences = false,?string $onlyId = null,?string $recentOthersFor = null): array {
         $projection=$withoutPhotos?'compact_data':'data';
         $withMedia=$mediaReferences && in_array($kind,['production','sale'],true);
         if($withMedia) $projection.=', photo_version';
         $values=[$kind]; if($owner!==null) $values[]=$owner; if($onlyId!==null) $values[]=$onlyId;
-        $rows=$this->query('SELECT '.$projection.' FROM records WHERE kind=?'.($owner!==null?' AND user_id=?':'').($onlyId!==null?' AND id=?':'').' ORDER BY occurred_at DESC,sequence DESC',$values)->fetchAll(PDO::FETCH_NUM);
+        if($recentOthersFor!==null) array_push($values,$recentOthersFor,$this->stockCheckReadStart(),$this->stockCheckTomorrow());
+        $rows=$this->query('SELECT '.$projection.' FROM records WHERE kind=?'.($owner!==null?' AND user_id=?':'').($onlyId!==null?' AND id=?':'').($recentOthersFor!==null?' AND (user_id=? OR (occurred_at>=? AND occurred_at<?))':'').' ORDER BY occurred_at DESC,sequence DESC',$values)->fetchAll(PDO::FETCH_NUM);
         return array_map(function($row) use($kind,$withMedia): array {
             $record=json_decode($row[0],true,512,JSON_THROW_ON_ERROR);
             if($withMedia) { $record['photo']=''; if($row[1]!==null) $record['photo_ref']=['kind'=>$kind,'id'=>$record['id'],'version'=>$row[1]]; }
@@ -113,12 +117,12 @@ class FarmService {
     }
     private function publicUsers(bool $admin,bool $compact): array {
         $owner=$admin?null:$this->actor['id']; $params=$owner===null?[]:[$owner];
-        $users=$this->query('SELECT id,name,email,username,role,active,is_superadmin,deleted_at,target FROM users'.($owner===null?'':' WHERE id=?').' ORDER BY name',$params)->fetchAll(PDO::FETCH_ASSOC);
+        $users=$this->query('SELECT id,name,email,username,role,active,is_superadmin,deleted_at,can_check_stock,target FROM users'.($owner===null?'':' WHERE id=?').' ORDER BY name',$params)->fetchAll(PDO::FETCH_ASSOC);
         $registrations=[]; foreach($this->records('registration',$owner) as $r) $registrations[$r['user_id']]=$r['status'];
         $projection=$compact?'photo_version':"JSON_UNQUOTE(JSON_EXTRACT(data,'$.photo'))";
         $profiles=$this->query("SELECT user_id,$projection FROM records WHERE kind='user_profile'".($owner===null?'':' AND user_id=?'),$params)->fetchAll(PDO::FETCH_KEY_PAIR);
         return array_map(function($u) use($registrations,$profiles,$compact): array {
-            $user=['id'=>$u['id'],'name'=>$u['name'],'email'=>$u['email'],'username'=>$u['username']??null,'role'=>$u['role'],'active'=>(bool)$u['active'],'is_superadmin'=>(bool)($u['is_superadmin']??false),'deleted_at'=>$u['deleted_at']??null,'target'=>(float)$u['target'],'registration_status'=>$registrations[$u['id']]??'approved','photo'=>$compact?'':($profiles[$u['id']]??'')];
+            $user=['id'=>$u['id'],'name'=>$u['name'],'email'=>$u['email'],'username'=>$u['username']??null,'role'=>$u['role'],'active'=>(bool)$u['active'],'is_superadmin'=>(bool)($u['is_superadmin']??false),'deleted_at'=>$u['deleted_at']??null,'can_check_stock'=>(bool)($u['can_check_stock']??false),'target'=>(float)$u['target'],'registration_status'=>$registrations[$u['id']]??'approved','photo'=>$compact?'':($profiles[$u['id']]??'')];
             if($compact && !empty($profiles[$u['id']])) $user['photo_ref']=['kind'=>'profile','id'=>$u['id'],'version'=>$profiles[$u['id']]];
             return $user;
         },$users);
@@ -134,7 +138,7 @@ class FarmService {
     }
     private function save(string $kind, array $r): void { $this->query('UPDATE records SET data=? WHERE id=? AND kind=?',[$this->json($r),$r['id'],$kind]); }
     private function audit(string $action, string $description, $before = null, $after = null): void {
-        $this->insert('activity',['user_id'=>$this->actor['id'],'action'=>$action,'description'=>$description,'created_at'=>$this->now(),'before'=>$before,'after'=>$after]);
+        $this->insert('activity',['user_id'=>$this->actor['id'],'actor_role'=>$this->actor['role'],'action'=>$action,'description'=>$description,'created_at'=>$this->now(),'before'=>$before,'after'=>$after]);
     }
     private function notifyFarmActivity(string $activity,float $kg): void {
         $name=preg_split('/\s+/u',trim($this->actor['name']),2)[0]??'';
@@ -352,9 +356,10 @@ class FarmService {
             $raw=$this->query("SELECT JSON_UNQUOTE(JSON_EXTRACT(data,'$.photo')) FROM records WHERE kind='user_profile' AND user_id=? LIMIT 1",[$id])->fetchColumn();
         } else {
             // Authorize metadata before loading potentially large image bytes.
-            $owner=$this->query('SELECT user_id FROM records WHERE kind=? AND id=?',[$kind,$id])->fetchColumn();
-            if($owner===false) throw new ApiProblem('Media tidak ditemukan.',404);
-            $this->owned(['user_id'=>$owner]);
+            $record=$this->query('SELECT user_id,occurred_at FROM records WHERE kind=? AND id=?',[$kind,$id])->fetch(PDO::FETCH_ASSOC);
+            if(!$record) throw new ApiProblem('Media tidak ditemukan.',404);
+            $recent=$this->canCheckStock() && $record['occurred_at']>=$this->stockCheckReadStart() && $record['occurred_at']<$this->stockCheckTomorrow();
+            if(!$recent) $this->owned($record);
             $raw=$this->query("SELECT JSON_UNQUOTE(JSON_EXTRACT(data,'$.photo')) FROM records WHERE kind=? AND id=?",[$kind,$id])->fetchColumn();
         }
         if(!is_string($raw) || !preg_match('~^data:(image/(?:jpeg|png|webp));base64,([A-Za-z0-9+/]+={0,2})$~D',$raw,$match)) throw new ApiProblem('Media tidak ditemukan.',404);
@@ -363,17 +368,21 @@ class FarmService {
         return ['content_type'=>$match[1],'bytes'=>$bytes,'version'=>hash('sha256',$raw)];
     }
     private function readState(bool $compact = false): array {
-        $admin=$this->actor['role']==='admin'; $state=[];
+        $admin=$this->actor['role']==='admin'; $checker=$this->canCheckStock(); $state=[];
         if($compact) $state['price_cursor']=$this->priceCursor();
         foreach (self::COLLECTIONS as $kind=>$collection) {
             // Skip restricted tables entirely, and scope ownership in SQL before reading JSON.
             if(!$admin && in_array($kind,['activity','feed_purchase'],true)) { $state[$collection]=[]; continue; }
-            $own=$kind==='notification' || (!$admin && in_array($kind,['production','pickup','sale','correction','stock_movement','feed_usage'],true));
-            $state[$collection]=$this->records($kind,$own?$this->actor['id']:null,$compact,$compact);
+            $shared=$checker && in_array($kind,['production','sale'],true);
+            $own=$kind==='notification' || (!$admin && !$shared && in_array($kind,['production','pickup','sale','correction','stock_movement','feed_usage','stock_check','stock_check_assignment'],true));
+            $state[$collection]=$this->records($kind,$own?$this->actor['id']:null,$compact,$compact,null,$shared?$this->actor['id']:null);
         }
         $state['settings']=$this->settings();
         $state['users']=$this->publicUsers($admin,$compact);
-        return $state+$this->stockBalances();
+        if($checker) $state['users']=$this->stockCheckRecordUsers($state);
+        $balances=$this->stockBalances();
+        if($admin || $checker) $state['stock_check_context']=$this->stockCheckContext($this->stockCheckToday(),$balances['inventory']);
+        return $state+$balances;
     }
     private function stockBalances(bool $eggsOnly=false): array {
         $balances=['inventory'=>[],'feed_inventory'=>[]];
@@ -586,13 +595,18 @@ class FarmService {
                 }
                 continue;
             }
-            $out[$key]=in_array($key,['eggs','kg','trays'],true)?$this->number([$key=>$value],$key,$key==='trays'?0:($key==='kg'?0.001:1),$key!=='kg'):$this->text([$key=>$value],$key,$key==='notes'?2000:190,$key==='customer');
+            $allowZero=$entity==='production' && $this->actor['role']==='admin';
+            $out[$key]=in_array($key,['eggs','kg','trays'],true)?$this->number([$key=>$value],$key,$key==='trays' || $allowZero?0:($key==='kg'?0.001:1),$key!=='kg'):$this->text([$key=>$value],$key,$key==='notes'?2000:190,$key==='customer');
         } return $out;
     }
     private function applyCorrection(string $entity,string $id,string $reason,array $changes,bool $review=false): void {
         $r=$this->record($entity,$id,true); $this->owned($r);
         if($this->actor['role']!=='admin' && ($entity!=='production' || $r['locked'])) throw new ApiProblem('Data ini harus dikoreksi melalui persetujuan admin.',403);
         $changes=$this->changes($entity,$changes); $updated=array_replace($r,$changes);
+        if($entity==='production' && ($updated['eggs']==0 || $updated['kg']==0)
+            && ($this->actor['role']!=='admin' || $updated['eggs']!=0 || $updated['kg']!=0 || $updated['trays']!=0)) {
+            throw new ApiProblem('Panen kosong hanya dapat dikoreksi admin dengan butir, berat, dan krat semuanya nol.');
+        }
         if($entity==='production' && $this->productionStocked($r)) {
             $delta=['eggs'=>(int)($updated['eggs']-$r['eggs']),'kg'=>round($updated['kg']-$r['kg'],3),'trays'=>(int)($updated['trays']-$r['trays'])];
             $this->stock('egg:'.$r['category'],$delta['eggs'],$delta['kg'],$delta['trays']);
@@ -767,6 +781,8 @@ class FarmService {
             case 'profile.password': $this->changeOwnPassword($p); break;
             case 'user.update': $this->updateUser($p); break;
             case 'user.delete': $this->deleteUser($p); break;
+            case 'stock_check.submit': $this->submitStockCheck($p); break;
+            case 'stock_check.review': $this->reviewStockCheck($p); break;
             case 'user.approve': $this->reviewRegistration($p,true); break;
             case 'user.reject': $this->reviewRegistration($p,false); break;
             case 'barn.create':
@@ -885,6 +901,7 @@ class FarmService {
         $this->notifyFarmActivity('sale.create',array_sum(array_column($out,'kg')));
     }
     private function createUser(array $p): void {
+        if(array_key_exists('can_check_stock',$p)) throw new ApiProblem('Tunjuk pemeriksa stok melalui pengaturan akun setelah akun dibuat.');
         if(array_diff(array_keys($p),['name','email','username','password','password_confirmation','role','target'])) throw new ApiProblem('Kolom akun tidak didukung.');
         $this->admin(); $email=strtolower($this->text($p,'email',190,true)); if(!filter_var($email,FILTER_VALIDATE_EMAIL)) throw new ApiProblem('Format email tidak valid.');
         $password=$this->accountPassword($p,'password',10,false);
@@ -909,7 +926,7 @@ class FarmService {
         $this->audit('profile.update','Memperbarui profil sendiri',['name'=>$before['name'],'username'=>$before['username']],['name'=>$name,'username'=>$username,'photo_changed'=>array_key_exists('photo',$p)]);
     }
     private function updateUser(array $p): void {
-        if(array_diff(array_keys($p),['id','name','email','username','photo','target','active','role','password','password_confirmation'])) throw new ApiProblem('Kolom perubahan akun tidak didukung.');
+        if(array_diff(array_keys($p),['id','name','email','username','photo','target','active','role','password','password_confirmation','can_check_stock'])) throw new ApiProblem('Kolom perubahan akun tidak didukung.');
         $this->admin(); $id=$this->text($p,'id',40,true); $u=$this->query('SELECT * FROM users WHERE id=? FOR UPDATE',[$id])->fetch(PDO::FETCH_ASSOC); if(!$u) throw new ApiProblem('Pengguna tidak ditemukan.',404);
         if($u['deleted_at']!==null) throw new ApiProblem('Akun ini sudah dihapus. Riwayatnya tetap tersimpan.');
         $before=$this->publicUser($u,false); $name=array_key_exists('name',$p)?$this->text($p,'name',120,true):$u['name']; $target=array_key_exists('target',$p)?$this->number($p,'target',0,true):(float)$u['target']; $active=array_key_exists('active',$p)?$p['active']:(bool)$u['active'];
@@ -928,18 +945,24 @@ class FarmService {
         if($photoChanged && !is_string($p['photo'])) throw new ApiProblem('Kolom photo harus berupa teks.');
         $photo=$photoChanged?$this->photo($p):null;
         if(!is_bool($active)) throw new ApiProblem('Status aktif tidak valid.');
+        $canCheck=array_key_exists('can_check_stock',$p)?$p['can_check_stock']:(bool)$u['can_check_stock'];
+        if(!is_bool($canCheck)) throw new ApiProblem('Penugasan pemeriksaan stok harus berupa aktif atau tidak aktif.');
+        $eligible=$role==='employee' && $active && $before['registration_status']==='approved';
+        if(array_key_exists('can_check_stock',$p) && $canCheck && !$eligible) throw new ApiProblem('Pemeriksa stok harus karyawan aktif yang sudah disetujui.');
+        if(!$eligible) $canCheck=false;
         if(($active || $role==='admin') && in_array($before['registration_status'],['pending','rejected'],true)) throw new ApiProblem('Pendaftaran harus disetujui melalui tindakan Setujui pendaftaran.');
         if(!$active && $id===$this->actor['id']) throw new ApiProblem('Anda tidak dapat menonaktifkan akun sendiri.');
         if((!$active || $role!=='admin') && $u['role']==='admin' && $u['active'] && (int)$this->query("SELECT COUNT(*) FROM users WHERE role='admin' AND active=1 AND deleted_at IS NULL")->fetchColumn()<=1) throw new ApiProblem('Minimal satu admin harus aktif.');
-        try { $this->query('UPDATE users SET name=?,email=?,username=?,target=?,active=?,role=?,password_hash=? WHERE id=?',[$name,$email,$username,$target,(int)$active,$role,$passwordHash,$id]); }
+        try { $this->query('UPDATE users SET name=?,email=?,username=?,target=?,active=?,role=?,password_hash=?,can_check_stock=? WHERE id=?',[$name,$email,$username,$target,(int)$active,$role,$passwordHash,(int)$canCheck,$id]); }
         catch(PDOException $e) { if(($e->errorInfo[1]??null)===1062) throw new ApiProblem('Email atau username sudah digunakan.'); throw $e; }
         if($photoChanged) {
             $profileId='profile_'.substr(hash('sha256',$id),0,32);
             $this->query("INSERT INTO records(id,kind,user_id,occurred_at,data) VALUES(?,'user_profile',?,NOW(),?) ON DUPLICATE KEY UPDATE data=VALUES(data)",[$profileId,$id,$this->json(['photo'=>$photo])]);
         }
         if(!$active || $passwordChanged || $role!==$u['role']) $this->revokeAccountSessions($id,$id===$this->actor['id'] && $active);
-        $this->audit('user.update','Memperbarui akun pengguna',$before,array_replace($before,['name'=>$name,'email'=>$email,'username'=>$username,'target'=>$target,'active'=>$active,'role'=>$role,'password_changed'=>$passwordChanged,'photo_changed'=>$photoChanged]));
-        if($id===$this->actor['id']) $this->actor=$this->publicUser(array_replace($u,['name'=>$name,'email'=>$email,'username'=>$username,'target'=>$target,'active'=>$active,'role'=>$role]),false);
+        if($canCheck!==(bool)$u['can_check_stock']) $this->stockCheckAssignment($id,$canCheck);
+        $this->audit('user.update','Memperbarui akun pengguna',$before,array_replace($before,['name'=>$name,'email'=>$email,'username'=>$username,'target'=>$target,'active'=>$active,'role'=>$role,'can_check_stock'=>$canCheck,'password_changed'=>$passwordChanged,'photo_changed'=>$photoChanged]));
+        if($id===$this->actor['id']) $this->actor=$this->publicUser(array_replace($u,['name'=>$name,'email'=>$email,'username'=>$username,'target'=>$target,'active'=>$active,'role'=>$role,'can_check_stock'=>$canCheck]),false);
     }
     private function accountPassword(array $p,string $field,int $minimum=12,bool $requireConfirmation=true): string {
         $password=$p[$field]??null;
@@ -981,9 +1004,10 @@ class FarmService {
         $pickups=[]; foreach($this->records('pickup',$id,true) as $pickup) $pickups[$pickup['id']]=$pickup;
         foreach($this->carriedQuantities($pickups) as $balance) if($balance['eggs']>0 || $balance['kg']>0) throw new ApiProblem('Karyawan masih membawa telur. Selesaikan penjualan atau kembalikan telur ke gudang sebelum menghapus akun.');
         $before=$this->publicUser($u,false); $deletedAt=date('Y-m-d H:i:s');
-        $this->query('UPDATE users SET active=0,deleted_at=? WHERE id=?',[$deletedAt,$id]);
+        $this->query('UPDATE users SET active=0,deleted_at=?,can_check_stock=0 WHERE id=?',[$deletedAt,$id]);
+        if($u['can_check_stock']) $this->stockCheckAssignment($id,false);
         $this->revokeAccountSessions($id);
-        $this->audit('user.delete','Menghapus akun karyawan: '.$reason,$before,array_replace($before,['active'=>false,'deleted_at'=>$deletedAt,'reason'=>$reason]));
+        $this->audit('user.delete','Menghapus akun karyawan: '.$reason,$before,array_replace($before,['active'=>false,'deleted_at'=>$deletedAt,'can_check_stock'=>false,'reason'=>$reason]));
     }
     private function reviewRegistration(array $p,bool $approved): void {
         if(array_diff(array_keys($p),['id'])) throw new ApiProblem('Kolom persetujuan pendaftaran tidak didukung.');

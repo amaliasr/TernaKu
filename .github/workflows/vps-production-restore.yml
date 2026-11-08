@@ -38,9 +38,10 @@ jobs:
           dump="$RUNNER_TEMP/synthetic.sql"
           sed -e '/^INSERT IGNORE INTO /d' -e 's/DEFAULT CHARSET=utf8mb4;/DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_uca1400_ai_ci;/' api/schema.sql > "$dump"
           cat >> "$dump" <<'SQL'
-          INSERT INTO users(id,name,email,username,password_hash,role,active,is_superadmin,deleted_at) VALUES
-          ('demo','Test','test@example.invalid','test.username','fake','admin',1,1,NULL),
-          ('former','Former employee','former@example.invalid','former.username','fake','employee',0,0,'2026-11-01 15:23:45');
+          INSERT INTO users(id,name,email,username,password_hash,role,active,is_superadmin,deleted_at,can_check_stock) VALUES
+          ('demo','Test','test@example.invalid','test.username','fake','admin',1,1,NULL,0),
+          ('former','Former employee','former@example.invalid','former.username','fake','employee',0,0,'2026-11-01 15:23:45',0),
+          ('checker','Stock checker','checker@example.invalid','checker.username','fake','employee',1,0,NULL,1);
           INSERT INTO tokens(token_hash,user_id,expires_at) VALUES (REPEAT('a',64),'demo','2030-01-01');
           INSERT INTO command_requests(user_id,request_id,fingerprint) VALUES ('demo','once',REPEAT('f',64));
           INSERT INTO command_mutex VALUES (1,7);
@@ -49,22 +50,24 @@ jobs:
           INSERT INTO records(id,sequence,kind,user_id,occurred_at,data) VALUES
           ('one',2,'push_subscription','demo','2026-01-01','{"fixture":true}'),
           ('two',7,'sale','former','2026-01-01','{"customer":"Pélanggan","photo":"data:image/png;base64,aGVsbG8="}'),
-          ('three',14,'push_job','demo','2099-01-01','{"fixture":true}');
+          ('three',14,'push_job','demo','2099-01-01','{"fixture":true}'),
+          ('four',15,'stock_check_assignment','checker','2026-11-01','{"assigned":true}'),
+          ('five',16,'stock_check','checker','2026-11-01','{"status":"pending","reason":"Fixture count"}');
           ALTER TABLE records AUTO_INCREMENT=48;
           SQL
           sha=$(sha256sum "$dump" | cut -d' ' -f1)
           runner=(python3 deploy/vps/production/restore.py "$dump" --sha256 "$sha")
-          valid=users=2,records=3,login_attempts=1,stock=2,command_mutex=1,command_requests=1,tokens=1
+          valid=users=3,records=5,login_attempts=1,stock=2,command_mutex=1,command_requests=1,tokens=1
           # Import a pre-upgrade schema as well; the new target can supply defaults.
           legacy="$RUNNER_TEMP/legacy.sql"
           cp "$dump" "$legacy"
           cat >> "$legacy" <<'SQL'
-          ALTER TABLE users DROP INDEX users_username_unique, DROP COLUMN username, DROP COLUMN is_superadmin, DROP COLUMN deleted_at;
+          ALTER TABLE users DROP INDEX users_username_unique, DROP COLUMN username, DROP COLUMN is_superadmin, DROP COLUMN deleted_at, DROP COLUMN can_check_stock;
           ALTER TABLE records DROP COLUMN compact_data, DROP COLUMN photo_version;
           SQL
           legacy_sha=$(sha256sum "$legacy" | cut -d' ' -f1)
           python3 deploy/vps/production/restore.py "$legacy" --sha256 "$legacy_sha" --check --counts "$valid"
-          if "${runner[@]}" --apply --counts "${valid/records=3/records=2}"; then exit 1; fi
+          if "${runner[@]}" --apply --counts "${valid/records=5/records=4}"; then exit 1; fi
           "${runner[@]}" --check --counts "$valid"
           "${runner[@]}" --apply --counts "$valid"
           if "${runner[@]}" --apply --counts "$valid"; then exit 1; fi

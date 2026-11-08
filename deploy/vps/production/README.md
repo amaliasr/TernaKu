@@ -4,6 +4,8 @@ Domain `ternaku.rstudiohub.com` sudah beralih dari hosting bersama ke project Do
 
 ## Merilis versi berikutnya
 
+Rilis pemeriksaan gudang harian memerlukan `php scripts/migrate-stock-checks.php` pada image API baru sebelum pergantian layanan, setelah snapshot SQL privat dibuat. Kolom `users.can_check_stock` bernilai awal `false`; admin menunjuk petugas lewat editor akun. Riwayat pemeriksaan dan penugasan disimpan sebagai record biasa dan ikut dicadangkan. Jangan menghapus kolom tambahan saat rollback. Alur persetujuan, koreksi panen, dan perlindungan transaksi baru dijelaskan di [STOCK-CHECKS.md](../../../api/STOCK-CHECKS.md).
+
 Rilis pengelolaan akun dan optimasi foto menambahkan kolom akun `is_superadmin`/`deleted_at` serta kolom generated `records.compact_data`/`photo_version`. Sebelum pergantian API, buat snapshot SQL privat, lalu jalankan `php scripts/migrate-account-policy.php` dan `php scripts/migrate-performance.php` menggunakan image API baru pada jaringan database yang sama. Data ringkas dihitung ketika catatan berubah; pembacaan dashboard tidak perlu memproses foto berulang. Foto asli tidak dihapus. Kedua migrasi aman diulang dan kolom tambahan tetap dipertahankan saat rollback aplikasi.
 
 Sesudah API baru aktif, lindungi akun pemilik dengan `php scripts/migrate-account-policy.php --user-id=ID_TERVERIFIKASI --expected-email=EMAIL_TERVERIFIKASI`. Cocokkan ID dan email dari database sebelum menjalankan perintah. Proteksi tidak dapat ditetapkan atau dicabut melalui formulir aplikasi. Akun admin yang sudah aktif mempertahankan sesinya saat ditandai sebagai superadmin.
