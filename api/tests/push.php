@@ -44,7 +44,7 @@ try {
     $bound=$push->subscribe('push_employee',$tokens['push_employee'],$subscription);
     checkPush($push->subscribe('push_employee',$tokens['push_employee'],$subscription)['binding_id']===$bound['binding_id'] && countPush('push_subscription')===1,'repeated subscribe preserves a single binding');
     $push->unsubscribe('push_other',['endpoint'=>$subscription['endpoint']]); checkPush(countPush('push_subscription')===1,'another user cannot remove a subscription');
-    $price=['skm_price'=>28000,'skm_new_price'=>35000,'cracked_price'=>0,'effective_at'=>date('c',time()+86400)];
+    $price=['good_price'=>28000,'cracked_price'=>0,'effective_at'=>date('c',time()+86400)];
     $state=$farm->command('price.create',$price,'push-price-uuid-1');
     checkPush(countPush('push_job')===1,'price save atomically adds an outbox job');
     $farm->command('price.create',$price,'push-price-uuid-1'); checkPush(countPush('push_job')===1,'same command UUID never enqueues twice');
@@ -53,8 +53,19 @@ try {
     $public=json_encode($farm->bootstrap()); checkPush(!str_contains($public,$subscription['endpoint']) && !str_contains($public,$browserKeys['publicKey']) && !str_contains($public,'push_job'),'bootstrap never leaks endpoints, encryption keys, or queue');
     $result=$push->drain(); checkPush($result['sent']===2 && count($deliveries)===2 && $deliveries[0]['tag']!==$deliveries[1]['tag'],'different price IDs produce distinct notifications');
     checkPush(str_contains($deliveries[0]['body'],'Gratis') && str_contains($deliveries[0]['body'],date('d/m/Y',time()+86400)),'free bentes and future effective date are explicit');
-    checkPush(str_contains($deliveries[0]['body'],'Telur SKM Rp28.000/kg') && str_contains($deliveries[0]['body'],'Telur SKM Baru Rp35.000/kg') && $deliveries[0]['skm_price']===28000 && $deliveries[0]['skm_new_price']===35000,'push snapshot names both independently priced SKM types');
+    checkPush(str_contains($deliveries[0]['body'],'Telur bagus (SKM dan SKM Baru) Rp28.000/kg') && $deliveries[0]['good_price']===28000 && $deliveries[0]['skm_price']===28000 && $deliveries[0]['skm_new_price']===28000,'push snapshot uses one good-egg price and equal compatibility aliases');
     checkPush($push->drain()['sent']===0,'delivered jobs are never resent by the next worker');
+    $legacyNotice=['id'=>'legacy-before-shared','skm_price'=>28000,'skm_new_price'=>35000,'cracked_price'=>0,'effective_at'=>date('c')];
+    $db->beginTransaction(); $push->enqueuePrice($legacyNotice); $db->commit();
+    checkPush($push->drain()['sent']===1,'a future shared schedule does not prematurely cancel existing-policy price notices');
+    $activeShared=array_replace($price,['effective_at'=>date('c',time()-1)]);
+    $farm->command('price.create',$activeShared,'shared-policy-active-one');
+    $db->beginTransaction(); $push->enqueuePrice(array_replace($legacyNotice,['id'=>'legacy-after-shared'])); $db->commit();
+    $oldJob=json_decode($db->query("SELECT data FROM records WHERE kind='push_job' AND JSON_UNQUOTE(JSON_EXTRACT(data,'$.payload.id'))='legacy-after-shared'")->fetchColumn(),true);
+    $farm->command('price.create',$activeShared,'shared-policy-active-two');
+    $result=$push->drain();
+    $cancelled=json_decode($db->query("SELECT data FROM records WHERE kind='push_cancelled' AND JSON_UNQUOTE(JSON_EXTRACT(data,'$.payload.id'))='legacy-after-shared'")->fetchColumn(),true);
+    checkPush($result['sent']===2 && $result['cancelled']===1 && $cancelled['cancel_reason']==='obsolete_pricing_policy' && $cancelled['payload']===$oldJob['payload'],'effective shared pricing cancels obsolete split notices without rewriting evidence or suppressing identical new-price events');
     $harvest=['date'=>date('Y-m-d'),'notes'=>'RAHASIA lokasi','items'=>[
         ['category'=>'skm','eggs'=>30,'kg'=>1.8],['category'=>'cracked','eggs'=>10,'kg'=>0.6],
     ]];

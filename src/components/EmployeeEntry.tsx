@@ -112,21 +112,21 @@ function CategoryButtons({
   stock?: Partial<Record<Category, Quantity>>;
   choices?: Category[];
 }) {
-  const visible: Category[] = [...NEW_EGG_TYPES, ...(choices.includes("good") ? ["good" as const] : [])];
+  const visible: Category[] = [...NEW_EGG_TYPES];
   const button = (category: Category) => {
     const remaining = stock?.[category];
     const unavailable = !choices.includes(category) || (remaining && (remaining.kg <= 0 || remaining.eggs <= 0));
     return <button type="button" key={category} disabled={Boolean(unavailable)}
       className={`${styles.category} ${category === value ? styles.selected : ""}`}
       aria-pressed={category === value} onClick={() => onChange(category)}>
-      <span><Egg size={23} /><strong>{category === "good" ? "Bagus lama · belum dibedakan" : EGG_TYPES[category].shortLabel}</strong>{category === value && <Check size={18} />}</span>
+      <span><Egg size={23} /><strong>{EGG_TYPES[category].shortLabel}</strong>{category === value && <Check size={18} />}</span>
       <small>{unavailable ? "Stok habis" : remaining ? `${quantity(remaining.kg)} kg · ${quantity(remaining.eggs)} butir` : ""}</small>
     </button>;
   };
   return <fieldset className={styles.categories}><legend>Jenis telur</legend>
     <p className={styles.typeGroup}>Telur Bagus</p>
     <div className={styles.twoColumns}>{visible.filter(c => c === "skm" || c === "skm_new").map(button)}</div>
-    <div className={styles.typeExtra}>{visible.filter(c => c === "cracked" || c === "good").map(button)}</div>
+    <div className={styles.typeExtra}>{visible.filter(c => c === "cracked").map(button)}</div>
   </fieldset>;
 }
 
@@ -432,7 +432,7 @@ function SaleEntry({ onSave, busy, onClose, saleStart }: Props) {
       {sourceField}
       {emptyMessage && <p className={styles.warning}>{emptyMessage}</p>}
       <div className={styles.priceBar} aria-label="Harga telur saat ini">
-        {NEW_EGG_TYPES.map(type => <div key={type}><span>{EGG_TYPES[type].shortLabel} / kg</span><strong>{eggTypePrice(price, type) === undefined ? "Belum diatur" : eggTypePrice(price, type) === 0 ? "Gratis" : money(eggTypePrice(price, type)!)}</strong></div>)}
+        {(["skm", "cracked"] as const).map(type => <div key={type}><span>{type === "skm" ? "Telur bagus" : "Telur bentes"} / kg</span><strong>{eggTypePrice(price, type) === undefined ? "Belum diatur" : eggTypePrice(price, type) === 0 ? "Gratis" : money(eggTypePrice(price, type)!)}</strong>{type === "skm" && <span>SKM & SKM Baru</span>}</div>)}
       </div>
       {missingPrice && <p className={styles.warning} role="alert">Harga jenis telur yang dipilih belum ditetapkan. Minta atasan mengisi harganya sebelum menjual.</p>}
       {priceSync.error && (

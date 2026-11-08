@@ -18,7 +18,7 @@ trait StockCheckWorkflow {
     }
     private function stockCheckQuantities(array $p,string $field): array {
         $values=$p[$field]??null;
-        if(!is_array($values) || count($values)!==count(EggTypes::ALL) || array_diff(array_keys($values),EggTypes::ALL)) throw new ApiProblem('Isi semua jenis telur, termasuk stok bagus lama, untuk '.($field==='warehouse_actual'?'gudang.':'panen hari ini.'));
+        if(!is_array($values) || count($values)!==count(EggTypes::ALL) || array_diff(array_keys($values),EggTypes::ALL)) throw new ApiProblem('Muat ulang aplikasi, lalu periksa SKM, SKM Baru, dan Bentes.');
         $out=[];
         foreach(EggTypes::ALL as $category) {
             $q=$values[$category]??null;
@@ -27,6 +27,7 @@ trait StockCheckWorkflow {
             if(($q['eggs']===0)!==($q['kg']===0.0)) throw new ApiProblem('Butir dan berat harus sama-sama nol atau sama-sama terisi.');
             $out[$category]=$q;
         }
+        if($out['good']['eggs']!==0 || $out['good']['kg']!=0 || $out['good']['trays']!==0) throw new ApiProblem('Telur bagus lama sudah menjadi SKM. Isi hitungannya pada kolom SKM, bukan kolom lama.');
         return $out;
     }
     private function stockCheckSame(array $a,array $b): bool {
@@ -86,7 +87,8 @@ trait StockCheckWorkflow {
         $before=$check; $reason=$decision==='reject'?$this->reason($p):$this->text($p,'reason',1000);
         if($decision==='approve') {
             if(($p['schema_version']??null)!==2) throw new ApiProblem('Perbarui aplikasi lalu tinjau semua jenis telur sebelum menyetujui pemeriksaan.',409);
-            if(($check['schema_version']??1)!==2) throw new ApiProblem('Jenis telur sudah berubah. Minta pemeriksaan baru untuk SKM, SKM Baru, bentes, dan stok bagus lama.',409);
+            if(($check['schema_version']??1)!==2) throw new ApiProblem('Muat ulang aplikasi, lalu periksa SKM, SKM Baru, dan Bentes.',409);
+            foreach(['warehouse_actual','harvest_actual'] as $field) foreach(['eggs','kg','trays'] as $key) if(($check[$field]['good'][$key]??0)!=0) throw new ApiProblem('Hitungan lama perlu diulang setelah semua telur bagus lama menjadi SKM.',409);
             $current=$this->stockCheckDetails($check['date']);
             if(array_column($current['productions'],'id')!==$check['production_ids']) throw new ApiProblem('Ada catatan panen baru setelah pemeriksaan. Minta karyawan menghitung ulang.',409);
             if(!$this->stockCheckSame($current['harvest'],$check['harvest_actual'])) throw new ApiProblem('Koreksi catatan panen satu per satu dahulu hingga totalnya sama dengan hasil hitung karyawan.',409);

@@ -137,7 +137,8 @@ export interface Sale extends InvoiceLedger {
 }
 export interface Price {
   id: string;
-  /** Historical rate for unclassified eggs; never copied to either SKM rate. */
+  pricing_mode?: "shared_good";
+  /** Common rate for both SKM types. Historical separate fields remain read-only. */
   good_price?: number;
   skm_price?: number;
   skm_new_price?: number;
@@ -220,6 +221,8 @@ export interface StockMovement {
   /** Older physical counts recorded only eggs and kilograms. */
   expected?: StockCountQuantity;
   physical?: StockCountQuantity;
+  /** Demo migration boundary: combines previously separate tray counters once. */
+  merged_trays_after?: number;
   reference_id: string;
   eggs: number;
   kg: number;
@@ -274,6 +277,7 @@ export interface StockCheckContext {
 }
 export interface StockCheck {
   schema_version?: number;
+  migration_invalidated_at?: string;
   id: string;
   user_id: string;
   date: string;

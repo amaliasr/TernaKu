@@ -7,9 +7,8 @@
 .priceRow strong small { font-size: calc(11px * var(--font-scale, 1)); font-weight: 400; margin-left: 4px; }
 .since, .note { grid-column: 1 / -1; color: var(--muted); font-size: calc(12px * var(--font-scale, 1)); line-height: 1.6; }
 .note { margin: 8px 0 0; }
-.legacy { padding: 20px; margin-bottom: 20px; }
-.legacy h2 { font-size: calc(15px * var(--font-scale, 1)); }
-.legacy p { color: var(--muted); font-size: calc(13px * var(--font-scale, 1)); margin: 8px 0 0; }
+.currentPrice { grid-column: 1 / -1; text-align: left !important; }
+.pollingNote { margin: -6px 0 20px; color: var(--muted); font-size: calc(12px * var(--font-scale, 1)); }
 .update { min-height: 48px; }
 @media (max-width: 700px) { .cards { grid-template-columns: 1fr; gap: 14px; } .group { padding: 16px; } }
 @media (max-width: 360px) { .priceRow { grid-template-columns: 1fr; } .priceRow strong { text-align: left; } }

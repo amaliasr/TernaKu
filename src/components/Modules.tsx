@@ -50,8 +50,7 @@ import type {
 } from "@/lib/types";
 import EntryModal from "./EntryModal";
 import Prices from "./Prices";
-import StockClassification from "./StockClassification";
-import { ALL_EGG_TYPES } from "@/lib/egg-types";
+import { NEW_EGG_TYPES } from "@/lib/egg-types";
 import { InvoiceDialog, InvoiceTasks } from "./InvoiceLedger";
 import ImagePreview from "./ImagePreview";
 import Avatar from "./Avatar";
@@ -235,13 +234,12 @@ function CategorySelect({
       <option value="">Semua kategori</option>
       <optgroup label="Telur Bagus"><option value="skm">Telur SKM</option><option value="skm_new">Telur SKM Baru</option></optgroup>
       <option value="cracked">Telur Bentes</option>
-      <option value="good">Telur bagus (belum dibedakan)</option>
     </select>
   );
 }
 function CategoryPill({ category }: { category: Category }) {
   return (
-    <Pill tone={category === "cracked" ? "warning" : category === "good" ? "neutral" : "success"}>
+    <Pill tone={category === "cracked" ? "warning" : "success"}>
       {categoryLabel(category)}
     </Pill>
   );
@@ -343,7 +341,7 @@ function ProductionPage({ open }: { open: OpenForm }) {
         b.date.localeCompare(a.date) ||
         b.created_at.localeCompare(a.created_at),
     );
-  const shownTypes = ALL_EGG_TYPES.filter(type => type !== "good" || rows.some(row => row.category === type));
+  const shownTypes = NEW_EGG_TYPES;
   const opened = state.productions.find((p) => p.id === detail);
   return (
     <>
@@ -736,7 +734,7 @@ function StockPage({ open }: { open: OpenForm }) {
   const [returned, setReturned] = useState<Pickup | null>(null);
   const [selected, setSelected] = useState<SelectedRecord | null>(null);
   const action = useAction();
-  const stocks = ALL_EGG_TYPES.map(type => ({ type, quantity: eggStock(state, type) })).filter(({type, quantity}) => type !== "good" || quantity.kg > 0 || quantity.eggs > 0 || quantity.trays > 0);
+  const stocks = NEW_EGG_TYPES.map(type => ({ type, quantity: eggStock(state, type) }));
   const carried = state.pickups.reduce(
     (sum, p) => sum + pickupBalance(state, p).kg,
     0,
@@ -856,7 +854,6 @@ function StockPage({ open }: { open: OpenForm }) {
         ]}
       />
       <StockChecks />
-      <StockClassification />
       <StockCount />
       <PendingHarvest />
       <section className="panel">

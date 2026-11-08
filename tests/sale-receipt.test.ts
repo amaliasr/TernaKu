@@ -132,3 +132,16 @@ test("fallback receipt matches an omitted count only when it was estimated", () 
   assert.equal(findSavedSale(state([counted, estimated]), "employee", weighed), estimated);
   assert.equal(findSavedSale(state([counted, estimated]), "employee", payload), counted);
 });
+
+
+test("migrated SKM receipt matches a frozen good payload only with a bounded unambiguous fallback", () => {
+  const migrated = sale("migrated", { items: [{ ...sale("migrated").items[0], category: "skm" }] });
+  assert.equal(findSavedSale(state([migrated], migrated.id), "employee", payload, requestId), migrated);
+  assert.equal(findSavedSale(state([migrated]), "employee", payload, requestId, []), migrated);
+  assert.equal(findSavedSale(state([migrated]), "employee", payload), null);
+  assert.equal(findSavedSale(state([migrated]), "employee", payload, requestId), null);
+  const ambiguous = { ...migrated, id: "another" };
+  assert.equal(findSavedSale(state([migrated, ambiguous]), "employee", payload, requestId, []), null);
+  const different = { ...migrated, items: [{ ...migrated.items[0], category: "skm_new" as const }] };
+  assert.equal(findSavedSale(state([different]), "employee", payload, requestId, []), null);
+});

@@ -37,7 +37,7 @@ import {
 } from "@/lib/export";
 import { adjustmentMethodLabel, categoryLabel, methodLabel } from "./ModuleUI";
 import { inReportRange, reportRange, reportRangeError, type ReportPreset } from "@/lib/report-range";
-import { ALL_EGG_TYPES, eggTypeLabel } from "@/lib/egg-types";
+import { NEW_EGG_TYPES, canonicalEggType, eggTypeLabel } from "@/lib/egg-types";
 import { eggSummaryRows, saleInvoiceTotals, summarizeEggTypes } from "@/lib/egg-report";
 import styles from "./Reports.module.css";
 
@@ -59,13 +59,9 @@ export default function Reports() {
   const saleItems = sales.flatMap(sale => sale.items);
   const harvestSummary = summarizeEggTypes(production);
   const saleSummary = summarizeEggTypes(saleItems);
-  const summaryTypes = ALL_EGG_TYPES.filter(type => type !== "good" || harvestSummary.hasLegacy || saleSummary.hasLegacy);
-  const currentStockTypes = ALL_EGG_TYPES.filter(type => {
-    const q = eggStock(state, type);
-    return type !== "good" || q.eggs !== 0 || q.kg !== 0 || q.trays !== 0;
-  });
-  const closingStockRows = ALL_EGG_TYPES.map(type => ({ type, stock: closingEggStock(state, type, to) }))
-    .filter(({ type, stock }) => type !== "good" || !stock || stock.eggs !== 0 || stock.kg !== 0);
+  const summaryTypes = NEW_EGG_TYPES;
+  const currentStockTypes = NEW_EGG_TYPES;
+  const closingStockRows = NEW_EGG_TYPES.map(type => ({ type, stock: closingEggStock(state, type, to) }));
   const employee = (id: string) =>
     state.users.find((u) => u.id === id)?.name || "Karyawan";
   const tables: ReportTable[] = [
@@ -108,7 +104,7 @@ export default function Reports() {
     {
       name: "Rincian item penjualan",
       columns: ["Nomor nota", "Tanggal & jam (WIB)", "Karyawan", "Pelanggan", "Jenis telur", "Butir", "Berat (kg)", "Krat", "Harga transaksi (Rp/kg)", "Nilai item (Rp)"],
-      rows: sales.flatMap(sale => sale.items.map(item => [sale.number, sale.date, employee(sale.user_id), sale.customer || "Umum", eggTypeLabel(item.category), item.eggs, item.kg, item.trays, item.unit_price, item.total])),
+      rows: sales.flatMap(sale => sale.items.map(item => [sale.number, sale.date, employee(sale.user_id), sale.customer || "Umum", eggTypeLabel(canonicalEggType(item.category)), item.eggs, item.kg, item.trays, item.unit_price, item.total])),
     },
     {
       name: "Produksi",
@@ -128,7 +124,7 @@ export default function Reports() {
         p.created_at,
         employee(p.user_id),
         state.barns.find((b) => b.id === p.barn_id)?.name || "-",
-        categoryLabel(p.category),
+        categoryLabel(canonicalEggType(p.category)),
         p.eggs,
         p.kg,
         p.trays,
@@ -233,7 +229,7 @@ export default function Reports() {
           m.date,
           m.created_at,
           employee(m.user_id),
-          categoryLabel(m.category),
+          categoryLabel(canonicalEggType(m.category)),
           {
             production: "Produksi",
             pickup: "Pengambilan",
@@ -268,7 +264,7 @@ export default function Reports() {
       rows: (state.stock_movements ?? [])
         .filter(m => m.kind === "reconcile" && inRange(m.date))
         .map(m => [
-          m.created_at, employee(m.user_id), categoryLabel(m.category), adjustmentMethodLabel(m.method),
+          m.created_at, employee(m.user_id), categoryLabel(canonicalEggType(m.category)), adjustmentMethodLabel(m.method),
           m.expected?.eggs ?? "—", m.eggs, m.physical?.eggs ?? "—",
           m.expected?.kg ?? "—", m.kg, m.physical?.kg ?? "—",
           m.expected?.trays ?? "—", m.physical?.trays === undefined ? "—" : m.trays, m.physical?.trays ?? "—",
@@ -410,7 +406,7 @@ export default function Reports() {
         Target dibandingkan dengan omzet pada periode yang dipilih.
       </p>
       <p className="report-caption">{REPORT_TIME_NOTE}</p>
-      <p className="report-caption">Subtotal bagus hanya menjumlahkan SKM dan SKM Baru. Telur bagus lama yang belum dibedakan tetap ditampilkan terpisah. Pembayaran dan piutang dihitung sekali per nota.</p>
+      <p className="report-caption">Subtotal bagus menjumlahkan SKM dan SKM Baru. Catatan telur bagus lama termasuk SKM. Pembayaran dan piutang dihitung sekali per nota; harga transaksi lama tetap tersimpan.</p>
       <div className="report-stats">
         <div className="metric-card">
           <p>Omzet penjualan</p>

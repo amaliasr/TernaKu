@@ -1,7 +1,7 @@
 import { eggStock, number, pickupBalance } from "./domain";
 import { resolveSaleEggs, saleEggCount } from "./sale-eggs";
 import type { Category, Quantity, Sale, State } from "./types";
-import { ALL_EGG_TYPES } from "./egg-types";
+import { NEW_EGG_TYPES, canonicalEggType } from "./egg-types";
 
 export type SaleStockSource = NonNullable<Sale["stock_source"]>;
 type LineStock = { pickup_id: string; category?: Category };
@@ -10,11 +10,12 @@ export const saleSourceLabel = (source?: SaleStockSource) =>
   source === "warehouse" ? "Stok gudang" : "Telur yang dibawa";
 
 export function saleStockKey(line: LineStock, source: SaleStockSource) {
-  return source === "warehouse" ? line.category ?? "" : line.pickup_id;
+  if (source === "pickup") return line.pickup_id;
+  return line.category ? canonicalEggType(line.category) : "";
 }
 
 export function warehouseSaleOptions(state: State) {
-  return ALL_EGG_TYPES
+  return NEW_EGG_TYPES
     .map(category => ({ id: category, category, balance: eggStock(state, category), area: "Gudang", date: "" }))
     .filter(option => option.balance.eggs > 0 && option.balance.kg > 0);
 }
@@ -22,7 +23,7 @@ export function warehouseSaleOptions(state: State) {
 export function availableSalePickups(state: State, userId?: string) {
   return state.pickups
     .filter((pickup) => pickup.user_id === userId)
-    .map((pickup) => ({ ...pickup, balance: pickupBalance(state, pickup) }))
+    .map((pickup) => ({ ...pickup, category: canonicalEggType(pickup.category), balance: pickupBalance(state, pickup) }))
     .filter((pickup) => pickup.balance.eggs > 0 && pickup.balance.kg > 0);
 }
 

@@ -33,7 +33,7 @@ import { draftKey, type DraftAttempt } from "@/lib/entry-drafts";
 import Photo from "./PhotoUpload";
 import { SaleDetail } from "./RecordDialogs";
 import { normalizeUsername } from "@/lib/usernames";
-import { NEW_EGG_TYPES, EGG_TYPES, eggTypePrice } from "@/lib/egg-types";
+import { eggTypePrice } from "@/lib/egg-types";
 import UsernameInput, { optionalUsernameHint } from "./UsernameInput";
 import PasswordInput from "./PasswordInput";
 import {
@@ -577,21 +577,19 @@ function PriceForm({ onSave, busy, onClose }: FormProps) {
         e.preventDefault();
         const data = dataFrom(e.currentTarget);
         void onSave("price.create", {
-          skm_price: Number(data.skm_price),
-          skm_new_price: Number(data.skm_new_price),
+          good_price: Number(data.good_price),
           cracked_price: Number(data.cracked_price),
           effective_at: `${data.effective_at}:00+07:00`,
         });
       }}
     >
       <div className="row g-3">
-        <div className="col-12"><h3 className="h6 mb-0">Telur Bagus</h3></div>
-        {NEW_EGG_TYPES.map(type => <div key={type} className={type === "cracked" ? "col-12" : "col-sm-6"}>
-          {type === "cracked" && <h3 className="h6 mt-2 mb-3">Telur Bentes</h3>}
-          <Field className="d-block"
-          label={`${categoryLabel(type)} (Rp/kg)`} hint={type === "cracked" ? "Isi 0 jika telur bentes diberikan gratis." : undefined}>
-          <input name={EGG_TYPES[type].priceKey} className="form-control" type="number" min={type === "cracked" ? "0" : "1"} step="1" defaultValue={eggTypePrice(price, type)} required />
-        </Field></div>)}
+        <Field className="col-sm-6" label="Harga telur bagus (Rp/kg)" hint="Satu harga untuk Telur SKM dan Telur SKM Baru.">
+          <input name="good_price" className="form-control" type="number" min="1" step="1" defaultValue={eggTypePrice(price, "skm")} required />
+        </Field>
+        <Field className="col-sm-6" label="Harga telur bentes (Rp/kg)" hint="Isi 0 jika telur bentes diberikan gratis.">
+          <input name="cracked_price" className="form-control" type="number" min="0" step="1" defaultValue={eggTypePrice(price, "cracked")} required />
+        </Field>
         <Field
           className="col-12"
           label="Mulai berlaku (WIB)"

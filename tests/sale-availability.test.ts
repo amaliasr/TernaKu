@@ -58,10 +58,10 @@ test("sale drafts use the latest owned pickup balance, including multiple lines 
 
 test("weighed sales reserve counted eggs first and keep estimates separate across sources", () => {
   const options = [
-    { id: "good", balance: { eggs: 45, kg: 10, trays: 0 } },
+    { id: "skm", balance: { eggs: 45, kg: 10, trays: 0 } },
     { id: "cracked", balance: { eggs: 10, kg: 0.5, trays: 0 } },
   ];
-  const good = { pickup_id: "", category: "good" as const, kg: "7", eggs: "" };
+  const good = { pickup_id: "", category: "skm" as const, kg: "7", eggs: "" };
   const cracked = { ...good, category: "cracked" as const };
   const draft = [good, { ...cracked, eggs: "", kg: "0.05" }, { ...cracked, eggs: "5", kg: "0.4" }, { ...cracked, eggs: "", kg: "0.05" }];
   const preview = saleStockPreview(draft, options, "warehouse");
@@ -81,9 +81,9 @@ test("weighed sales reserve counted eggs first and keep estimates separate acros
 
 test("warehouse options use the current farm inventory and exclude categories with no saleable eggs", () => {
   const state = createDemoState(new Date("2026-11-06T03:00:00Z"));
-  state.inventory = { ...emptyEggQuantities(), good: { eggs: 8, kg: 0.48, trays: 0 }, cracked: { eggs: 0, kg: 0, trays: 1 } };
+  state.inventory = { ...emptyEggQuantities(), skm: { eggs: 8, kg: 0.48, trays: 0 }, cracked: { eggs: 0, kg: 0, trays: 1 } };
   const options = warehouseSaleOptions(state);
-  assert.deepEqual(options.map(o => [o.id, o.category, o.balance]), [["good", "good", state.inventory.good]]);
+  assert.deepEqual(options.map(o => [o.id, o.category, o.balance]), [["skm", "skm", state.inventory.skm]]);
   const line = { pickup_id: "p-123", category: "cracked" as const, eggs: "1", kg: "0.05" };
   assert.equal(saleStockKey(line, "warehouse"), "cracked");
   assert.equal(saleStockKey(line, "pickup"), "p-123");
@@ -92,14 +92,24 @@ test("warehouse options use the current farm inventory and exclude categories wi
 
 test("warehouse form aggregates quantities by category, including crates, without consuming a pickup", () => {
   const options = [
-    { id: "good", balance: { eggs: 30, kg: 1.8, trays: 2 } },
+    { id: "skm", balance: { eggs: 30, kg: 1.8, trays: 2 } },
     { id: "cracked", balance: { eggs: 10, kg: 0.6, trays: 1 } },
   ];
-  const line = { pickup_id: "", category: "good" as const, eggs: "15", kg: "0.9", trays: "1" };
+  const line = { pickup_id: "", category: "skm" as const, eggs: "15", kg: "0.9", trays: "1" };
   const other = { ...line, category: "cracked" as const, eggs: "10", kg: "0.6" };
   assert.equal(saleStockIssues([line, line, other], options, "warehouse").size, 0);
   for (const changed of [{ eggs: "16" }, { kg: "0.901" }, { trays: "2" }])
-    assert.match(saleStockIssues([line, { ...line, ...changed }], options, "warehouse").get("good")!, /Di gudang tersisa/);
-  assert.match(saleStockIssues([line, { ...line, kg: "0.899" }], options, "warehouse").get("good")!, /sisakan butir/);
-  assert.equal(saleStockIssues([{ ...line, pickup_id: "good", trays: "3" }], options, "pickup").size, 0);
+    assert.match(saleStockIssues([line, { ...line, ...changed }], options, "warehouse").get("skm")!, /Di gudang tersisa/);
+  assert.match(saleStockIssues([line, { ...line, kg: "0.899" }], options, "warehouse").get("skm")!, /sisakan butir/);
+  assert.equal(saleStockIssues([{ ...line, pickup_id: "skm", trays: "3" }], options, "pickup").size, 0);
+});
+
+test("editable good drafts resolve to SKM and share its stock limit without rewriting the original fields", () => {
+  const oldLine = { pickup_id: "", category: "good" as const, kg: "0.6", eggs: "10", trays: "0" };
+  const newLine = { ...oldLine, category: "skm" as const };
+  const before = structuredClone(oldLine);
+  const options = [{ id: "skm", balance: { eggs: 15, kg: 0.9, trays: 0 } }];
+  assert.equal(saleStockKey(oldLine, "warehouse"), "skm");
+  assert.match(saleStockIssues([oldLine, newLine], options, "warehouse").get("skm")!, /Kurangi jumlah/);
+  assert.deepEqual(oldLine, before);
 });

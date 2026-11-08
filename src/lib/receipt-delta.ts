@@ -1,5 +1,5 @@
 import type { Pickup, PickupBalance, Sale, State, StockMovement } from "./types";
-import { ALL_EGG_TYPES, emptyEggQuantities, isEggType } from "./egg-types";
+import { ALL_EGG_TYPES, emptyEggQuantities, isEggType, canonicalEggType } from "./egg-types";
 
 interface ReceiptDelta {
   mode: "sale_receipt";
@@ -32,11 +32,8 @@ export function isReceiptDelta(data: unknown, userId: string, requestId: string 
     if (pickups.length || Object.keys(balances).length || sale.items.some(i => i.pickup_id !== "")
       || !obj(data.inventory) || !Array.isArray(data.stock_movements)) return false;
     const inventory = data.inventory;
-    const newTypes = sale.items.some(item => item.category === "skm" || item.category === "skm_new");
-    const required = newTypes ? ALL_EGG_TYPES : ["good", "cracked"];
     if (!ALL_EGG_TYPES.every(category => {
       const q = inventory[category];
-      if (q === undefined && !required.includes(category)) return true;
       return obj(q) && quantity(q) && ["kg","eggs","trays"].every(k => Number(q[k]) >= 0);
     })) return false;
     const categories = new Set(sale.items.map(i => i.category));
@@ -63,9 +60,10 @@ export function isReceiptDelta(data: unknown, userId: string, requestId: string 
 }
 
 export function mergeReceiptDelta(state: State, delta: ReceiptDelta): State {
-  const sales = state.sales.some(s => s.id === delta.sale.id)
-    ? state.sales.map(s => s.id === delta.sale.id ? delta.sale : s) : [delta.sale, ...state.sales];
-  const updated = new Map(delta.pickups.map(p => [p.id, p]));
+  const sale = { ...delta.sale, items: delta.sale.items.map(item => ({ ...item, category: canonicalEggType(item.category) })) };
+  const sales = state.sales.some(s => s.id === sale.id)
+    ? state.sales.map(s => s.id === sale.id ? sale : s) : [sale, ...state.sales];
+  const updated = new Map(delta.pickups.map(p => [p.id, { ...p, category: canonicalEggType(p.category) }]));
   const pickups = state.pickups.map(p => {
     const next = updated.get(p.id);
     updated.delete(p.id);
@@ -75,11 +73,20 @@ export function mergeReceiptDelta(state: State, delta: ReceiptDelta): State {
   // quantities locally: the same receipt may be replayed after a lost response.
   const warehouse = delta.sale.stock_source === "warehouse" && delta.inventory && delta.stock_movements;
   const movementIds = new Set(warehouse ? warehouse.map(m => m.id) : []);
+  const inventory = warehouse && delta.inventory ? { ...emptyEggQuantities(), ...delta.inventory } : undefined;
+  if (inventory) {
+    inventory.skm = {
+      eggs: inventory.skm.eggs + inventory.good.eggs,
+      kg: Math.round((inventory.skm.kg + inventory.good.kg) * 1000) / 1000,
+      trays: inventory.skm.trays + inventory.good.trays,
+    };
+    inventory.good = { eggs: 0, kg: 0, trays: 0 };
+  }
   return { ...state, command_result: delta.command_result,
     sales,
     ...(warehouse ? {
-      inventory: { ...emptyEggQuantities(), ...state.inventory, ...delta.inventory },
-      stock_movements: [...warehouse, ...(state.stock_movements || []).filter(m => !movementIds.has(m.id))],
+      inventory,
+      stock_movements: [...warehouse.map(m => ({ ...m, category: canonicalEggType(m.category) })), ...(state.stock_movements || []).filter(m => !movementIds.has(m.id))],
     } : {}),
     pickups: [...updated.values(), ...pickups],
     pickup_balances: { ...state.pickup_balances, ...delta.pickup_balances },

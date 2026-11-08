@@ -1,12 +1,12 @@
 import type { Category, Quantity, Sale, SaleItem } from "./types";
-import { ALL_EGG_TYPES, NEW_EGG_TYPES, eggTypeLabel } from "./egg-types";
+import { ALL_EGG_TYPES, NEW_EGG_TYPES, canonicalEggType, eggTypeLabel } from "./egg-types";
 
 type EggRecord = Quantity & { category: Category; total?: number };
 export type EggReportCount = Quantity & { amount: number };
 const empty = (): EggReportCount => ({ eggs: 0, kg: 0, trays: 0, amount: 0 });
 const kgSum = (a: number, b: number) => (Math.round(a * 1000) + Math.round(b * 1000)) / 1000;
 
-/** Only leaf types are added. The Bagus subtotal never consumes legacy stock. */
+/** Legacy good records are SKM; prices and amounts remain their original snapshots. */
 export function summarizeEggTypes(records: readonly EggRecord[]) {
   const byType = Object.fromEntries(ALL_EGG_TYPES.map(type => [type, empty()])) as Record<Category, EggReportCount>;
   const add = (target: EggReportCount, record: EggRecord | EggReportCount) => {
@@ -15,7 +15,7 @@ export function summarizeEggTypes(records: readonly EggRecord[]) {
     target.trays += record.trays;
     target.amount += "amount" in record ? record.amount : record.total ?? 0;
   };
-  for (const record of records) add(byType[record.category], record);
+  for (const record of records) add(byType[canonicalEggType(record.category)], record);
   const bagus = empty(), total = empty();
   add(bagus, byType.skm);
   add(bagus, byType.skm_new);
@@ -28,7 +28,6 @@ export function eggSummaryRows(records: readonly EggRecord[], withAmount = false
   const row = (label: string, q: EggReportCount) => [label, q.eggs, q.kg, q.trays, ...(withAmount ? [q.amount] : [])];
   return [
     ...NEW_EGG_TYPES.map(type => row(eggTypeLabel(type), summary.byType[type])),
-    ...(summary.hasLegacy ? [row(eggTypeLabel("good"), summary.byType.good)] : []),
     row("Subtotal bagus (SKM + SKM Baru)", summary.bagus),
     row("Total seluruh telur", summary.total),
   ];
@@ -40,5 +39,5 @@ export function saleInvoiceTotals(sales: readonly Sale[]) {
 }
 
 export function receiptEggLabel(item: Pick<SaleItem, "category" | "unit_price">): string {
-  return `${eggTypeLabel(item.category)}${item.category === "cracked" && item.unit_price === 0 ? " - Gratis" : ""}`;
+  return `${eggTypeLabel(canonicalEggType(item.category))}${item.category === "cracked" && item.unit_price === 0 ? " - Gratis" : ""}`;
 }

@@ -58,7 +58,7 @@ function fixture(crackedPrice = 18000): State {
   s.prices = [
     {
       id: "price",
-      skm_new_price: 29000, skm_price: 28000,
+      good_price: 28000,
       cracked_price: crackedPrice,
       effective_at: `${DATE}T00:00:00+07:00`,
       created_at: NOW.toISOString(),
@@ -224,7 +224,7 @@ test("free cracked eggs require a named recipient and reject any overpayment ato
 test("zero daily cracked price automatically records a free snapshot while good price must remain positive", () => {
   let source = crackedPickup("a");
   const price = {
-    skm_new_price: 29000, skm_price: 28000,
+    good_price: 28000,
     cracked_price: 0,
     effective_at: NOW.toISOString(),
   };
@@ -233,7 +233,7 @@ test("zero daily cracked price automatically records a free snapshot while good 
     /hanya untuk admin/,
   );
   assert.throws(
-    () => cmd(source, "admin", "price.create", { ...price, skm_new_price: 29000, skm_price: 0 }),
+    () => cmd(source, "admin", "price.create", { ...price, good_price: 0 }),
     /lebih dari nol/,
   );
   assert.throws(
@@ -293,7 +293,7 @@ test("free price and recipient snapshots survive later prices and quantity corre
   const transaction = source.sales[0];
   const item = transaction.items[0];
   source = cmd(source, "admin", "price.create", {
-    skm_new_price: 29000, skm_price: 32000,
+    good_price: 32000,
     cracked_price: 22000,
     effective_at: NOW.toISOString(),
   });
@@ -407,7 +407,7 @@ test("employees cannot sell another employees pickup or change prices", () => {
   assert.throws(
     () =>
       cmd(s, "a", "price.create", {
-        skm_new_price: 29000, skm_price: 1,
+        good_price: 1,
         cracked_price: 1,
         effective_at: DATE,
       }),
@@ -419,12 +419,12 @@ test("scheduled prices activate at Jakarta time and existing snapshots never cha
   s = sale(s, s.pickups[0].id);
   const oldTotal = s.sales[0].total;
   s = cmd(s, "admin", "price.create", {
-    skm_new_price: 29000, skm_price: 30000,
+    good_price: 30000,
     cracked_price: 20000,
     effective_at: "2026-10-14T00:00",
   });
-  assert.equal(activePrice(s, NOW)?.skm_price, 28000);
-  assert.equal(activePrice(s, "2026-10-13T17:00:00Z")?.skm_price, 30000);
+  assert.equal(activePrice(s, NOW)?.good_price, 28000);
+  assert.equal(activePrice(s, "2026-10-13T17:00:00Z")?.good_price, 30000);
   assert.equal(s.sales[0].total, oldTotal);
   assert.equal(s.sales[0].items[0].unit_price, 28000);
   assert.equal(s.notifications.filter(n => n.title === "Harga telur dijadwalkan").length, s.users.length);
@@ -445,7 +445,7 @@ test("a stale displayed price must be reviewed before a sale can be confirmed", 
   let s = take(fixture());
   const oldId = s.prices[0].id;
   s = cmd(s, "admin", "price.create", {
-    skm_new_price: 29000, skm_price: 30000,
+    good_price: 30000,
     cracked_price: 19000,
     effective_at: DATE,
   });
@@ -665,7 +665,7 @@ test("sale quantity correction preserves original prices and payment while recom
   const original = s.sales[0];
   const warehouse = eggStock(s);
   s = cmd(s, "admin", "price.create", {
-    skm_new_price: 29000, skm_price: 31000,
+    good_price: 31000,
     cracked_price: 21000,
     effective_at: DATE,
   });
@@ -1039,20 +1039,20 @@ test("optional production source and dated signed stock ledger preserve correcti
 test("same-instant price replacements use the newest record and reject impossible calendar dates", () => {
   let s = fixture();
   s = cmd(s, "admin", "price.create", {
-    skm_new_price: 29000, skm_price: 29000,
+    good_price: 29000,
     cracked_price: 19000,
     effective_at: DATE,
   });
   s = cmd(s, "admin", "price.create", {
-    skm_new_price: 29000, skm_price: 30000,
+    good_price: 30000,
     cracked_price: 20000,
     effective_at: DATE,
   });
-  assert.equal(activePrice(s, NOW)?.skm_price, 30000);
+  assert.equal(activePrice(s, NOW)?.good_price, 30000);
   assert.throws(
     () =>
       cmd(s, "admin", "price.create", {
-        skm_new_price: 29000, skm_price: 29000,
+        good_price: 29000,
         cracked_price: 19000,
         effective_at: "2026-02-31T00:00",
       }),
@@ -1082,7 +1082,7 @@ test("demo seed is internally consistent, recent, and has no incentive or cattle
     assert.equal(sale.balance, sale.total - sale.paid);
   }
   assert.equal(s.productions.at(-1)?.date, DATE);
-  assert.equal(activePrice(s, NOW)?.skm_price, 28000);
+  assert.equal(activePrice(s, NOW)?.good_price, 28000);
 });
 
 const signupInput: RegistrationInput = {

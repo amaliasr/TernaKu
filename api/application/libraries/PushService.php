@@ -146,7 +146,7 @@ class PushService {
     public function enqueuePrice(array $price): void {
         $payload=['type'=>'price.updated','id'=>$price['id'],'tag'=>'price-'.$price['id'],'title'=>'Harga telur diperbarui',
             'body'=>EggTypes::priceMessage($price),'url'=>'/','effective_at'=>$price['effective_at']];
-        foreach(EggTypes::PRICE_FIELDS as $field) if(array_key_exists($field,$price)) $payload[$field]=$price[$field];
+        foreach(['good_price','skm_price','skm_new_price','cracked_price','pricing_mode'] as $field) if(array_key_exists($field,$price)) $payload[$field]=$price[$field];
         $this->broadcast($payload,$this->activeRecipients());
     }
     public function activeRecipients(): array {
@@ -230,7 +230,10 @@ class PushService {
                 $raw=$this->query("SELECT data FROM records WHERE id=? AND kind='push_subscription' AND user_id=?",[$job['subscription_id'],$job['user_id']])->fetchColumn();
                 $sub=$raw?json_decode($raw,true,512,JSON_THROW_ON_ERROR):null;
                 $kind='push_cancelled';
-                if($sub && $sub['binding_id']===$job['binding_id'] && $this->active($job['user_id']) && $job['expires_at']>time() &&
+                $obsoletePrice=($job['payload']['type']??null)==='price.updated' && ($job['payload']['pricing_mode']??null)!=='shared_good'
+                    && $this->query("SELECT id FROM records WHERE kind='price' AND occurred_at<=NOW() AND JSON_UNQUOTE(JSON_EXTRACT(compact_data,'$.pricing_mode'))='shared_good' LIMIT 1")->fetchColumn()!==false;
+                if($obsoletePrice) $job['cancel_reason']='obsolete_pricing_policy';
+                if(!$obsoletePrice && $sub && $sub['binding_id']===$job['binding_id'] && $this->active($job['user_id']) && $job['expires_at']>time() &&
                     (!isset($sub['subscription']['platform']) || $this->liveSession($job['user_id'],$sub['session_hash']))) {
                     try { $report=$this->deliver($sub['subscription'],$job['payload']); }
                     catch(Throwable $e) { $report=['success'=>false,'expired'=>false,'status'=>0]; }

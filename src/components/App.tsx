@@ -37,7 +37,7 @@ import {
 } from "lucide-react";
 import { FarmProvider, useFarm } from "@/lib/store";
 import { activePrice, dateLabel, money } from "@/lib/domain";
-import { NEW_EGG_TYPES, EGG_TYPES, eggTypePrice } from "@/lib/egg-types";
+import { eggTypePrice } from "@/lib/egg-types";
 import { normalizeUsername } from "@/lib/usernames";
 import { accountRoleLabel } from "@/lib/account-policy";
 import UsernameInput, { optionalUsernameHint } from "./UsernameInput";
@@ -1122,7 +1122,7 @@ function Workspace() {
                 </div>
               ))}
               <div className="notice-box">
-                Harga aktif: {NEW_EGG_TYPES.map(type => `${EGG_TYPES[type].shortLabel} ${eggTypePrice(price, type) === undefined ? "belum diatur" : eggTypePrice(price, type) === 0 ? "Gratis" : `${money(eggTypePrice(price, type)!)}/kg`}`).join(" · ")}.
+                Harga aktif: {(["skm", "cracked"] as const).map(type => `${type === "skm" ? "Bagus (SKM & SKM Baru)" : "Bentes"} ${eggTypePrice(price, type) === undefined ? "belum diatur" : eggTypePrice(price, type) === 0 ? "Gratis" : `${money(eggTypePrice(price, type)!)}/kg`}`).join(" · ")}.
               </div>
               {mode === "demo" && (
                 <p className="small text-muted mt-3">

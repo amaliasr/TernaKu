@@ -263,8 +263,8 @@ try {
     $s=cmd('user.update',['id'=>$sari['id'],'name'=>'Sari'],$a); check(first($s,'users',fn($u)=>$u['id']===$sari['id'])['photo']===$legacyPhoto,'admin name-only edit preserves oversized legacy profile without resubmitting image');
     $s=cmd('user.update',['id'=>$sari['id'],'email'=>'sari@test.local','photo'=>'','target'=>5000000],$a);
     check(first($s,'users',fn($u)=>$u['id']===$sari['id'])['photo']==='' && !isset(first(req('/bootstrap?compact=1',[],$a,'GET'),'users',fn($u)=>$u['id']===$sari['id'])['photo_ref']),'explicit empty employee photo removes image and compact reference');
-    cmd('price.create',['skm_price'=>28000,'skm_new_price'=>28000,'cracked_price'=>18000,'effective_at'=>'2026-01-01T00:00:00+07:00'],$e,403); check(true,'employee cannot change prices');
-    $s=cmd('price.create',['skm_price'=>28000,'skm_new_price'=>28000,'cracked_price'=>18000,'effective_at'=>'2026-01-01T00:00:00+07:00'],$a);
+    cmd('price.create',['good_price'=>28000,'cracked_price'=>18000,'effective_at'=>'2026-01-01T00:00:00+07:00'],$e,403); check(true,'employee cannot change prices');
+    $s=cmd('price.create',['good_price'=>28000,'cracked_price'=>18000,'effective_at'=>'2026-01-01T00:00:00+07:00'],$a);
     $s=cmd('barn.create',['name'=>'Kandang A','type'=>'ayam','capacity'=>1000,'notes'=>''],$a); $barn=$s['barns'][0]['id'];
     $baseProd=['date'=>date('Y-m-d'),'barn_id'=>$barn,'category'=>'skm','eggs'=>1000,'kg'=>60,'trays'=>6,'notes'=>'Panen'];
     $s=cmd('production.create',$baseProd,$e); $prod=$s['productions'][0]['id']; check($s['inventory']['skm']['eggs']===1000 && $s['inventory']['skm']['kg']==60,'production increases shared warehouse');
@@ -305,9 +305,9 @@ try {
     $legacyChanged=first($s,'sales',fn($r)=>$r['id']===$sale['id']); check($legacyChanged['notes']==='Legacy sale note' && $legacyChanged['photo']==='' && $legacyChanged['customer']==='','unrelated corrections do not require retroactive documentation on legacy sales');
     cmd('sale.create',$salePayload,$other,403); check(true,'other employee cannot sell owned pickup');
     cmd('sale.create',array_replace($salePayload,['items'=>[$salePayload['items'][0],$salePayload['items'][0]]]),$e,422); check(true,'duplicate pickup lines cannot oversell');
-    $s=cmd('price.create',['skm_price'=>31000,'skm_new_price'=>31000,'cracked_price'=>20000,'effective_at'=>'2026-01-02T00:00:00+07:00'],$a);
+    $s=cmd('price.create',['good_price'=>31000,'cracked_price'=>20000,'effective_at'=>'2026-01-02T00:00:00+07:00'],$a);
     $old=first($s,'sales',fn($r)=>$r['id']===$sale['id']); check($old['items'][0]['unit_price']===28000 && $old['total']===504000,'old price snapshot immutable after price change');
-    cmd('price.create',['skm_price'=>99000,'skm_new_price'=>99000,'cracked_price'=>99000,'effective_at'=>'2099-01-01T00:00:00+07:00'],$a);
+    cmd('price.create',['good_price'=>99000,'cracked_price'=>99000,'effective_at'=>'2099-01-01T00:00:00+07:00'],$a);
     $s=cmd('sale.create',array_replace($salePayload,['items'=>[['pickup_id'=>$pickup,'category'=>'skm','eggs'=>100,'kg'=>6,'trays'=>1]],'paid'=>0]),$e); $new=first($s,'sales',fn($r)=>$r['id']!==$sale['id']); check($new['items'][0]['unit_price']===31000,'future price inactive until effective time');
     cmd('pickup.return',['id'=>$pickup,'eggs'=>100,'kg'=>12,'trays'=>1,'notes'=>'Tidak terjual'],$e,422); check(true,'return cannot strand an egg-only pickup remainder');
     $s=cmd('pickup.return',['id'=>$pickup,'eggs'=>200,'kg'=>12,'trays'=>1,'notes'=>'Tidak terjual'],$e); check($s['inventory']['skm']['kg']==36 && $s['inventory']['skm']['eggs']===600,'return restores only unsold stock');
@@ -391,10 +391,10 @@ try {
         if($role==='employee') {
             cmd('sale.create',$gift,$e,422);
             check(businessSnapshot()===$snapshot,'an employee cannot waive a positive price on carried eggs or consume their pickup balance');
-            cmd('price.create',['skm_price'=>0,'skm_new_price'=>0,'cracked_price'=>0,'effective_at'=>'2026-02-01T00:00:00+07:00'],$a,422);
-            cmd('price.create',['skm_price'=>31000,'skm_new_price'=>31000,'cracked_price'=>-1,'effective_at'=>'2026-02-01T00:00:00+07:00'],$a,422);
-            cmd('price.create',['skm_price'=>31000,'skm_new_price'=>31000,'cracked_price'=>0,'effective_at'=>'2026-02-01T00:00:00+07:00'],$e,403);
-            $s=cmd('price.create',['skm_price'=>31000,'skm_new_price'=>31000,'cracked_price'=>0,'effective_at'=>'2026-02-01T00:00:00+07:00'],$a);
+            cmd('price.create',['good_price'=>0,'cracked_price'=>0,'effective_at'=>'2026-02-01T00:00:00+07:00'],$a,422);
+            cmd('price.create',['good_price'=>31000,'cracked_price'=>-1,'effective_at'=>'2026-02-01T00:00:00+07:00'],$a,422);
+            cmd('price.create',['good_price'=>31000,'cracked_price'=>0,'effective_at'=>'2026-02-01T00:00:00+07:00'],$e,403);
+            $s=cmd('price.create',['good_price'=>31000,'cracked_price'=>0,'effective_at'=>'2026-02-01T00:00:00+07:00'],$a);
             check(count(array_filter($s['prices'],fn($p)=>$p['cracked_price']===0))===1,'the admin can set the daily cracked price to zero');
         }
         cmd('sale.create',array_replace($gift,['paid'=>1]),$actorToken,422);
@@ -416,7 +416,7 @@ try {
     cmd('correction.apply',['entity'=>'sale','id'=>$free['id'],'reason'=>'Penerima tidak boleh dihapus','changes'=>['customer'=>'']],$a,422);
     cmd('correction.apply',['entity'=>'sale','id'=>$free['id'],'reason'=>'Gratis tidak boleh diubah','changes'=>['items'=>[['id'=>$free['items'][0]['id'],'eggs'=>20,'kg'=>1.2,'trays'=>0,'is_free'=>false]]]],$a,422);
     $s=cmd('correction.apply',['entity'=>'sale','id'=>$free['id'],'reason'=>'Jumlah pemberian diperiksa','changes'=>['items'=>[['id'=>$free['items'][0]['id'],'eggs'=>25,'kg'=>1.5,'trays'=>0]]]],$a);
-    $s=cmd('price.create',['skm_price'=>32000,'skm_new_price'=>32000,'cracked_price'=>22000,'effective_at'=>'2026-03-01T00:00:00+07:00'],$a); $unchanged=first($s,'sales',fn($sale)=>$sale['id']===$free['id']);
+    $s=cmd('price.create',['good_price'=>32000,'cracked_price'=>22000,'effective_at'=>'2026-03-01T00:00:00+07:00'],$a); $unchanged=first($s,'sales',fn($sale)=>$sale['id']===$free['id']);
     check($unchanged['customer']!=='' && $unchanged['items'][0]['is_free'] && $unchanged['items'][0]['unit_price']===0 && $unchanged['total']===0 && $unchanged['balance']===0,'free snapshot and recipient are immutable through price and permitted quantity corrections');
     $beforeReplay=businessSnapshot();
     $replayedGift=req('/commands',$mixedRequest,$e)['sale'];
@@ -470,7 +470,7 @@ try {
     $nothing=req('/sync/prices?since='.$cursor,[],$e,'GET');
     check($nothing['mode']==='delta' && $nothing['since']===$cursor && $nothing['cursor']===$cursor && !$nothing['more'] && $nothing['prices']===[] && $nothing['notifications']===[],'unchanged five-second poll sends no price or notification history');
     req('/sync/prices?since=oops',[],$e,'GET',400); req('/sync/prices?since=0',[],'','GET',401);
-    $scheduled=['skm_price'=>37000,'skm_new_price'=>37000,'cracked_price'=>19000,'effective_at'=>date('c',strtotime('+15 days'))];
+    $scheduled=['good_price'=>37000,'cracked_price'=>19000,'effective_at'=>date('c',strtotime('+15 days'))];
     cmd('price.create',$scheduled,$a); cmd('price.create',$scheduled,$a);
     $changed=req('/sync/prices?since='.$cursor,[],$e,'GET');
     check(count($changed['prices'])===2 && $changed['prices'][0]['id']!==$changed['prices'][1]['id'] && $changed['prices'][0]['effective_at']===$scheduled['effective_at'] && count($changed['notifications'])===2 && count(array_unique(array_column($changed['notifications'],'user_id')))===1 && $changed['notifications'][0]['user_id']===$sari['id'],'both same-value scheduled updates and only own alerts arrive incrementally');

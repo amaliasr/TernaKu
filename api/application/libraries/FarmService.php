@@ -6,6 +6,7 @@ require_once __DIR__.'/StockCheckSchema.php';
 require_once __DIR__.'/StockCheckWorkflow.php';
 require_once __DIR__.'/EggTypes.php';
 require_once __DIR__.'/EggTypesSchema.php';
+require_once __DIR__.'/SharedGoodPriceMigration.php';
 /** TernaKu transactional domain service; used by CI3 and the CLI installer. */
 class ApiProblem extends RuntimeException {
     public int $status;
@@ -501,17 +502,14 @@ class FarmService {
         }
     }
     private function currentPrice(): array {
-        // Resolve each field separately: a scheduled legacy price cannot erase a typed rate.
-        $raw=$this->query("SELECT compact_data FROM records WHERE kind='price' AND occurred_at<=NOW() ORDER BY occurred_at DESC,sequence DESC LIMIT 1")->fetchColumn();
+        // Once effective, the shared-price policy cannot be overridden by an older-policy schedule.
+        $raw=$this->query("SELECT compact_data FROM records WHERE kind='price' AND occurred_at<=NOW() AND JSON_UNQUOTE(JSON_EXTRACT(compact_data,'$.pricing_mode'))='shared_good' ORDER BY occurred_at DESC,sequence DESC LIMIT 1")->fetchColumn();
+        if($raw===false) $raw=$this->query("SELECT compact_data FROM records WHERE kind='price' AND occurred_at<=NOW() ORDER BY occurred_at DESC,sequence DESC LIMIT 1")->fetchColumn();
         if($raw===false) throw new ApiProblem('Admin belum menetapkan harga yang berlaku saat ini.');
         $latest=json_decode($raw,true,512,JSON_THROW_ON_ERROR);
-        $result=['id'=>$latest['id'],'effective_at'=>$latest['effective_at']];
-        foreach(EggTypes::PRICE_FIELDS as $field) {
-            if(array_key_exists($field,$latest)) { $result[$field]=$latest[$field]; continue; }
-            // Fields are fixed server constants, not client input. Read only one eligible value.
-            $value=$this->query("SELECT JSON_EXTRACT(compact_data,'$.".$field."') FROM records WHERE kind='price' AND occurred_at<=NOW() AND JSON_CONTAINS_PATH(compact_data,'one','$.".$field."') ORDER BY occurred_at DESC,sequence DESC LIMIT 1")->fetchColumn();
-            if($value!==false) $result[$field]=json_decode($value,true,512,JSON_THROW_ON_ERROR);
-        }
+        $result=['id'=>$latest['id'],'effective_at'=>$latest['effective_at'],'cracked_price'=>$latest['cracked_price']];
+        if(array_key_exists('good_price',$latest)) $result['good_price']=$latest['good_price'];
+        elseif(isset($latest['skm_price'],$latest['skm_new_price']) && $latest['skm_price']===$latest['skm_new_price']) $result['good_price']=$latest['skm_price'];
         return $result;
     }
     private function reason(array $p): string { $reason=$this->text($p,'reason',1000,true); if(mb_strlen($reason)<5) throw new ApiProblem('Alasan koreksi minimal 5 karakter.'); return $reason; }
@@ -704,7 +702,8 @@ class FarmService {
                     $this->db->commit(); return $this->commandState($compact,$result,$receiptRole);
                 }
             }
-            $this->dispatch($action,$p);
+            // Replay keys remain bound to the exact original frozen payload, before alias normalization.
+            $this->dispatch($action,EggTypes::normalizeCommand($action,$p));
             if($this->commandResult!==null) {
                 $this->commandResult['request_id']=$requestId;
                 if($requestId!=='') $this->insert('command_result',$this->commandResult+['id'=>$resultId,'user_id'=>$this->actor['id'],'created_at'=>$this->now()]);
@@ -808,8 +807,9 @@ class FarmService {
             case 'feed.due': $this->updateInvoice($action,$p); break;
             case 'price.create':
                 $this->admin(); $effective=$this->date($p,'effective_at');
-                if(array_diff(array_keys($p),['skm_price','skm_new_price','cracked_price','effective_at'])) throw new ApiProblem('Perbarui aplikasi untuk mengatur harga SKM, SKM Baru, dan bentes.');
-                $r=$this->insert('price',['skm_price'=>$this->number($p,'skm_price',1,true,10000000),'skm_new_price'=>$this->number($p,'skm_new_price',1,true,10000000),'cracked_price'=>$this->number($p,'cracked_price',0,true,10000000),'effective_at'=>$effective,'created_at'=>$this->now(),'created_by'=>$this->actor['id']]);
+                if(array_diff(array_keys($p),['good_price','cracked_price','effective_at']) || !array_key_exists('good_price',$p)) throw new ApiProblem('Perbarui aplikasi lalu isi satu harga telur bagus untuk SKM dan SKM Baru, serta harga bentes.');
+                $good=$this->number($p,'good_price',1,true,10000000);
+                $r=$this->insert('price',['pricing_mode'=>'shared_good','good_price'=>$good,'skm_price'=>$good,'skm_new_price'=>$good,'cracked_price'=>$this->number($p,'cracked_price',0,true,10000000),'effective_at'=>$effective,'created_at'=>$this->now(),'created_by'=>$this->actor['id']]);
                 foreach((new PushService($this->db))->activeRecipients() as $uid) $this->insert('notification',['user_id'=>$uid,'title'=>'Harga telur diperbarui','message'=>EggTypes::priceMessage($r),'created_at'=>$this->now(),'read'=>false]);
                 (new PushService($this->db))->enqueuePrice($r);
                 $this->audit($action,'Menetapkan harga telur',null,$r); break;

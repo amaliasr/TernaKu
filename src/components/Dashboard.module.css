@@ -11,10 +11,11 @@
 
 .pricePanel { display: flex !important; flex-direction: column; }
 .priceValues { padding: 0 20px 16px; flex: 1; }
-.groupLabel { color: var(--muted); font-size: calc(11px * var(--font-scale, 1)); }
+.sharedPriceNote { color: var(--muted); font-size: calc(12px * var(--font-scale, 1)); line-height: 1.6; margin: 10px 0 0; }
 .priceRow { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 8px 0; }
 .priceRow > span { display: flex; align-items: center; gap: 8px; font-size: calc(13px * var(--font-scale, 1)); }
 .priceRow strong { font-size: calc(17px * var(--font-scale, 1)); text-align: right; }
+@media (max-width: 360px) { .priceRow { align-items: flex-start; flex-direction: column; gap: 6px; } .priceRow strong { text-align: left; } }
 .priceRow small { margin-left: 4px; color: var(--muted); font-size: calc(10px * var(--font-scale, 1)); font-weight: 400; }
 .bentes { border-top: 1px solid var(--border); margin-top: 6px; padding-top: 12px; }
 .harvestTypes { padding: 18px 20px; margin-bottom: 22px; }

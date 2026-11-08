@@ -23,7 +23,7 @@ import { resolveSaleEggs, saleEggCount } from "./sale-eggs";
 import { assignUsername, withUsernames } from "./usernames";
 import { validateAccountPassword, validateNewPassword } from "./account-policy";
 import { applyDemoStockCheck, demoStockCheckContext, recordStockAssignment } from "./stock-checks";
-import { ALL_EGG_TYPES, NEW_EGG_TYPES, emptyEggQuantities, eggTypeLabel, eggTypePrice, isEggType, isNewEggType } from "./egg-types";
+import { ALL_EGG_TYPES, NEW_EGG_TYPES, canonicalEggType, emptyEggQuantities, eggTypeLabel, eggTypePrice, isEggType } from "./egg-types";
 
 export const money = (value: number) =>
   new Intl.NumberFormat("id-ID", {
@@ -87,13 +87,12 @@ export function activePrice(
         b.index - a.index,
     ).map(row => row.price);
   if (!eligible.length) return undefined;
-  const resolved = { ...eligible[0] };
-  // Older scheduled records update only their original rates. They must never
-  // erase an independently configured SKM or SKM Baru price.
-  for (const key of ["skm_price", "skm_new_price", "good_price", "cracked_price"] as const) {
-    const source = eligible.find(row => typeof row[key] === "number");
-    if (source) resolved[key] = source[key]!;
-  }
+  // Once the first common-price schedule is active, older split schedules are
+  // history only. They cannot split the two good rates again in the future.
+  const resolved = { ...(eligible.find(row => row.pricing_mode === "shared_good") ?? eligible[0]) };
+  const shared = resolved.good_price ?? (resolved.skm_price !== undefined && resolved.skm_price === resolved.skm_new_price ? resolved.skm_price : undefined);
+  if (shared === undefined) { delete resolved.good_price; delete resolved.skm_price; delete resolved.skm_new_price; }
+  else { resolved.good_price = shared; resolved.skm_price = shared; resolved.skm_new_price = shared; }
   return resolved;
 }
 const round = (n: number) => Math.round((n + Number.EPSILON) * 1000) / 1000;
@@ -112,13 +111,7 @@ function soldQuantity(items: SaleItem[], category: Category): Quantity {
 export function isProductionStocked(production: Pick<Production, "stocked_at">): boolean {
   return production.stocked_at !== null;
 }
-export function eggStock(state: State, category?: Category): Quantity {
-  if (!category) {
-    return ALL_EGG_TYPES.reduce((sum, type) => {
-      const q = eggStock(state, type);
-      return { eggs: sum.eggs + q.eggs, kg: round(sum.kg + q.kg), trays: sum.trays + q.trays };
-    }, emptyQuantity());
-  }
+function rawEggStock(state: State, category: Category): Quantity {
   if (state.inventory) return { ...(state.inventory[category] ?? emptyQuantity()) };
   const stock = emptyQuantity();
   for (const p of state.productions)
@@ -155,9 +148,52 @@ export function eggStock(state: State, category?: Category): Quantity {
       // been counted, the demo replays subsequent movements from that baseline.
       countedTrays = Math.max(0, countedTrays + movement.trays);
     }
+    if (movement.merged_trays_after !== undefined) countedTrays = movement.merged_trays_after;
   }
   stock.trays = countedTrays ?? Math.max(0, stock.trays);
   return stock;
+}
+export function eggStock(state: State, category?: Category): Quantity {
+  if (category === "good") return emptyQuantity();
+  const types: readonly Category[] = category === "skm" ? ["skm", "good"] : category ? [category] : ALL_EGG_TYPES;
+  return types.reduce((sum, type) => {
+    const q = rawEggStock(state, type);
+    return { eggs: sum.eggs + q.eggs, kg: round(sum.kg + q.kg), trays: sum.trays + q.trays };
+  }, emptyQuantity());
+}
+/** Explicit owner policy: all formerly unclassified eggs are SKM. Monetary and
+ * photo snapshots, request fingerprints, and audit evidence are not rewritten. */
+export function normalizeFarmState(input: State, stamp = new Date().toISOString()): State {
+  const hasLegacy = input.productions.some(r => r.category === "good") || input.pickups.some(r => r.category === "good")
+    || input.sales.some(s => s.items.some(r => r.category === "good")) || input.stock_movements?.some(r => r.category === "good")
+    || !!input.inventory?.good && Object.values(input.inventory.good).some(n => n !== 0)
+    || input.stock_check_context && [input.stock_check_context.warehouse, input.stock_check_context.harvest].some(q => !q.skm || !q.skm_new || q.good && Object.values(q.good).some(n => n !== 0))
+    || input.stock_checks?.some(c => [c.expected.warehouse, c.expected.harvest, c.warehouse_actual, c.harvest_actual].some(q => !q.skm || !q.skm_new || q.good && Object.values(q.good).some(n => n !== 0)));
+  if (!hasLegacy) return input;
+  const before = eggStock(input, "skm");
+  const row = <T extends { category: Category }>(r: T): T => r.category === "good" ? { ...r, category: "skm" } : r;
+  const counts = (value: State["inventory"]): NonNullable<State["inventory"]> => {
+    const next = { ...emptyEggQuantities(), ...value };
+    next.skm = { eggs: next.skm.eggs + next.good.eggs, kg: round(next.skm.kg + next.good.kg), trays: next.skm.trays + next.good.trays };
+    next.good = emptyQuantity(); return next;
+  };
+  const movements = input.stock_movements?.map(row);
+  // Each old bucket had its own physical tray counts. Continue from their sum,
+  // while leaving the original counted quantities visible in historical rows.
+  if (movements) for (let i = movements.length - 1; i >= 0; i--) if (movements[i].category === "skm") {
+    movements[i] = { ...movements[i], merged_trays_after: before.trays }; break;
+  }
+  return { ...input,
+    productions: input.productions.map(row), pickups: input.pickups.map(row),
+    sales: input.sales.map(s => s.items.some(i => i.category === "good") ? { ...s, items: s.items.map(row) } : s),
+    ...(movements ? { stock_movements: movements } : {}),
+    ...(input.inventory ? { inventory: counts(input.inventory) } : {}),
+    ...(input.stock_check_context ? { stock_check_context: { ...input.stock_check_context, warehouse: counts(input.stock_check_context.warehouse), harvest: counts(input.stock_check_context.harvest) } } : {}),
+    ...(input.stock_checks ? { stock_checks: input.stock_checks.map(c => ({ ...c,
+      expected: { warehouse: counts(c.expected.warehouse), harvest: counts(c.expected.harvest) }, warehouse_actual: counts(c.warehouse_actual), harvest_actual: counts(c.harvest_actual),
+      ...(c.status === "pending" ? { status: "rejected" as const, migration_invalidated_at: stamp, reviewed_at: stamp, reviewed_by: null, updated_at: stamp, review_reason: "Data lama sudah menjadi SKM. Periksa ulang jumlah per jenis sebelum disetujui." } : {}),
+    })) } : {}),
+  };
 }
 export function allEggStock(state: State): Record<Category, Quantity> {
   const quantities = emptyEggQuantities();
@@ -168,6 +204,8 @@ export function allEggStock(state: State): Record<Category, Quantity> {
  * This preserves opening stock and posts deferred receipts on their actual receipt day. */
 export function closingEggStock(state: State, category: Category, day: string, currentDay = today()): Pick<Quantity, "eggs" | "kg"> | null {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(day) || day > currentDay) return null;
+  if (category === "good") return { eggs: 0, kg: 0 };
+  state = normalizeFarmState(state);
   const { eggs, kg } = eggStock(state, category);
   if (day === currentDay) return { eggs, kg };
   if (!state.stock_movements) return null;
@@ -256,6 +294,7 @@ export function emptyState(): State {
 }
 export function visibleState(state: State, user: User | null): State {
   if (!user || accountAccessError(user)) return emptyState();
+  state = normalizeFarmState(state);
   const checker = !!user.can_check_stock;
   const day = today();
   const since = new Date(`${day}T12:00:00Z`); since.setUTCDate(since.getUTCDate() - 29);
@@ -485,11 +524,11 @@ function category(value: unknown): Category {
     isEggType(value),
     "Pilih kategori telur yang valid.",
   );
-  return value;
+  return canonicalEggType(value);
 }
 function newCategory(value: unknown): Category {
-  assert(isNewEggType(value), "Pilih Telur SKM, SKM Baru, atau Bentes. Telur bagus lama belum dibedakan tipenya.");
-  return value;
+  assert(isEggType(value), "Pilih Telur SKM, SKM Baru, atau Bentes.");
+  return canonicalEggType(value);
 }
 
 function farmNotice(activity: FarmActivity, name: string, kg: number) {
@@ -763,7 +802,7 @@ export function executeCommand(
   payload: CommandPayload,
   now = new Date(),
 ): State {
-  const state: State = structuredClone(input);
+  const state: State = structuredClone(normalizeFarmState(input, now.toISOString()));
   state.users = withUsernames(state.users);
   delete state.command_result;
   delete state.inventory;
@@ -801,7 +840,7 @@ export function executeCommand(
     case "production.create": {
       const entries = payload.items === undefined ? [payload] : list(payload.items);
       assert(entries.length <= NEW_EGG_TYPES.length, "Satu panen maksimal tiga jenis telur.");
-      assert(new Set(entries.map(item => item.category)).size === entries.length, "Kategori telur tidak boleh berulang.");
+      assert(new Set(entries.map(item => category(item.category))).size === entries.length, "Kategori telur tidak boleh berulang.");
       const barnId = text(payload.barn_id);
       if (barnId) find(state.barns, barnId, "Kandang");
       const harvestId = id("harvest");
@@ -823,36 +862,14 @@ export function executeCommand(
       farmEvent = { activity: common.stocked_at ? "production.stocked" : "production.create", kg: records.reduce((sum, p) => sum + p.kg, 0) };
       break;
     }
-    case "stock.classify": {
-      admin(user);
-      assert(payload.category === "skm" || payload.category === "skm_new", "Pilih Telur SKM atau SKM Baru.");
-      const target = payload.category;
-      const q = quantities(payload);
-      const reason = boundedName(payload.reason, "Alasan pembagian stok lama", 2000);
-      assert(reason.length >= 5, "Tulis alasan pembagian stok minimal 5 karakter.");
-      const sourceBefore = eggStock(state, "good"), targetBefore = eggStock(state, target);
-      for (const [expected, actual] of [[payload.expected_source, sourceBefore], [payload.expected_target, targetBefore]] as const) {
-        const value = stockCountQuantity(expected);
-        if (value.eggs !== actual.eggs || value.kg !== actual.kg || value.trays !== actual.trays)
-          throw new ApiError("Stok berubah. Muat ulang sebelum membagi stok lama.", 409);
-      }
-      assert(q.eggs <= sourceBefore.eggs && q.kg <= sourceBefore.kg && q.trays <= sourceBefore.trays, "Jumlah melebihi stok telur bagus yang belum dibedakan.");
-      completeBalance(sourceBefore.eggs - q.eggs, sourceBefore.kg - q.kg);
-      const reference = id("classify");
-      state.stock_movements ??= [];
-      for (const [c, sign, kind] of [["good", -1, "classify_out"], [target, 1, "classify_in"]] as const) {
-        state.stock_movements.push({ id: id("movement"), reference_id: reference, category: c, kind, date: stamp, created_at: stamp, user_id: user.id,
-          eggs: sign * q.eggs, kg: sign * q.kg, trays: sign * q.trays, notes: reason });
-      }
-      detail = { before: { good: sourceBefore, [target]: targetBefore }, after: { id: reference, category: target, ...q, reason } };
-      break;
-    }
+    case "stock.classify":
+      throw new Error("Semua stok bagus lama sudah menjadi SKM. Muat ulang aplikasi.");
     case "stock.reconcile": {
       admin(user);
       const method = payload.method === undefined ? "count" : payload.method;
       assert(method === "count" || method === "add" || method === "subtract", "Pilih cara penyesuaian stok.");
       const items = list(payload.items);
-      assert(items.length <= ALL_EGG_TYPES.length && new Set(items.map(item => item.category)).size === items.length,
+      assert(items.length <= NEW_EGG_TYPES.length && new Set(items.map(item => category(item.category))).size === items.length,
         "Setiap kategori telur hanya boleh dihitung sekali.");
       const reason = boundedName(payload.reason, "Alasan penyesuaian", 2000);
       const reference = id("count");
@@ -1098,9 +1115,8 @@ export function executeCommand(
     }
     case "price.create": {
       admin(user);
-      assert(Object.keys(payload).every(key => ["skm_price", "skm_new_price", "cracked_price", "effective_at"].includes(key)), "Perbarui aplikasi untuk mengatur harga setiap jenis telur.");
-      const skm_price = numeric(payload.skm_price, "Harga Telur SKM", true, true, 10000000);
-      const skm_new_price = numeric(payload.skm_new_price, "Harga Telur SKM Baru", true, true, 10000000);
+      assert(Object.keys(payload).every(key => ["good_price", "cracked_price", "effective_at"].includes(key)), "Perbarui aplikasi. SKM dan SKM Baru sekarang memakai satu harga Telur Bagus.");
+      const good_price = numeric(payload.good_price, "Harga Telur Bagus", true, true, 10000000);
       const cracked_price = numeric(
         payload.cracked_price,
         "Harga telur bentes",
@@ -1122,8 +1138,10 @@ export function executeCommand(
       );
       state.prices.push({
         id: id("price"),
-        skm_price,
-        skm_new_price,
+        pricing_mode: "shared_good",
+        good_price,
+        skm_price: good_price,
+        skm_new_price: good_price,
         cracked_price,
         effective_at,
         created_at: stamp,
@@ -1137,7 +1155,7 @@ export function executeCommand(
             new Date(effective_at) > now
               ? "Harga telur dijadwalkan"
               : "Harga telur diperbarui",
-          message: `Mulai ${dateLabel(effective_at, true)}, Telur SKM ${money(skm_price)}/kg, Telur SKM Baru ${money(skm_new_price)}/kg, dan Telur Bentes ${cracked_price === 0 ? "Gratis" : money(cracked_price) + "/kg"}.`,
+          message: `Mulai ${dateLabel(effective_at, true)}, Telur Bagus (SKM dan SKM Baru) ${money(good_price)}/kg dan Telur Bentes ${cracked_price === 0 ? "Gratis" : money(cracked_price) + "/kg"}.`,
           read: false,
           created_at: stamp,
         });

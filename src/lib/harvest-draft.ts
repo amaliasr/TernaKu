@@ -1,26 +1,22 @@
-import { NEW_EGG_TYPES } from "./egg-types";
-import type { Category, NewEggType } from "./types";
+import { ALL_EGG_TYPES } from "./egg-types";
+import type { Category } from "./types";
 
 export type HarvestDraftRow = { eggs: string; kg: string; trays: string };
 export const blankHarvestRow = (): HarvestDraftRow => ({ eggs: "", kg: "", trays: "" });
 export type HarvestDraftRows = Record<Category, HarvestDraftRow>;
 
-/** Read older drafts without dropping the unclassified good quantities or touching photos/pending attempts. */
+/** Legacy good now means SKM. Normalize editor fields only, never the frozen request or photo. */
 export function normalizeHarvestRows(value: Partial<HarvestDraftRows> | undefined): HarvestDraftRows {
-  return Object.fromEntries([...NEW_EGG_TYPES, "good"].map(category => [category, { ...blankHarvestRow(), ...value?.[category as Category] }])) as HarvestDraftRows;
+  const rows = Object.fromEntries(ALL_EGG_TYPES.map(category => [category, { ...blankHarvestRow(), ...value?.[category] }])) as HarvestDraftRows;
+  const keys = ["eggs", "kg", "trays"] as const;
+  // Keep malformed legacy input intact so the form can explain it instead of losing it.
+  if (keys.some(key => [rows.good[key], rows.skm[key]].some(v => v !== "" && (!Number.isFinite(Number(v)) || Number(v) < 0)))) return rows;
+  for (const key of keys) if (rows.good[key] !== "") {
+    rows.skm[key] = String(Math.round((Number(rows.skm[key] || 0) + Number(rows.good[key])) * 1000) / 1000);
+  }
+  rows.good = blankHarvestRow();
+  return rows;
 }
 export function hasLegacyHarvest(rows: HarvestDraftRows): boolean {
   return Object.values(rows.good).some(value => value !== "" && Number(value) !== 0);
-}
-export function classifyHarvestDraft(rows: HarvestDraftRows, target: Extract<NewEggType, "skm" | "skm_new">): HarvestDraftRows {
-  const next = normalizeHarvestRows(rows);
-  for (const key of ["eggs", "kg", "trays"] as const) {
-    const original = next.good[key], existing = next[target][key];
-    if (original === "") continue;
-    const sum = Number(existing || 0) + Number(original);
-    if (!Number.isFinite(sum) || sum < 0) throw new Error("Periksa angka pada draf panen lama.");
-    next[target][key] = String(Math.round(sum * 1000) / 1000);
-  }
-  next.good = blankHarvestRow();
-  return next;
 }
