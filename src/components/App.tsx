@@ -40,6 +40,7 @@ import { activePrice, dateLabel, money } from "@/lib/domain";
 import { eggTypePrice } from "@/lib/egg-types";
 import { normalizeUsername } from "@/lib/usernames";
 import { accountRoleLabel } from "@/lib/account-policy";
+import { notificationDateTime } from "@/lib/notification-format";
 import UsernameInput, { optionalUsernameHint } from "./UsernameInput";
 import ThemeToggle from "./ThemeToggle";
 import InstallApp from "./InstallApp";
@@ -925,7 +926,7 @@ function Workspace() {
                 {unread.length > 0 && <span className="notification-dot" />}
               </button>
               {notifications && (
-                <section className="notification-panel">
+                <section className="notification-panel" aria-label="Notifikasi">
                   <div>
                     <strong>Notifikasi</strong>
                     <button
@@ -961,10 +962,10 @@ function Workspace() {
                         <span className="notification-symbol">
                           <Bell size={17} />
                         </span>
-                        <span>
+                        <span className="notification-content">
                           <strong>{n.title}</strong>
-                          <p>{n.message}</p>
-                          <small>{dateLabel(n.created_at, true)}</small>
+                          <p className="notification-message">{n.message}</p>
+                          <small><time dateTime={n.created_at}>{notificationDateTime(n.created_at)}</time></small>
                         </span>
                         {!n.read && <span className="unread-dot" />}
                       </button>

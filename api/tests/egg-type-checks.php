@@ -116,7 +116,7 @@ check(etStored($oldSale['id'])===$migratedSale && first($state,'sales',fn($s)=>$
 $same=['good_price'=>32000,'cracked_price'=>0,'effective_at'=>date('c')];
 $beforePrices=count($state['prices']); $state=cmd('price.create',$same,$ta); $firstId=first($state,'prices',fn($p)=>($p['good_price']??null)===32000)['id'];
 $state=cmd('price.create',$same,$ta); $secondId=first($state,'prices',fn($p)=>($p['good_price']??null)===32000)['id'];
-check(count($state['prices'])===$beforePrices+2 && $firstId!==$secondId && str_contains($state['notifications'][0]['message'],'Telur bagus (SKM dan SKM Baru) Rp32.000/kg') && str_contains($state['notifications'][0]['message'],'Telur bentes Gratis'),'equal shared-price saves still create distinct two-rate notifications');
+check(count($state['prices'])===$beforePrices+2 && $firstId!==$secondId && str_contains($state['notifications'][0]['message'],'Telur Bagus (SKM dan SKM Baru): Rp32.000/kg') && str_contains($state['notifications'][0]['message'],'Telur Bentes: Gratis (Rp0/kg)'),'equal shared-price saves still create distinct two-rate notifications');
 $before=businessSnapshot(); cmd('sale.create',array_replace($sale,['items'=>[['category'=>'skm_new','eggs'=>30,'kg'=>3,'trays'=>0]]]),$te,422);
 check($before===businessSnapshot(),'sharing a price does not pool SKM and SKM Baru stock');
 

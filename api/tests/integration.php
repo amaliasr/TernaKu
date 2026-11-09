@@ -716,6 +716,7 @@ try {
     req('/auth/login',['identifier'=>'sari','password'=>'PasswordSari42'],'','POST',401); check(true,'inactive employee cannot log in with username');
     req('/auth/logout',[],$other); req('/bootstrap',[],$other,'GET',401); check(true,'logout invalidates token');
     req('/application/config/config.php',[],'','GET',404); check(true,'internal files not exposed by dev router');
+    require __DIR__.'/notification-text-checks.php';
     require __DIR__.'/account-policy-checks.php';
     require __DIR__.'/stock-check-checks.php';
     require __DIR__.'/egg-type-checks.php';

@@ -143,9 +143,10 @@ class PushService {
         });
     }
     /** Called within price.create's existing SQL transaction, never after its commit. */
-    public function enqueuePrice(array $price): void {
-        $payload=['type'=>'price.updated','id'=>$price['id'],'tag'=>'price-'.$price['id'],'title'=>'Harga telur diperbarui',
-            'body'=>EggTypes::priceMessage($price),'url'=>'/','effective_at'=>$price['effective_at']];
+    public function enqueuePrice(array $price,?array $notice=null): void {
+        $notice??=NotificationText::price($price,'Petugas');
+        $payload=['type'=>'price.updated','id'=>$price['id'],'tag'=>'price-'.$price['id'],'title'=>$notice['title'],
+            'body'=>$notice['message'],'url'=>'/','effective_at'=>$price['effective_at']];
         foreach(['good_price','skm_price','skm_new_price','cracked_price','pricing_mode'] as $field) if(array_key_exists($field,$price)) $payload[$field]=$price[$field];
         $this->broadcast($payload,$this->activeRecipients());
     }

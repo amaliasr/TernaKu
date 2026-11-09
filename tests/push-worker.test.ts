@@ -82,6 +82,28 @@ test("push notice and click always lead to TernaKu, never an external payload UR
   assert.deepEqual(opened, ["/"]);
 });
 
+test("detailed multiline notifications keep their quantities, payment and second-precise time", async () => {
+  const { handlers, notices } = await worker();
+  const body = [
+    "Sari mencatat penjualan TK-20261109-ABCDEF12.",
+    "Dicatat: 09/11/2026 14:05:08 WIB",
+    "Tanggal transaksi: 08/11/2026",
+    "Sumber telur: Stok gudang",
+    "Telur SKM: 999.999 butir (perkiraan), 59.999,999 kg, 5.999 krat.",
+    "Telur SKM Baru: 999.999 butir (perkiraan), 59.999,999 kg, 5.999 krat.",
+    "Telur Bentes: 999.999 butir (perkiraan), 59.999,999 kg, 5.999 krat.",
+    "Total: 2.999.997 butir (perkiraan), 179.999,997 kg, 17.997 krat.",
+    "Total penjualan: Rp3.359.999.944",
+    "Pembayaran: Transfer · Sebagian",
+    "Sudah dibayar: Rp1.000.000.000 · Sisa tagihan: Rp2.359.999.944",
+  ].join("\n");
+  assert.ok(body.length > 500 && body.length < 1000);
+  let work: Promise<void> | undefined;
+  handlers.push({data: {json: () => ({title: "Penjualan telur", body, tag: "farm-sale-1"})}, waitUntil: (value: Promise<void>) => { work = value; }});
+  await work;
+  assert.equal(notices[0].options.body, body);
+});
+
 test("malformed or non-object push data still displays a safe notice", async () => {
   const { handlers, notices } = await worker();
   for (const payload of [null, [], "unexpected", 42]) {

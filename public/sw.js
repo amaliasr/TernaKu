@@ -67,7 +67,7 @@ self.addEventListener("push", (event) => {
       : "Pemberitahuan TernaKu";
   const body =
     typeof payload.body === "string"
-      ? payload.body.slice(0, 500)
+      ? Array.from(payload.body).slice(0, 1000).join("")
       : "Buka TernaKu untuk melihat pemberitahuan.";
   const tag =
     typeof payload.tag === "string"
