@@ -2,6 +2,18 @@
 
 Web Push memberi notifikasi ketika admin menyimpan harga, termasuk ketika nominalnya sama. Penjadwalan harga tetap mengikuti `effective_at`; pemberitahuan menyebut tanggal mulai berlaku. Notifikasi berjalan melalui layanan browser walaupun halaman TernaKu ditutup. Pengiriman perangkat tetap bergantung pada izin notifikasi, koneksi, dan aturan sistem HP.
 
+## Isi notifikasi
+
+`application/libraries/NotificationText.php` menyusun satu pesan yang sama untuk kotak notifikasi aplikasi, Web Push, dan push native. Pembaruan ini tidak memerlukan migrasi database. Pesan yang sudah tersimpan atau sedang antre tidak ditulis ulang.
+
+- **Harga:** nama depan petugas, waktu disimpan, waktu mulai berlaku, satu harga Telur Bagus (SKM dan SKM Baru), serta harga Bentes. Harga Bentes nol ditulis **Gratis (Rp0/kg)**. Setiap penyimpanan baru tetap memiliki ID kejadian sendiri, walaupun nominalnya sama.
+- **Penjualan:** nomor nota, tanggal transaksi, waktu pencatatan, rincian dan total butir/kg/krat untuk SKM, SKM Baru, dan Bentes, total penjualan, jumlah dibayar, sisa tagihan, status/metode pembayaran, serta asal stok (gudang atau bawaan karyawan). Butir hasil perhitungan ditandai **perkiraan**.
+- **Panen:** tanggal panen, waktu pencatatan, rincian tiga jenis dan total, serta keterangan **Sudah masuk** gudang atau **Menunggu diterima**. Penerimaan panen, pengembalian telur, dan penambahan stok juga menyertakan jumlah yang benar-benar berpindah serta waktu pencatatannya.
+
+Waktu selalu memakai `dd/mm/yyyy HH:mm:ss WIB`, terlepas dari zona waktu server. Tanggal bisnis yang hanya berisi tanggal tetap ditulis `dd/mm/yyyy`; waktu kejadian tidak dibuat-buat. Jika waktu pencatatan lama hanya berupa tanggal, pesan menyebut **jam tidak tercatat**. Tanggal mulai harga tanpa jam berarti tengah malam WIB sesuai aturan aktivasi harga.
+
+Nama pelanggan, nomor telepon, email, foto, catatan bebas, lokasi, dan nama kandang tidak dimasukkan ke pesan yang dapat muncul di layar terkunci. Nama petugas dibatasi pada nama depan yang valid, maksimal 32 karakter. Nomor nota harus mengikuti pola aplikasi. Pesan maksimal 1.000 karakter, dengan tiga jenis telur yang dijumlahkan agar rincian tetap muat pada payload push. Tampilan ringkas banner mengikuti sistem HP; rincian lengkap tersedia saat notifikasi diperluas atau dibuka di aplikasi.
+
 ## Pemasangan server
 
 1. Gunakan PHP 8.2+ dengan `curl`, `openssl`, `mbstring`, dan `pdo_mysql`.
@@ -36,7 +48,7 @@ API mencoba pengiriman terbatas setelah harga tersimpan. Cron melanjutkan antrea
 
 Endpoint pengiriman hanya mengizinkan layanan HTTPS milik Google, Mozilla, Apple, dan Windows. Pengalihan HTTP dinonaktifkan; alamat DNS harus publik dan dipasangkan ke koneksi TLS. Payload dienkripsi menggunakan `minishlink/web-push`, bukan kriptografi buatan aplikasi.
 
-Jalankan pengujian hanya pada database khusus `_test`: `php api/tests/push.php`. Pengujian pengiriman menggunakan mock dan tidak mengirim ke perangkat nyata.
+Jalankan pengujian hanya pada database khusus `_test`: `php api/tests/push.php`. Pengujian pengiriman menggunakan mock dan tidak mengirim ke perangkat nyata. Uji format murni tanpa database tersedia melalui `php api/tests/notification-text.php`; uji ini juga memeriksa batas ukuran payload Web Push/APNs, privasi, pengelompokan jenis, serta waktu WIB ketika zona waktu server berbeda.
 
 ## Notifikasi dari aplikasi Android dan iOS
 

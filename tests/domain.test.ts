@@ -427,7 +427,7 @@ test("scheduled prices activate at Jakarta time and existing snapshots never cha
   assert.equal(activePrice(s, "2026-10-13T17:00:00Z")?.good_price, 30000);
   assert.equal(s.sales[0].total, oldTotal);
   assert.equal(s.sales[0].items[0].unit_price, 28000);
-  assert.equal(s.notifications.filter(n => n.title === "Harga telur dijadwalkan").length, s.users.length);
+  assert.equal(s.notifications.filter(n => n.title === "Harga telur diperbarui").length, s.users.length);
 });
 test("backdating a sale does not change the transaction-time price snapshot", () => {
   const s = take(fixture());

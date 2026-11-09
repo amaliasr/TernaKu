@@ -61,7 +61,7 @@ const warehouse = {
   ],
 };
 
-test("one activity notice per active account survives retries and keeps the buyer and sale details private", () => {
+test("one detailed activity notice per active account survives retries and keeps personal details private", () => {
   const initial = legacy();
   initial.users[0].name = "Sari Wulandari";
   const example = initial.users[0];
@@ -71,17 +71,20 @@ test("one activity notice per active account survives retries and keeps the buye
   assert.deepEqual(first.state.notifications.map(n => n.user_id).sort(), ["admin", "budi", "sari"]);
   assert.equal(new Set(first.state.notifications.map(n => n.event_id)).size, 1);
   assert.equal(first.state.notifications[0].title, "Panen masuk gudang");
-  assert.equal(first.state.notifications[0].message, "Sari mencatat panen 7,2 kg telur yang langsung masuk gudang.");
+  assert.match(first.state.notifications[0].message, /^Sari mencatat panen\.\nTanggal panen: 24\/10\/2026\nTercatat: 24\/10\/2026 10:00:00 WIB\n/);
+  assert.match(first.state.notifications[0].message, /Jumlah: 120 butir, 7,2 kg, 1 krat\nGudang: Sudah masuk$/);
   const payload = { ...warehouse, items: [{ category: "skm", kg: 1 }, { category: "cracked", kg: 0.5 }], notes: "Private", customer: "Private" };
   const saleKey = { ...attempt, request_id: "sale-for-notice" };
   const sold = applyDemoWrite(first.state, "sari", "sale.create", payload, saleKey, at);
   const retried = applyDemoWrite(sold.state, "sari", "sale.create", payload, saleKey, at);
   const notices = retried.state.notifications.filter(n => n.activity === "sale.create");
   assert.deepEqual(notices.map(n => n.user_id).sort(), ["admin", "budi", "sari"]);
-  assert.ok(notices.every(n => n.type === "farm.activity" && n.title === "Penjualan telur" && n.message === "Sari menjual 1,5 kg telur."));
+  assert.ok(notices.every(n => n.type === "farm.activity" && n.title === "Penjualan telur" && n.message.startsWith("Sari mencatat penjualan.\nNota: TRX-20261024-")));
+  assert.match(notices[0].message, /Jumlah: 25 butir \(perkiraan\), 1,5 kg, 0 krat/);
+  assert.match(notices[0].message, /Total penjualan: Rp37\.000\nDibayar: Rp0\nSisa tagihan: Rp37\.000\nPembayaran: Belum lunas \| Piutang\nStok: Gudang$/);
   assert.equal(new Set(retried.state.notifications.map(n => n.id)).size, 6);
   assert.equal(new Set(retried.state.notifications.map(n => n.event_id)).size, 2);
-  assert.doesNotMatch(JSON.stringify(notices), /Private|image\/png|Rp|Wulandari/);
+  assert.doesNotMatch(JSON.stringify(notices), /Private|image\/png|Wulandari/);
 });
 
 test("warehouse activity distinguishes deferred harvest, receipt, return, and a positive addition", () => {
@@ -104,8 +107,10 @@ test("warehouse activity distinguishes deferred harvest, receipt, return, and a 
   const final = adjust(adjust(added, "count", 0), "subtract", -1);
   const inbox = final.notifications.filter(n => n.user_id === "sari");
   assert.deepEqual(inbox.map(n => n.activity), ["production.create", "production.receive", "pickup.return", "stock.add"]);
-  assert.equal(inbox[1].message, "Petugas menerima 6 kg telur dari panen.");
-  assert.equal(inbox[3].message, "Petugas menambah persediaan di gudang.");
+  assert.match(inbox[1].message, /^Petugas menerima panen di gudang\.\nTanggal panen: 24\/10\/2026\nTercatat: 24\/10\/2026 10:00:00 WIB/);
+  assert.match(inbox[1].message, /Jumlah: 100 butir, 6 kg, 1 krat/);
+  assert.match(inbox[3].message, /^Petugas menambah stok gudang\.\nTercatat: 24\/10\/2026 10:00:00 WIB/);
+  assert.match(inbox[3].message, /Jumlah: 0 butir, 0 kg, 1 krat/);
 });
 
 test("warehouse sale debits each category once, even with a repeated request or mixed paid/free lines", () => {

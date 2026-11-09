@@ -52,6 +52,7 @@ export function applyDemoWrite(source: State, userId: string, action: string, pa
   let recordId: string;
   if (action === "sale.create") recordId = next.sales[source.sales.length].id;
   else if (action === "production.create") recordId = next.productions[source.productions.length].id;
+  else if (action === "price.create") recordId = next.prices[source.prices.length].id;
   else if (action === "stock.reconcile" && attempt)
     recordId = next.stock_movements![source.stock_movements?.length ?? 0].reference_id;
   else return { state: next };

@@ -1291,8 +1291,10 @@ small {
   right: -10px;
   top: calc(100% + 16px);
   width: 370px;
+  max-width: calc(100vw - 24px);
   max-height: 70vh;
   overflow-y: auto;
+  overscroll-behavior: contain;
   z-index: 80;
   box-shadow: 0 10px 35px #23382425;
   background: white;
@@ -1305,6 +1307,10 @@ small {
   align-items: center;
   padding: 12px 18px;
   border-bottom: 1px solid var(--border);
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: inherit;
 }
 .notification-panel > button {
   display: flex;
@@ -1316,7 +1322,13 @@ small {
   width: 100%;
   text-align: left;
   padding: 16px;
+  min-height: 48px;
+  font-size: calc(13px * var(--font-scale, 1));
+  line-height: 1.5;
+  overflow-wrap: anywhere;
 }
+.notification-panel > button:disabled { opacity: .65; cursor: default; }
+.notification-content { min-width: 0; flex: 1; }
 .notification-panel > button.read {
   background: white;
 }
@@ -1325,19 +1337,27 @@ small {
   padding: 8px;
   background: #edf4e5;
   border-radius: 9px;
+  flex-shrink: 0;
 }
 .notification-panel strong {
-  font-size: calc(11px * var(--font-scale, 1));
-  font-weight: 500;
+  display: block;
+  font-size: calc(14px * var(--font-scale, 1));
+  font-weight: 600;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
 }
 .notification-panel p {
-  font-size: calc(10px * var(--font-scale, 1));
-  color: #7f8d72;
-  margin: 4px 0 6px;
+  font-size: calc(13px * var(--font-scale, 1));
+  color: #627457;
+  line-height: 1.65;
+  margin: 8px 0 10px;
 }
+.notification-message { white-space: pre-line; overflow-wrap: anywhere; }
 .notification-panel small {
-  font-size: calc(8px * var(--font-scale, 1));
-  color: #a2af94;
+  display: block;
+  font-size: calc(12px * var(--font-scale, 1));
+  color: #627457;
+  line-height: 1.5;
 }
 .unread-dot {
   width: 5px;
@@ -2621,8 +2641,12 @@ small {
     min-height: 44px;
   }
   .notification-panel {
-    right: -40px;
-    width: min(355px, calc(100vw - 28px));
+    position: fixed;
+    top: calc(72px + env(safe-area-inset-top, 0px));
+    left: 12px;
+    right: 12px;
+    width: auto;
+    max-height: calc(100dvh - 96px - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px));
   }
   .login-layout {
     grid-template-columns: 1fr;

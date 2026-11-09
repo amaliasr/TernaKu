@@ -21,7 +21,7 @@ try {
     $db->exec('SET FOREIGN_KEY_CHECKS=0'); foreach(['records','tokens','login_attempts','command_requests','users','stock','command_mutex'] as $table) $db->exec('DROP TABLE IF EXISTS '.$table); $db->exec('SET FOREIGN_KEY_CHECKS=1');
     foreach(explode(';',preg_replace('/^--.*$/m','',file_get_contents(dirname(__DIR__).'/schema.sql'))) as $sql) if(trim($sql)!=='') $db->exec($sql);
     $statement=$db->prepare('INSERT INTO users(id,name,email,password_hash,role,active) VALUES(?,?,?,?,?,?)');
-    foreach([['push_admin','admin',1],['push_employee','employee',1],['push_other','employee',1],['push_pending','employee',0]] as [$id,$role,$active]) $statement->execute([$id,$id,$id.'@test.local',password_hash('TestPasswordForPush42',PASSWORD_DEFAULT),$role,$active]);
+    foreach([['push_admin','admin',1],['push_employee','employee',1],['push_other','employee',1],['push_pending','employee',0]] as [$id,$role,$active]) $statement->execute([$id,$id==='push_admin'?'Amalia Safira':$id,$id.'@test.local',password_hash('TestPasswordForPush42',PASSWORD_DEFAULT),$role,$active]);
     $farm=new FarmService($db); $tokens=[];
     foreach(['push_admin','push_employee','push_other'] as $id) $tokens[$id]=$farm->login(['email'=>$id.'@test.local','password'=>'TestPasswordForPush42'],'push-test')['token'];
     $farm->authenticate($tokens['push_admin']);
@@ -48,12 +48,16 @@ try {
     $state=$farm->command('price.create',$price,'push-price-uuid-1');
     checkPush(countPush('push_job')===1,'price save atomically adds an outbox job');
     $farm->command('price.create',$price,'push-price-uuid-1'); checkPush(countPush('push_job')===1,'same command UUID never enqueues twice');
-    $farm->command('price.create',$price,'push-price-uuid-2'); checkPush(countPush('push_job')===2,'a new price update with identical amounts queues another event');
+    $secondPriceState=$farm->command('price.create',$price,'push-price-uuid-2'); checkPush(countPush('push_job')===2,'a new price update with identical amounts queues another event');
     $before=countPush('push_job'); $db->beginTransaction(); $push->enqueuePrice(['id'=>'rollback_price']+$price); $db->rollBack(); checkPush(countPush('push_job')===$before,'rolled back transaction also rolls back its push jobs');
     $public=json_encode($farm->bootstrap()); checkPush(!str_contains($public,$subscription['endpoint']) && !str_contains($public,$browserKeys['publicKey']) && !str_contains($public,'push_job'),'bootstrap never leaks endpoints, encryption keys, or queue');
     $result=$push->drain(); checkPush($result['sent']===2 && count($deliveries)===2 && $deliveries[0]['tag']!==$deliveries[1]['tag'],'different price IDs produce distinct notifications');
     checkPush(str_contains($deliveries[0]['body'],'Gratis') && str_contains($deliveries[0]['body'],date('d/m/Y',time()+86400)),'free bentes and future effective date are explicit');
-    checkPush(str_contains($deliveries[0]['body'],'Telur bagus (SKM dan SKM Baru) Rp28.000/kg') && $deliveries[0]['good_price']===28000 && $deliveries[0]['skm_price']===28000 && $deliveries[0]['skm_new_price']===28000,'push snapshot uses one good-egg price and equal compatibility aliases');
+    checkPush(str_contains($deliveries[0]['body'],'Telur Bagus (SKM dan SKM Baru): Rp28.000/kg') && $deliveries[0]['good_price']===28000 && $deliveries[0]['skm_price']===28000 && $deliveries[0]['skm_new_price']===28000,'push snapshot uses one good-egg price and equal compatibility aliases');
+    checkPush($deliveries[0]['body']===$state['notifications'][0]['message'] && str_starts_with($deliveries[0]['body'],'Amalia memperbarui harga telur.')
+        && str_contains($deliveries[0]['body'],'Disimpan: '.NotificationText::dateTime($state['prices'][0]['created_at'])),'price inbox and push share actor, saved timestamp and exactly the same complete message');
+    checkPush($state['notifications'][0]['type']==='price.updated' && $state['notifications'][0]['event_id']===$deliveries[0]['id']
+        && count(array_unique(array_column($secondPriceState['notifications'],'event_id')))===2,'identical-price inbox events have distinct price IDs matching the push event');
     checkPush($push->drain()['sent']===0,'delivered jobs are never resent by the next worker');
     $legacyNotice=['id'=>'legacy-before-shared','skm_price'=>28000,'skm_new_price'=>35000,'cracked_price'=>0,'effective_at'=>date('c')];
     $db->beginTransaction(); $push->enqueuePrice($legacyNotice); $db->commit();
@@ -73,6 +77,8 @@ try {
     $notices=array_values(array_filter($state['notifications'],fn($n)=>($n['type']??'')==='farm.activity'));
     checkPush(count($notices)===1 && $notices[0]['activity']==='production.stocked' && $notices[0]['title']==='Panen masuk gudang'
         && str_contains($notices[0]['message'],'2,4 kg') && !str_contains($notices[0]['message'],'RAHASIA'),'two harvest categories share one safe combined harvest-and-stock notice');
+    checkPush(str_contains($notices[0]['message'],"SKM: 30 butir, 1,8 kg, 0 krat\nSKM Baru: 0 butir, 0 kg, 0 krat\nBentes: 10 butir, 0,6 kg, 0 krat\nJumlah: 40 butir, 2,4 kg, 0 krat")
+        && str_contains($notices[0]['message'],'Tercatat: '.NotificationText::dateTime($notices[0]['created_at'])) && str_ends_with($notices[0]['message'],'Gudang: Sudah masuk'),'harvest details and timestamp match the stored event without revealing barn or notes');
     $event=$notices[0]['event_id'];
     $audience=$db->prepare("SELECT user_id FROM records WHERE kind='notification' AND JSON_UNQUOTE(JSON_EXTRACT(data,'$.event_id'))=? ORDER BY user_id");
     $audience->execute([$event]);
@@ -108,7 +114,15 @@ try {
         && count(array_unique(array_column($activities,'tag')))===5,'each manual harvest, receipt, return, sale and addition sends once; a count or correction does not send');
     $sales=array_values(array_filter($activities,fn($d)=>$d['activity']==='sale.create'));
     checkPush(str_contains($sales[0]['body'],'0,18 kg') && !str_contains(json_encode($activities),'RAHASIA') && !str_contains(json_encode($activities),'data:image')
-        && !str_contains($sales[0]['body'],'Rp'),'sale events sum item weights and exclude customer, proof, note, price and total');
+        && str_contains($sales[0]['body'],"Total penjualan: Rp1.680\nDibayar: Rp0\nSisa tagihan: Rp1.680\nPembayaran: Belum lunas | Tunai\nStok: Gudang")
+        && str_contains($sales[0]['body'],'(perkiraan)') && preg_match('/Nota: TK-\d{8}-[A-F0-9]{8}/',$sales[0]['body'])===1,'sale events contain invoice, estimated quantities, amounts and payment while excluding customer, proof and notes');
+    $saleNotice=json_decode($db->query("SELECT data FROM records WHERE kind='notification' AND user_id='push_employee' AND JSON_UNQUOTE(JSON_EXTRACT(data,'$.activity'))='sale.create'")->fetchColumn(),true);
+    checkPush($saleNotice['message']===$sales[0]['body'] && str_contains($sales[0]['body'],'Tercatat: '.NotificationText::dateTime($saleNotice['created_at'])),'sale push and inbox preserve the identical event timestamp and complete text');
+    $byActivity=array_column($activities,null,'activity');
+    checkPush(str_ends_with($byActivity['production.create']['body'],'Gudang: Menunggu diterima')
+        && str_ends_with($byActivity['production.receive']['body'],'Gudang: Sudah masuk')
+        && str_contains($byActivity['pickup.return']['body'],'Jumlah: 3 butir, 0,18 kg, 0 krat')
+        && str_contains($byActivity['stock.add']['body'],'Jumlah: 10 butir, 0,6 kg, 0 krat'),'waiting harvest, receipt, return and addition keep separate status and correct changed quantities');
     $farm->command('price.create',$price,'push-retry-uuid');
     $fail=new PushService($db,fn()=>['success'=>false,'expired'=>false,'status'=>503],$keys);
     checkPush($fail->drain()['retry']===1 && countPush('push_job')===1,'temporary failure retains durable pending job');

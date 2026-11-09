@@ -143,20 +143,10 @@ class FarmService {
     private function audit(string $action, string $description, $before = null, $after = null): void {
         $this->insert('activity',['user_id'=>$this->actor['id'],'actor_role'=>$this->actor['role'],'action'=>$action,'description'=>$description,'created_at'=>$this->now(),'before'=>$before,'after'=>$after]);
     }
-    private function notifyFarmActivity(string $activity,float $kg): void {
-        $name=preg_split('/\s+/u',trim($this->actor['name']),2)[0]??'';
-        $name=preg_match("/^\p{L}[\p{L}\p{M}.'’\-]*$/uD",$name) ? mb_substr($name,0,32) : 'Petugas';
-        $weight=rtrim(rtrim(number_format($kg,3,',','.'),'0'),',').' kg telur';
-        [$title,$message]=match($activity) {
-            'sale.create'=>['Penjualan telur',"$name menjual $weight."],
-            'production.stocked'=>['Panen masuk gudang',"$name mencatat panen $weight yang langsung masuk gudang."],
-            'production.create'=>['Panen tercatat',"$name mencatat panen $weight."],
-            'production.receive'=>['Panen diterima di gudang',"$name menerima $weight dari panen."],
-            'pickup.return'=>['Telur kembali ke gudang',"$name mengembalikan $weight ke gudang."],
-            'stock.add'=>['Stok gudang bertambah',$kg>0 ? "$name menambahkan $weight ke gudang." : "$name menambah persediaan di gudang."],
-        };
+    private function notifyFarmActivity(string $activity,array $details,string $eventAt): void {
+        ['title'=>$title,'message'=>$message]=NotificationText::activity($activity,$details,$this->actor['name'],$eventAt);
         $eventId=$this->id('event');
-        $notice=['type'=>'farm.activity','event_id'=>$eventId,'activity'=>$activity,'title'=>$title,'message'=>$message,'read'=>false,'created_at'=>$this->now()];
+        $notice=['type'=>'farm.activity','event_id'=>$eventId,'activity'=>$activity,'title'=>$title,'message'=>$message,'read'=>false,'created_at'=>$eventAt];
         $push=new PushService($this->db);
         $recipients=$push->activeRecipients();
         foreach($recipients as $userId) $this->insert('notification',$notice+['user_id'=>$userId]);
@@ -559,15 +549,15 @@ class FarmService {
 
         $date = $this->now();
         $reference = $this->id('count');
-        $weightChange = 0;
+        $noticeItems = [];
         foreach ($counts as $category => $count) {
             $expected = $count['expected'];
             $physical = $count['physical'];
             $eggs = $physical['eggs'] - $expected['eggs'];
             $kg = round($physical['kg'] - $expected['kg'], 3);
-            $weightChange += $kg;
             // Older devices count eggs and weight only. Preserve their current tray balance.
             $trays = isset($physical['trays']) ? $physical['trays'] - $expected['trays'] : 0;
+            $noticeItems[]=['category'=>$category,'eggs'=>$eggs,'kg'=>$kg,'trays'=>$trays];
             if ($method === 'add' && (min($eggs, $kg, $trays) < 0 || max($eggs, $kg, $trays) == 0)) {
                 throw new ApiProblem('Isi jumlah yang ditambahkan. Stok akhir harus lebih banyak dari stok tercatat.');
             }
@@ -587,7 +577,7 @@ class FarmService {
         $this->audit('stock.reconcile', 'Menyesuaikan stok gudang: '.$reason, null, [
             'id' => $reference, 'method' => $method, 'counts' => array_values($counts), 'reason' => $reason,
         ]);
-        if($method==='add') $this->notifyFarmActivity('stock.add',$weightChange);
+        if($method==='add') $this->notifyFarmActivity('stock.add',['items'=>$noticeItems],$date);
     }
     private function classifyStock(array $p): void {
         $this->admin();
@@ -768,7 +758,8 @@ class FarmService {
                     if($photo!=='' && !$ref) $ref=['kind'=>'production','id'=>$r['id'],'version'=>hash('sha256',$photo)];
                 }
                 $this->audit($action,$automatic?'Mencatat panen dan menambah stok':'Mencatat panen yang menunggu penerimaan stok',null,['harvest_id'=>$common['harvest_id'],'date'=>$common['date'],'items'=>$items]);
-                $this->notifyFarmActivity($automatic?'production.stocked':$action,array_sum(array_column($items,'kg')));
+                $noticeItems=[]; foreach($items as $category=>$q) $noticeItems[]=$q+['category'=>$category];
+                $this->notifyFarmActivity($automatic?'production.stocked':$action,$common+['items'=>$noticeItems],$now);
                 break;
             case 'stock.reconcile':
                 $this->reconcileStock($p);
@@ -785,7 +776,7 @@ class FarmService {
                 $this->stock('egg:'.$r['category'],$q['eggs'],$q['kg'],$q['trays']); $this->save('production',$r);
                 $this->movement('production',$r,$q,'Penerimaan panen: '.$r['notes'],$r['stocked_at']);
                 $this->audit($action,'Menerima seluruh panen ke stok',$before,$r);
-                $this->notifyFarmActivity($action,$q['kg']);
+                $this->notifyFarmActivity($action,$r,$r['stocked_at']);
                 break;
             case 'pickup.create':
                 $q=$this->quantity($p); $category=$this->enum($p,'category',EggTypes::ACTIVE);
@@ -796,9 +787,10 @@ class FarmService {
                 $r=$this->record('pickup',$this->text($p,'id',40,true),true); $this->owned($r); $q=$this->quantity($p); $this->checkBalance($q,$this->pickupBalance($r));
                 foreach(['eggs','kg','trays'] as $k) $r['returned_'.$k]=round($r['returned_'.$k]+$q[$k],3);
                 $this->stock('egg:'.$r['category'],$q['eggs'],$q['kg'],$q['trays']); $this->save('pickup',$r);
-                $this->movement('return',$r,$q,$this->text($p,'notes'),$this->now());
+                $returnedAt=$this->now();
+                $this->movement('return',$r,$q,$this->text($p,'notes'),$returnedAt);
                 $this->audit($action,'Mengembalikan telur: '.$this->text($p,'notes'),null,['pickup_id'=>$r['id'],'quantity'=>$q]);
-                $this->notifyFarmActivity($action,$q['kg']);
+                $this->notifyFarmActivity($action,['items'=>[$q+['category'=>$r['category']]]],$returnedAt);
                 break;
             case 'sale.create': $this->createSale($p); break;
             case 'sale.payment':
@@ -810,8 +802,9 @@ class FarmService {
                 if(array_diff(array_keys($p),['good_price','cracked_price','effective_at']) || !array_key_exists('good_price',$p)) throw new ApiProblem('Perbarui aplikasi lalu isi satu harga telur bagus untuk SKM dan SKM Baru, serta harga bentes.');
                 $good=$this->number($p,'good_price',1,true,10000000);
                 $r=$this->insert('price',['pricing_mode'=>'shared_good','good_price'=>$good,'skm_price'=>$good,'skm_new_price'=>$good,'cracked_price'=>$this->number($p,'cracked_price',0,true,10000000),'effective_at'=>$effective,'created_at'=>$this->now(),'created_by'=>$this->actor['id']]);
-                foreach((new PushService($this->db))->activeRecipients() as $uid) $this->insert('notification',['user_id'=>$uid,'title'=>'Harga telur diperbarui','message'=>EggTypes::priceMessage($r),'created_at'=>$this->now(),'read'=>false]);
-                (new PushService($this->db))->enqueuePrice($r);
+                $notice=NotificationText::price($r,$this->actor['name']);
+                foreach((new PushService($this->db))->activeRecipients() as $uid) $this->insert('notification',$notice+['type'=>'price.updated','event_id'=>$r['id'],'user_id'=>$uid,'created_at'=>$r['created_at'],'read'=>false]);
+                (new PushService($this->db))->enqueuePrice($r,$notice);
                 $this->audit($action,'Menetapkan harga telur',null,$r); break;
             case 'user.create': $this->createUser($p); break;
             case 'profile.update': $this->updateProfile($p); break;
@@ -937,7 +930,7 @@ class FarmService {
         $this->commandResult=['action'=>'sale.create','record_id'=>$r['id'],'request_id'=>''];
         if($source==='warehouse') $this->commandResult['movement_ids']=$this->warehouseSaleMovements($r,[],'sale','Penjualan gudang '.$r['number']);
         $this->audit('sale.create','Mencatat penjualan '.$r['number'],null,$r);
-        $this->notifyFarmActivity('sale.create',array_sum(array_column($out,'kg')));
+        $this->notifyFarmActivity('sale.create',$r,$r['created_at']);
     }
     private function createUser(array $p): void {
         if(array_key_exists('can_check_stock',$p)) throw new ApiProblem('Tunjuk pemeriksa stok melalui pengaturan akun setelah akun dibuat.');

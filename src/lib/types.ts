@@ -191,7 +191,7 @@ export interface Notification {
   message: string;
   created_at: string;
   read: boolean;
-  type?: "farm.activity";
+  type?: "farm.activity" | "price.updated";
   event_id?: string;
   activity?: FarmActivity;
 }

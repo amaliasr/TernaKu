@@ -38,6 +38,7 @@ import {
 import type { Pickup, Production, Sale } from "@/lib/types";
 import { employeeHistoryWindow, employeeRecords, nextJakartaDayDelay } from "@/lib/employee-history";
 import { NEW_EGG_TYPES, eggTypePrice } from "@/lib/egg-types";
+import { notificationDateTime } from "@/lib/notification-format";
 import EntryModal from "./EntryModal";
 import type { SaleStart } from "./SaleStockSource";
 import InstallApp from "./InstallApp";
@@ -894,8 +895,8 @@ export default function EmployeeWorkspace() {
                 }
               >
                 <strong>{row.title}</strong>
-                <p>{row.message}</p>
-                <small>{dateLabel(row.created_at, true)}</small>
+                <p className={styles.notificationMessage}>{row.message}</p>
+                <small><time dateTime={row.created_at}>{notificationDateTime(row.created_at)}</time></small>
                 {!row.read && (
                   <button
                     disabled={readingNotification !== null}

@@ -2,7 +2,6 @@ import type {
   Category,
   CommandPayload,
   Correction,
-  FarmActivity,
   Pickup,
   PickupBalance,
   Price,
@@ -24,6 +23,7 @@ import { assignUsername, withUsernames } from "./usernames";
 import { validateAccountPassword, validateNewPassword } from "./account-policy";
 import { applyDemoStockCheck, demoStockCheckContext, recordStockAssignment } from "./stock-checks";
 import { ALL_EGG_TYPES, NEW_EGG_TYPES, canonicalEggType, emptyEggQuantities, eggTypeLabel, eggTypePrice, isEggType } from "./egg-types";
+import { farmNotification, priceNotification, type FarmNotificationEvent } from "./notification-format";
 
 export const money = (value: number) =>
   new Intl.NumberFormat("id-ID", {
@@ -531,24 +531,6 @@ function newCategory(value: unknown): Category {
   return canonicalEggType(value);
 }
 
-function farmNotice(activity: FarmActivity, name: string, kg: number) {
-  const first = name.trim().split(/\s+/u)[0];
-  const who = /^\p{L}[\p{L}\p{M}.'’\-]*$/u.test(first)
-    ? Array.from(first).slice(0, 32).join("")
-    : "Petugas";
-  const weight = number(kg, 3) + " kg telur";
-  switch (activity) {
-    case "sale.create": return { title: "Penjualan telur", message: `${who} menjual ${weight}.` };
-    case "production.create": return { title: "Panen tercatat", message: `${who} mencatat panen ${weight}.` };
-    case "production.stocked": return { title: "Panen masuk gudang", message: `${who} mencatat panen ${weight} yang langsung masuk gudang.` };
-    case "production.receive": return { title: "Panen diterima di gudang", message: `${who} menerima ${weight} dari panen.` };
-    case "pickup.return": return { title: "Telur kembali ke gudang", message: `${who} mengembalikan ${weight} ke gudang.` };
-    case "stock.add": return {
-      title: "Stok gudang bertambah",
-      message: kg > 0 ? `${who} menambahkan ${weight} ke gudang.` : `${who} menambah persediaan di gudang.`,
-    };
-  }
-}
 function quantities(p: CommandPayload): Quantity {
   return {
     eggs: numeric(p.eggs, "Jumlah butir", true, true),
@@ -830,7 +812,7 @@ export function executeCommand(
   const invoice = (prefix: string, count: number) =>
     `${prefix}-${today(now).replaceAll("-", "")}-${String(count + 1).padStart(4, "0")}`;
   let detail: { before?: unknown; after?: unknown } = {};
-  let farmEvent: { activity: FarmActivity; kg: number } | undefined;
+  let farmEvent: FarmNotificationEvent | undefined;
   switch (action) {
     case "stock_check.submit":
     case "stock_check.review":
@@ -859,7 +841,7 @@ export function executeCommand(
       };
       const records = entries.map(item => ({ ...common, id: id("prod"), category: newCategory(item.category), ...quantities(item) }));
       state.productions.push(...records);
-      farmEvent = { activity: common.stocked_at ? "production.stocked" : "production.create", kg: records.reduce((sum, p) => sum + p.kg, 0) };
+      farmEvent = { activity: common.stocked_at ? "production.stocked" : "production.create", date: common.date, items: records };
       break;
     }
     case "stock.classify":
@@ -905,7 +887,7 @@ export function executeCommand(
         });
       }
       detail.after = { id: reference, counts, reason, method };
-      if (method === "add") farmEvent = { activity: "stock.add", kg: counts.reduce((sum, item) => sum + item.kg, 0) };
+      if (method === "add") farmEvent = { activity: "stock.add", items: counts };
       break;
     }
     case "production.receive": {
@@ -915,7 +897,7 @@ export function executeCommand(
       assert(!isProductionStocked(production), "Panen ini sudah masuk stok gudang.");
       production.stocked_at = stamp;
       production.stocked_by = user.id;
-      farmEvent = { activity: "production.receive", kg: production.kg };
+      farmEvent = { activity: "production.receive", date: production.date, items: [production] };
       detail = { after: { production_id: production.id, stocked_at: stamp, stocked_by: user.id } };
       break;
     }
@@ -965,7 +947,7 @@ export function executeCommand(
       p.returned_eggs += q.eggs;
       p.returned_kg = round(p.returned_kg + q.kg);
       p.returned_trays += q.trays;
-      farmEvent = { activity: "pickup.return", kg: q.kg };
+      farmEvent = { activity: "pickup.return", items: [{ category: p.category, ...q }] };
       detail = { after: { pickup_id: p.id, ...q, notes: text(payload.notes) } };
       break;
     }
@@ -1081,7 +1063,7 @@ export function executeCommand(
       };
       if (source === "warehouse") postWarehouseSale(state, sale, undefined, now, `Penjualan gudang ${sale.number}`);
       state.sales.push(sale);
-      farmEvent = { activity: "sale.create", kg: items.reduce((sum, item) => sum + item.kg, 0) };
+      farmEvent = { activity: "sale.create", sale, items };
       break;
     }
     case "sale.due":
@@ -1136,7 +1118,7 @@ export function executeCommand(
           effectiveDay,
         "Tanggal mulai berlaku tidak valid.",
       );
-      state.prices.push({
+      const newPrice: Price = {
         id: id("price"),
         pricing_mode: "shared_good",
         good_price,
@@ -1146,16 +1128,16 @@ export function executeCommand(
         effective_at,
         created_at: stamp,
         created_by: user.id,
-      });
-      for (const u of state.users.filter((u) => u.active))
+      };
+      state.prices.push(newPrice);
+      const notice = priceNotification(newPrice, user.name);
+      for (const u of state.users.filter(u => !accountAccessError(u)))
         state.notifications.push({
           id: id("notif"),
           user_id: u.id,
-          title:
-            new Date(effective_at) > now
-              ? "Harga telur dijadwalkan"
-              : "Harga telur diperbarui",
-          message: `Mulai ${dateLabel(effective_at, true)}, Telur Bagus (SKM dan SKM Baru) ${money(good_price)}/kg dan Telur Bentes ${cracked_price === 0 ? "Gratis" : money(cracked_price) + "/kg"}.`,
+          type: "price.updated",
+          event_id: newPrice.id,
+          ...notice,
           read: false,
           created_at: stamp,
         });
@@ -1573,7 +1555,7 @@ export function executeCommand(
   }
   if (farmEvent) {
     const eventId = `farm-${now.getTime()}-${input.activity.length + 1}`;
-    const notice = farmNotice(farmEvent.activity, user.name, farmEvent.kg);
+    const notice = farmNotification(farmEvent, user.name, stamp);
     for (const recipient of state.users.filter(u => !accountAccessError(u))) {
       state.notifications.push({
         id: `${eventId}-${recipient.id}`, event_id: eventId, type: "farm.activity", activity: farmEvent.activity,
