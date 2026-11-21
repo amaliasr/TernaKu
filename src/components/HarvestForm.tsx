@@ -9,6 +9,7 @@ import { hasLegacyHarvest, normalizeHarvestRows, type HarvestDraftRows } from "@
 import { Field, LoadingButton, categoryLabel } from "./ModuleUI";
 import { useDraftField } from "./DraftBoundary";
 import PhotoUpload from "./PhotoUpload";
+import styles from "./HarvestForm.module.css";
 
 type Row = HarvestDraftRows[Category];
 const categories = NEW_EGG_TYPES;
@@ -94,6 +95,28 @@ export default function HarvestForm({
           Isi hasil timbangan untuk setiap jenis telur. Kosongkan baris yang
           tidak dipanen.
         </p>
+        <fieldset className={styles.barnSection}>
+          <legend>Kandang asal <span>(opsional)</span></legend>
+          <p>{state.barns.length ? "Pilih kandang tempat telur dipanen." : "Belum ada kandang yang terdaftar. Panen tetap bisa disimpan."}</p>
+          <div className={styles.barnChoices}>
+            {state.barns.map((option) => (
+              <label key={option.id} className={`${styles.barnChoice} ${barn === option.id ? styles.selectedBarn : ""}`}>
+                <input type="radio" name="barn_id" value={option.id} checked={barn === option.id} onChange={() => setBarn(option.id)} />
+                <span>{option.name}</span>
+              </label>
+            ))}
+            {barn && !state.barns.some((option) => option.id === barn) && (
+              <label className={`${styles.barnChoice} ${styles.selectedBarn}`}>
+                <input type="radio" name="barn_id" value={barn} checked onChange={() => setBarn(barn)} />
+                <span>Kandang tersimpan di draf</span>
+              </label>
+            )}
+          </div>
+          {barn ? (
+            <button type="button" className={styles.clearBarn} onClick={() => setBarn("")}>Kosongkan pilihan</button>
+          ) : state.barns.length > 0 && <small>Boleh dikosongkan jika belum memilih kandang.</small>}
+          {barn && !state.barns.some((option) => option.id === barn) && <small>Pilihan dari draf tetap disimpan, tetapi kandangnya belum tersedia dalam daftar ini.</small>}
+        </fieldset>
         {legacy && <p className="alert alert-warning" role="alert">Angka pada draf lama belum bisa dibaca. Jumlah sebelumnya: {rows.good.eggs || "0"} butir, {rows.good.kg || "0"} kg. Periksa draf sebelum menyimpan.</p>}
         {categories.map((c) => {
           const row = rows[c],
@@ -185,7 +208,7 @@ export default function HarvestForm({
           </strong>
         </div>
         <details>
-          <summary>Tanggal, kandang, foto, dan catatan</summary>
+          <summary>Tanggal, foto, dan catatan</summary>
           <Field className="d-block mt-3" label="Tanggal panen">
             <input
               name="date"
@@ -197,21 +220,6 @@ export default function HarvestForm({
               onInput={(e) => setDate(e.currentTarget.value)}
               onChange={(e) => setDate(e.target.value)}
             />
-          </Field>
-          <Field className="d-block mt-3" label="Kandang asal (opsional)">
-            <select
-              name="barn_id"
-              className="form-select"
-              value={barn}
-              onChange={(e) => setBarn(e.target.value)}
-            >
-              <option value="">Tanpa kelompok kandang</option>
-              {state.barns.map((b) => (
-                <option key={b.id} value={b.id}>
-                  {b.name}
-                </option>
-              ))}
-            </select>
           </Field>
           <Field className="d-block mt-3" label="Catatan (opsional)">
             <textarea

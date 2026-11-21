@@ -30,9 +30,22 @@ Untuk langkah pemasangan melalui File Manager hosting seperti RumahFlow, baca **
    Remove-Item Env:ADMIN_PASSWORD
    ```
 
-   Installer membuat tabel, admin pertama, dan satu sumber `Kandang Ayam Utama`. Tidak ada akun/password demo atau data transaksi contoh di production. Menjalankan ulang installer tidak mengganti akun yang sudah ada. Akun karyawan baru memakai password minimal 10 karakter.
+   Installer membuat tabel, admin pertama, serta dua sumber panen: `Kandang Depan` dan `Kandang Utama`. Pendaftaran admin pertama melalui web juga menyiapkan keduanya jika belum ada kandang. Tidak ada akun/password demo atau data transaksi contoh di production. Menjalankan ulang installer tidak mengganti akun yang sudah ada. Akun karyawan baru memakai password minimal 10 karakter.
 4. Untuk lokal, jalankan dari folder `api/`: `php -S 127.0.0.1:8081 router.php`. Atur `APP_URL=http://127.0.0.1:8081` dan `ALLOWED_ORIGINS=http://localhost:3000,http://127.0.0.1:3000` di `.env`. Gunakan origin frontend yang tepat, termasuk port.
 5. `GET /health` harus memberikan `{"data":{"status":"ok",...}}`. Login menggunakan admin pertama, lalu buat harga aktif dan jenis pakan melalui aplikasi sebelum bertransaksi.
+
+## Menyiapkan dua kandang pada data yang sudah ada
+
+Jalankan dari folder `api/` setelah cadangan database tersedia. Pratinjau hanya membaca data:
+
+```bash
+php scripts/setup-chicken-barns.php --dry-run
+php scripts/setup-chicken-barns.php --apply
+```
+
+Perintah memakai ulang `Kandang Depan` dan `Kandang Utama` yang sudah ada, tanpa membedakan huruf besar/kecil atau spasi di ujung nama. Jika belum ada `Kandang Utama`, satu kandang dengan nama persis `Kandang Ayam Utama` diganti namanya dengan ID tetap. Kandang yang belum tersedia dibuat. Nama lain tidak diganti atau dihapus; hasil JSON mencantumkannya dalam `unchanged`. Nama target ganda, nama bawaan lama yang ambigu, atau data kandang tidak valid membuat seluruh penyiapan dibatalkan agar tidak memilih ID secara sembarangan.
+
+Penerapan memakai mutex transaksi yang sama dengan pencatatan usaha dan menyimpan log `barn.setup`. Menjalankan ulang tidak menambah kandang atau audit duplikat. Tidak ada perubahan skema, stok, transaksi, foto, atau `barn_id` riwayat; panen lama tanpa kandang tetap tanpa kandang. Pilihan kandang pada panen tetap opsional. Installer yang dijalankan ulang pada instalasi aktif tidak otomatis menjalankan penyiapan ini.
 
 ## Pembaruan login username
 

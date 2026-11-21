@@ -1,0 +1,90 @@
+.barnSection {
+  min-width: 0;
+  margin: 20px 0 24px;
+  padding: 0;
+  border: 0;
+}
+.barnSection legend {
+  float: none;
+  width: auto;
+  margin: 0 0 6px;
+  font-size: calc(15px * var(--font-scale, 1));
+  line-height: 1.5;
+  font-weight: 600;
+}
+.barnSection legend span {
+  font-size: calc(12px * var(--font-scale, 1));
+  font-weight: 400;
+}
+.barnSection p,
+.barnSection small {
+  display: block;
+  font-size: calc(12px * var(--font-scale, 1));
+  line-height: 1.6;
+  color: #627457;
+}
+.barnSection p { margin: 0 0 10px; }
+.barnSection small { margin-top: 9px; }
+.barnChoices {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  min-width: 0;
+}
+.barnChoice {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-width: 0;
+  min-height: 60px;
+  padding: 12px;
+  border: 1px solid #b8c9b3;
+  border-radius: 12px;
+  background: var(--surface, #fff);
+  color: var(--ink);
+  cursor: pointer;
+  font-size: calc(14px * var(--font-scale, 1));
+  font-weight: 500;
+  line-height: 1.5;
+}
+.barnChoice input {
+  flex: 0 0 18px;
+  width: 18px;
+  height: 18px;
+  margin: 0;
+  accent-color: #286b48;
+}
+.barnChoice span { min-width: 0; overflow-wrap: anywhere; }
+.selectedBarn {
+  border-color: #286b48;
+  background: #edf5e9;
+  box-shadow: inset 0 0 0 1px #286b48;
+}
+.barnChoice:focus-within {
+  outline: 3px solid #b0c985;
+  outline-offset: 3px;
+}
+.clearBarn {
+  display: block;
+  min-height: 44px;
+  margin: 5px 0 0;
+  padding: 8px 0;
+  border: 0;
+  background: transparent;
+  color: #286b48;
+  font-size: calc(13px * var(--font-scale, 1));
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+:global(html[data-theme="dark"]) .barnChoice { border-color: #66805d; }
+:global(html[data-theme="dark"]) .selectedBarn {
+  background: #294332;
+  border-color: #a4dcb3;
+  box-shadow: inset 0 0 0 1px #a4dcb3;
+}
+:global(html[data-theme="dark"]) .barnChoice input { accent-color: #a4dcb3; }
+:global(html[data-theme="dark"]) .clearBarn { color: #a4dcb3; }
+:global(html[data-theme="dark"]) .barnSection :is(p, small) { color: #b0c29f; }
+@media (max-width: 359px) {
+  .barnChoice { gap: 7px; padding: 10px 8px; }
+}
