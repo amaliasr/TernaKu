@@ -91,6 +91,8 @@ try {
     $owner=['name'=>'Owner','email'=>'owner@test.local','password'=>' Owner Password 42 ','password_confirmation'=>' Owner Password 42 ','setup_token'=>$setupKey];
     req('/auth/register',array_replace($owner,['setup_token'=>'wrong-key']),'','POST',403); check(count($db->query('SHOW TABLES')->fetchAll())===0,'invalid owner key cannot create tables or first admin');
     $result=req('/auth/register',$owner); check($result['status']==='active' && !isset($result['token']) && (int)$db->query("SELECT COUNT(*) FROM users WHERE role='admin' AND active=1")->fetchColumn()===1,'owner key initializes schema and exactly one active admin without automatic login');
+    $defaultBarnNames=array_map(fn(string $raw):string=>json_decode($raw,true)['name'],$db->query("SELECT data FROM records WHERE kind='barn'")->fetchAll(PDO::FETCH_COLUMN)); sort($defaultBarnNames);
+    check($defaultBarnNames===['Kandang Depan','Kandang Utama'],'first administrator setup creates the two named chicken barns');
     $ownerLogin=req('/auth/login',['email'=>$owner['email'],'password'=>$owner['password']]); $ownerToken=$ownerLogin['token']; check($ownerLogin['user']['registration_status']==='approved','registration and login preserve leading and trailing password spaces');
     check($ownerLogin['user']['username']==='owner' && req('/auth/login',['identifier'=>' OWNER ','password'=>$owner['password']])['user']['id']===$ownerLogin['user']['id'],'first admin without an explicit username gets a usable generated username');
     $status=req('/auth/registration-status',[],'','GET'); check($status===['first_admin_required'=>false,'setup_enabled'=>false],'first admin setup permanently closes once a user exists');
@@ -720,5 +722,6 @@ try {
     require __DIR__.'/account-policy-checks.php';
     require __DIR__.'/stock-check-checks.php';
     require __DIR__.'/egg-type-checks.php';
+    require __DIR__.'/barn-setup-checks.php';
     echo "\n$checks integration checks passed.\n";
 } catch(Throwable $e) { fwrite(STDERR,$e->getMessage()."\n"); exit(1); }

@@ -23,7 +23,9 @@ try {
     $username=getenv('ADMIN_USERNAME') ? UsernameService::normalize(getenv('ADMIN_USERNAME')) : UsernameService::generate($db,$email);
     $stmt=$db->prepare("INSERT INTO users(id,name,email,username,password_hash,role) VALUES(?,?,?,?,?,'admin')");
     $stmt->execute([$id,$name,strtolower($email),$username,password_hash($password,PASSWORD_DEFAULT)]);
-    $barn=['id'=>'barn_'.bin2hex(random_bytes(12)),'name'=>'Kandang Ayam Utama','type'=>'ayam','capacity'=>0,'notes'=>'Sumber produksi awal; kelola sesuai kondisi peternakan.'];
-    $stmt=$db->prepare("INSERT INTO records(id,kind,occurred_at,data) VALUES(?,'barn',NOW(),?)"); $stmt->execute([$barn['id'],json_encode($barn)]);
+    if(!$db->query("SELECT id FROM records WHERE kind='barn' LIMIT 1")->fetchColumn()) foreach(BarnSetup::defaults() as $default) {
+        $barn=['id'=>'barn_'.bin2hex(random_bytes(12))]+$default;
+        $stmt=$db->prepare("INSERT INTO records(id,kind,occurred_at,data) VALUES(?,'barn',NOW(),?)"); $stmt->execute([$barn['id'],json_encode($barn,JSON_THROW_ON_ERROR)]);
+    }
     $db->commit(); echo "Instalasi berhasil. Admin pertama dibuat; tetapkan harga telur di aplikasi sebelum mencatat penjualan.\n";
 } catch(Throwable $e) { if(isset($db) && $db->inTransaction()) $db->rollBack(); fwrite(STDERR,"Instalasi gagal: ".$e->getMessage()."\n"); exit(1); }

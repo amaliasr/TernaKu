@@ -7,6 +7,7 @@ require_once __DIR__.'/StockCheckWorkflow.php';
 require_once __DIR__.'/EggTypes.php';
 require_once __DIR__.'/EggTypesSchema.php';
 require_once __DIR__.'/SharedGoodPriceMigration.php';
+require_once __DIR__.'/BarnSetup.php';
 /** TernaKu transactional domain service; used by CI3 and the CLI installer. */
 class ApiProblem extends RuntimeException {
     public int $status;
@@ -264,7 +265,7 @@ class FarmService {
             $this->actor=['id'=>$id,'name'=>$name,'email'=>$email,'username'=>$username,'role'=>$role,'active'=>(bool)$active,'target'=>0,'registration_status'=>$r['status']];
             $this->audit($first?'auth.setup':'auth.register',$first?'Membuat admin pertama':'Mendaftar sebagai karyawan; menunggu persetujuan admin',null,$this->actor);
             if($first) {
-                if(!$this->query("SELECT id FROM records WHERE kind='barn' LIMIT 1")->fetchColumn()) $this->insert('barn',['name'=>'Kandang Ayam Utama','type'=>'ayam','capacity'=>0,'notes'=>'Sumber produksi awal; kelola sesuai kondisi peternakan.']);
+                if(!$this->query("SELECT id FROM records WHERE kind='barn' LIMIT 1")->fetchColumn()) foreach(BarnSetup::defaults() as $barn) $this->insert('barn',$barn);
             } else {
                 foreach($this->query("SELECT id FROM users WHERE role='admin' AND active=1")->fetchAll(PDO::FETCH_COLUMN) as $uid) $this->insert('notification',['user_id'=>$uid,'title'=>'Pendaftaran karyawan baru','message'=>$name.' ('.$email.') menunggu persetujuan. Buka menu Karyawan untuk meninjau.','created_at'=>$this->now(),'read'=>false]);
             }

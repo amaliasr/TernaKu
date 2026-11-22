@@ -61,14 +61,14 @@ export function createDemoState(now = new Date()): State {
   state.barns = [
     {
       id: "barn-1",
-      name: "Kandang A",
+      name: "Kandang Utama",
       type: "ayam",
       capacity: 1200,
       notes: "Ayam petelur · Blok timur",
     },
     {
       id: "barn-2",
-      name: "Kandang B",
+      name: "Kandang Depan",
       type: "ayam",
       capacity: 1000,
       notes: "Ayam petelur · Blok barat",
